@@ -1,0 +1,33 @@
+# Third-party installs - each is its own git clone with its own .venv/models,
+# not part of this repo's history.
+/ComfyUI/
+/MuseTalk/
+/SadTalker/
+
+# Model weights - large binaries, sourced separately (see README.md "模型" section)
+/models/
+
+# Generated / regenerable data (recreate via generate_character.py)
+/datasets/
+/outputs/
+/training/reference_candidates/
+
+# Reserved for the future kohya_ss LoRA training phase (currently empty)
+/evaluation/
+/samples/
+/captions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Runtime / training logs - regenerable
+training/logs/
+training/*.log
+
+# OS
+Thumbs.db
+.DS_Store

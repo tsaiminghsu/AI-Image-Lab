@@ -1,0 +1,15 @@
+[general]
+caption_extension = ".txt"
+keep_tokens = 1
+
+[[datasets]]
+resolution = 1024
+batch_size = 1
+enable_bucket = true
+min_bucket_reso = 256
+max_bucket_reso = 1280
+bucket_reso_steps = 64
+
+  [[datasets.subsets]]
+  image_dir = "D:/AI-Image-Lab/datasets/character"
+  num_repeats = 1

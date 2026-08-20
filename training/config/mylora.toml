@@ -1,0 +1,49 @@
+[general]
+pretrained_model_name_or_path = "D:/AI-Image-Lab/models/base/sd_xl_base_1.0.safetensors"
+train_data_dir = "D:/AI-Image-Lab/datasets/character"
+output_dir = "D:/AI-Image-Lab/models/lora"
+output_name = "mylora"
+save_model_as = "safetensors"
+save_every_n_epochs = 1
+save_last_n_epochs = 2
+log_with = "tensorboard"
+logging_dir = "D:/AI-Image-Lab/training/logs"
+seed = 23
+
+[network]
+network_module = "networks.lora"
+network_dim = 32
+network_alpha = 16
+network_train_unet_only = true
+
+[training]
+optimizer_type = "AdamW8bit"
+learning_rate = 0.0001
+lr_scheduler = "cosine"
+lr_warmup_steps = 100
+max_train_epochs = 10
+mixed_precision = "fp16"
+save_precision = "fp16"
+batch_size = 1
+gradient_checkpointing = true
+max_data_loader_n_workers = 0
+persistent_data_loader_workers = false
+cache_latents = true
+cache_latents_to_disk = true
+cache_text_encoder_outputs = true
+cache_text_encoder_outputs_to_disk = true
+fp8_base = true
+sdpa = true
+min_snr_gamma = 5
+
+[dataset]
+resolution = 1024
+enable_bucket = true
+min_bucket_reso = 256
+max_bucket_reso = 1280
+bucket_reso_steps = 64
+
+[sampling]
+sample_every_n_epochs = 1
+sample_sampler = "euler_a"
+sample_prompts = "D:/AI-Image-Lab/training/config/mylora_samples.txt"
