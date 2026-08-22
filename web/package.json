@@ -1,0 +1,23 @@
+{
+  "name": "ai-image-lab-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sandbox": "ampx sandbox",
+    "deploy": "ampx pipeline-deploy"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1116.0",
+    "@aws-sdk/lib-dynamodb": "^3.1116.0"
+  },
+  "devDependencies": {
+    "@aws-amplify/backend": "^1.24.0",
+    "@aws-amplify/backend-cli": "^1.9.0",
+    "@types/aws-lambda": "^8.10.162",
+    "@types/node": "^22.20.1",
+    "aws-cdk-lib": "^2.266.0",
+    "constructs": "^10.8.1",
+    "typescript": "^5.9.3"
+  }
+}
