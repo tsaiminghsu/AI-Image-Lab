@@ -957,6 +957,29 @@ shot on DSLR, natural skin texture, candid photograph
   不完全是純運算差異——同一 checkpoint 內「有無標籤」的相對差距（而非跨
   checkpoint 的絕對耗時）才是這次測試真正想驗證的東西。
 
+### 姿勢/角度標籤實測（整合包）
+
+`training/pose_pack.py` 生成了一份視覺參考包：39 個標籤（20 個 POSES + 19 個角度變體）的實際
+產圖示例。所有圖用同一 seed/角色/checkpoint（xinyi × cyberrealistic_pony × seed 88001），
+只變標籤，方便逐個對照「這個標籤標籤實際長什麼樣」。
+
+有兩個版本：
+- `pose_pack/`：純 txt2img 路徑（~22s/張），速度最快但在全身構圖下臉部無法精修，眼睛出現不對稱
+- `pose_pack_facedetailer/`：HQ 路徑只開 FaceDetailer（hires 關掉，~72s/張），臉修乾淨；
+  關鍵發現是 FaceDetailer 的實際成本約 **+50s**（比單張 A/B 測的 +14s 高一倍），因為有手入鏡
+  時要多跑一次手部重繪
+
+實測發現的限制：
+- 5 個 `lying on ...` 標籤在**兩個版本都失敗**，全部塌成「坐著或半躺」，無法真正躺平。這不是
+  臉部精修或解析度問題，而是 cyberrealistic_pony 對「躺」這個姿勢的先驗太弱——需要 ControlNet
+  給骨架才能壓住，不是調參數能救的
+- FULL_BODY_ANGLES 那 5 個標籤在純版幾乎全部失敗（都被裁到腰部），在 FaceDetailer 版大幅改善
+- 解析度落差：請求的 832×1216（portrait）實際產出 704×1024（submit_generation_hq 的實際行為和
+  docstring 不符；見源碼註解）
+- 紅色愛心圖案會無故出現在白 T 上，不是 prompt 要求的——checkpoint 自身的傾向
+
+完整對照表和 contact sheet 見各版本目錄下的 `INDEX.md` 與 `.png` 檔。
+
 ## HQ 兩段式生成（預設路徑）
 
 自訂生圖（GUI / `image_api.py` / CLI `custom`）預設走 `submit_generation_hq`
