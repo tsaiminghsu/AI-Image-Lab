@@ -419,6 +419,43 @@ beta、VRAM 需求也重很多），所以這條路線用官方 SD1.5 base check
 不是靠底模——`v1-5-pruned-emaonly` 是官方原始權重，不需要登入/授權就能下載，
 選它是為了穩定可重現，不是因為畫質最好。
 
+### 2b. AnimateDiff Motion LoRA（選用，鏡頭運動控制）
+
+> **先弄清楚這個功能實際能做什麼**：官方 Motion LoRA 控制的是**整個畫面的
+> 鏡頭運動**（縮放、平移、傾斜、旋轉），**不是特定身體部位的物理晃動效果**
+> ——motion module 本身沒有「彈跳」「晃動」這類局部物理控制的機制，這不是
+> 這個專案接線沒接好，是 AnimateDiff 這個技術目前的能力邊界。想要局部動作
+> 效果，目前唯一能試的路是直接在 prompt 裡描述動作（例如 `walking, hips
+> swaying`），讓 motion module 憑通用的動作理解去逼近，沒有專門的 LoRA 能
+> 精確控制，效果不保證。
+
+官方 [guoyww/animatediff](https://huggingface.co/guoyww/animatediff) 釋出了
+8 個鏡頭運動 LoRA，每個 ~77.5MB，**只相容 v2 motion module**（也就是這個
+專案已經在用的 `mm_sd_v15_v2.ckpt`）：
+
+| 檔名 | 效果 |
+|---|---|
+| `v2_lora_ZoomIn.ckpt` | 鏡頭放大 |
+| `v2_lora_ZoomOut.ckpt` | 鏡頭縮小 |
+| `v2_lora_PanLeft.ckpt` | 鏡頭向左平移 |
+| `v2_lora_PanRight.ckpt` | 鏡頭向右平移 |
+| `v2_lora_TiltUp.ckpt` | 鏡頭向上傾斜 |
+| `v2_lora_TiltDown.ckpt` | 鏡頭向下傾斜 |
+| `v2_lora_RollingClockwise.ckpt` | 鏡頭順時針旋轉 |
+| `v2_lora_RollingAnticlockwise.ckpt` | 鏡頭逆時針旋轉 |
+
+下載需要的幾個（不用全部下載，GUI/CLI 只有選到對應的才會用到）：
+
+```powershell
+New-Item -ItemType Directory -Force -Path "D:\AI-Image-Lab\ComfyUI\models\animatediff_motion_lora"
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\animatediff_motion_lora\v2_lora_ZoomIn.ckpt" https://huggingface.co/guoyww/animatediff/resolve/main/v2_lora_ZoomIn.ckpt
+```
+
+其他 7 個把檔名換掉照樣下載即可。用法見下面「AnimateDiff 動態影片」GUI
+說明的「Motion LoRA」摺疊區塊，或 CLI 的 `--motion-lora`/`--motion-lora-strength`
+參數（`generate_character.py video-animatediff --help`）。沒下載就選的話，
+ComfyUI 會在 `ADE_AnimateDiffLoRALoader` 節點報找不到檔案，生成直接失敗。
+
 ### 3. 重啟 ComfyUI
 
 ```powershell
@@ -490,7 +527,9 @@ GUI 啟動後，在瀏覽器打開：**http://127.0.0.1:7860**
    選擇後右側會即時預覽
 3. **Prompt**：自訂描述（例如 `walking through a cozy library, warm afternoon light`），
    系統會自動接在角色身分描述後面。**建議用英文** — 因為 CLIP tokenizer 對中文
-   支援不佳，中文 prompt 容易被模型忽略
+   支援不佳，中文 prompt 容易被模型忽略。習慣打中文（或其他語言）的話，欄位
+   下方的「翻譯成英文」按鈕會呼叫 Google Translate 把目前內容轉成英文並直接
+   寫回 Prompt 欄位，送出前還可以再自行微調（見下面「自動翻譯」說明）
 4. **內容分級**：`safe`（預設，禁止露骨內容）或 `suggestive`（允許泳裝/藝術尺度，
    但露骨性器官/性行為依然封鎖）
 5. **Seed**：同樣 seed + prompt 會重現同樣結果
@@ -522,6 +561,25 @@ GUI 啟動後，在瀏覽器打開：**http://127.0.0.1:7860**
   就會快取在本機（`~/.cache/huggingface`）不用重新下載
 - 刻意跑在 CPU 上，不佔用 GPU VRAM——避免跟 ComfyUI 常駐的 SDXL checkpoint
   搶顯存，導致生成中的圖片 OOM
+
+#### 自動翻譯（多語言輸入）
+
+- Prompt 欄位下方的「翻譯成英文」按鈕，呼叫 Google Translate 的公開端點把
+  欄位目前內容翻成英文，結果直接寫回 Prompt 欄位（不是另外開一個顯示框），
+  送出生成前還可以再自行編輯
+- 自動偵測來源語言，不限中文——已經是英文的話按下去內容不變，其他語言
+  （日文、韓文等）也可以直接翻
+- **不需要 API key**，但這是 Google Translate 網頁版翻譯小工具用的公開端點，
+  不是官方 Cloud Translation API，可能會被 rate-limit 或未來變動——翻譯失敗
+  時 GUI 會跳出明確的錯誤訊息（不會靜默失敗、也不會誤導你以為送出的是翻好的
+  英文），可以稍後重試或自己手動改打英文
+- 選這個方案是實測過的結果：本地小型翻譯模型（`opus-mt-zh-en`、
+  `NLLB-200-distilled-600M`）在這種逗號分隔短語（不是完整句子）的 prompt
+  風格上表現很差——`opus-mt` 會翻錯個別詞彙（「蓬鬆的棉被」被翻成
+  "loose tampons"），`NLLB` 則會自己腦補出原文沒有的敘事內容，兩個都不能用；
+  Google Translate 對這種短語輸入的處理正確得多
+- 靜態圖片區塊、AnimateDiff 動態影片區塊的 Prompt 欄位都各自有一個翻譯按鈕，
+  互相獨立；額外負面詞欄位目前沒有這個功能
 
 #### 自行上傳身分參考圖
 
@@ -570,6 +628,43 @@ GUI 啟動後，在瀏覽器打開：**http://127.0.0.1:7860**
   sliding-context-window 節點才能超過）、FPS 預設 8（約 2 秒的影片）
 - 第一次執行會比較久：SD1.5 checkpoint、motion module、FaceID SD1.5 模型都是
   全新的模型組合，ComfyUI 還沒快取過
+- 「Motion LoRA」摺疊區塊（選用）：控制整個畫面的鏡頭運動（縮放/平移/傾斜/
+  旋轉），**不是身體部位的物理晃動效果**——選了要先完成「AnimateDiff Motion
+  LoRA」安裝章節的模型下載，沒下載會直接生成失敗
+
+#### 批次生成 GIF
+
+- 頁面最下方獨立區塊，跟「自訂生圖」共用同一套 checkpoint/角色/anchor 概念，
+  但欄位是各自獨立的（不會互相帶值）
+- 輸入 prompt、設定「張數」跟「起始 Seed」，按「生成 GIF」——**第一張是完整
+  生成**（建立人物/姿勢/場景），**後面每一張都是拿第一張的圖用低 denoise 的
+  img2img 去微調**（同一個 prompt，只有 seed 不同），生成完自動組成一個動態
+  GIF。同一個人、同一個姿勢、同一個場景，只有畫面細節隨每張的 seed 有小幅
+  變化——這是這個功能設計上要達到的效果：「同一個場景微幅晃動」，不是「每張
+  都重新生成、換人換場景」
+- **「動作幅度」滑桿**（即 img2img 的 denoise 強度）控制變化大小，**實測數據**
+  （對同一張基準圖分別跑 0.3/0.5/0.7，逐像素比對差異）：0.3 幾乎看不出變化
+  （只有皮膚/髮絲/布料紋理等級的抖動，19% 像素有輕微差異、幾乎 0% 有明顯
+  差異）；0.7 姿勢已經明顯跑掉（差異圖呈現手部/頭部雙重曝光般的殘影，代表
+  是兩個不同姿勢疊在一起，不是同一姿勢的小幅變化）。預設 0.45 是這兩個實測
+  點之間、還沒驗證過的中間值——覺得太靜止就往上調（0.5-0.6 一帶），姿勢跑掉
+  就往下調（0.3-0.4 一帶）。拉到 1 = 完全重新生成，等同這個功能修正前的
+  行為（換人換場景），如果就是想要那種效果，把滑桿拉到 1 即可
+- **這不是像 AnimateDiff 那樣有時序關聯的平滑動態**——沒有動作模組在張與張
+  之間傳遞資訊，是同一張圖反覆用不同 seed 微調出來的效果，看起來比較像原地
+  小幅度的浮動/晃動，不是有連貫進展的動作（例如走路的動作不會真的往前走）。
+  想要真正平滑、有動作進展的動態，用上面的「AnimateDiff 動態影片」區塊
+- 生成速度比 AnimateDiff 快很多——每張都是普通靜態圖生成，沒有 AnimateDiff
+  那種多影格疊在一起採樣的額外負擔
+- **必須用 SDXL 系列 checkpoint**（不能選 SD1.5）——後面每一張的微調都要靠
+  IP-Adapter 鎖住同一張臉，這是 SDXL 專用的模型檔，SD1.5 沒有接這個功能；
+  pony 系的品質 tag 前綴一樣會自動加
+- 沒選角色/anchor 的話，會拿第一張自己生成出來的圖當作後面幾張 IP-Adapter
+  的臉部參考（自己參照自己）——這假設第一張圖裡真的有一張臉，適合拿來生成
+  角色，如果 prompt 是純物件/場景（沒有人臉），IP-Adapter 會找不到臉可以
+  鎖，建議這種情況改用「自訂生圖」單張生成，不要用這個功能
+- 沒有骨架姿勢控制、臉部/手部精修選項——這兩個都沒有接進 img2img 這條新
+  workflow，需要這兩項的話請用「自訂生圖」單張生成
 
 ## 怎麼生成角色（CLI 命令行模式）
 
@@ -685,6 +780,30 @@ python generate_character.py custom --prompt "a cup of coffee on a wooden table"
 風格/寫實感相關的用詞，不是內容分級的開關。網頁 GUI 的「風格正/負面詞」摺疊
 區塊做的就是同一件事，省去每次都要打 CLI 參數或改程式碼的麻煩。
 
+### 批次生成 GIF（快速預覽，CLI 版）
+
+```powershell
+python generate_character.py gif --prompt "standing in a park, looking at the camera" --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --frames 8 --seed 9000
+```
+
+**第一張是完整生成**（建立人物/姿勢/場景），**後面 `--frames`-1 張都是拿
+第一張的圖用低 denoise 的 img2img 微調**（同一個 prompt，只有 seed 不同），
+組成一個 `.gif`——同一個人、同一個姿勢、同一個場景，只有細節隨每張的 seed
+有小幅變化。`--denoise`（預設 0.45，實測 0.3 幾乎靜止、0.7 姿勢已明顯跑掉，
+見下面「批次生成 GIF」GUI 說明的實測數據）控制變化幅度：0=完全跟第一張一樣，
+1=等於每張都獨立重新生成（換人換場景，這是這個功能修正前的行為）。跟
+`custom` 一樣可以省略 `--character`/`--anchor`（這時第一張生出來的圖會自己
+當自己的 IP-Adapter 臉部參考），`--style-positive`/`--style-negative`/
+`--checkpoint`/`--lora-strength` 的用法也完全一樣，但 **`--checkpoint` 只能
+選 SDXL 系列**（不支援 SD1.5，img2img 微調同樣要靠 IP-Adapter 鎖臉）。
+**沒有** `--pose-reference`/`--use-facedetailer` 選項——沒有接進這條 img2img
+workflow，需要的話用 `custom` 單張生成。
+
+**這不是平滑動態影片**——沒有像 AnimateDiff 那樣在張與張之間傳遞資訊的
+動作模組，是同一張圖反覆用不同 seed 微調出來的效果，看起來比較像原地小幅度
+的浮動/晃動，不是有連貫進展的動作；想要真正平滑、有動作進展的動態，用下面
+的 `video-animatediff`。`--duration-ms`（預設 300）調整 GIF 每張的顯示時間。
+
 ### 幫已有的圖片配上動作（SVD img2vid）
 
 ```powershell
@@ -790,13 +909,121 @@ watermark, text
 文件標示的建議範圍是 0-5.0；從 2.0 調到 2.5 是為了加強寫實感，見上方
 `REALISTIC_STYLE` 的說明）。
 
+### 各 checkpoint 的 prompt 語法差異（實測記錄）
+
+`training/model_prompt_test.py` 用同一句自然語言 prompt，對六個已安裝 checkpoint
+各跑一次（Pony 系額外測「有無 `score_9` 標籤」對照），純 txt2img（不掛 FaceID），
+用來隔離「checkpoint 本身 + prompt 語法」的差異，排除 FaceID VRAM 換入換出的干擾。
+測試圖存在 `training/reference_candidates/model_test/`，完整表格見同目錄
+`REPORT.md`；對照合成圖見 `contact_sheet.png`。
+
+測試 prompt（三種家族共用同一句，只有 Pony 多加/不加標籤）：
+
+```
+a 25 year old woman with long brown wavy hair, sitting at a wooden cafe table,
+holding a ceramic coffee cup, soft window light, cozy interior background,
+shot on DSLR, natural skin texture, candid photograph
+```
+
+實測結果（RTX 2070 8GB，各 checkpoint 當次是冷載入，含讀檔時間）：
+
+| Checkpoint | 架構 | Prompt 寫法 | 解析度 | 耗時 |
+|---|---|---|---|---|
+| `juggernaut` | SDXL | 純自然語言 | 1024×1024 | 40.3s |
+| `pony` | Pony | 無 `score_9` 標籤 | 1024×1024 | 40.3s |
+| `pony` | Pony | 有 `score_9, score_8_up, score_7_up` 前綴 | 1024×1024 | 30.3s |
+| `cyberrealistic_pony` | Pony | 無標籤 | 1024×1024 | 38.3s |
+| `cyberrealistic_pony` | Pony | 有標籤 | 1024×1024 | 28.2s |
+| `pony_realism` | Pony | 無標籤 | 1024×1024 | 42.3s |
+| `pony_realism` | Pony | 有標籤 | 1024×1024 | 36.2s |
+| `realistic_vision` | SD1.5 | 純自然語言 | 512×768 | 14.1s |
+| `cyberrealistic` | SD1.5 | 純自然語言 | 512×768 | 14.2s |
+
+觀察：
+
+- **SDXL（`juggernaut`）與 SD1.5（`realistic_vision`/`cyberrealistic`）**：純自然
+  語言直接可用，不需要任何特殊標籤語法。
+- **Pony 系（`pony`/`cyberrealistic_pony`/`pony_realism`）**：沒加
+  `score_9, score_8_up, score_7_up` 標籤時肉眼可見偏插畫/CG 感；加了之後寫實度
+  明顯提升——這正是 `PONY_QUALITY_TAGS` 存在的理由（見上方「Pony-family
+  checkpoints」說明），`gen_custom()` 已自動處理，一般呼叫端不用手動加。
+- **加標籤反而更快**：三個 Pony checkpoint 加標籤後都省了 8-10 秒，推測是有
+  品質標籤時取樣器更早收斂到清晰結構，不用繞路。這是附帶觀察，不是選擇加標籤
+  的主要理由（主要理由是畫質）。
+- **SD1.5 因為原生解析度只有 SDXL/Pony 的一半（512×768 vs 1024×1024）**，耗時
+  只有前者的三分之一左右，跟前面 Benchmark 章節的既有認知一致。
+- 這次每個 checkpoint 都是當次第一次載入（要從硬碟讀 6.5-7GB 檔案），
+  `juggernaut`/`pony_realism` 沒加標籤那兩筆耗時偏長可能部分反映讀檔時間，
+  不完全是純運算差異——同一 checkpoint 內「有無標籤」的相對差距（而非跨
+  checkpoint 的絕對耗時）才是這次測試真正想驗證的東西。
+
+## HQ 兩段式生成（預設路徑）
+
+自訂生圖（GUI / `image_api.py` / CLI `custom`）預設走 `submit_generation_hq`
+（`workflow_template_hq.json`），一套 workflow 把 FaceID、角色 LoRA、ControlNet、
+臉部/手部精修全部合併，並在中間插入 hires 放大。這是「5 分鐘內、不失真」的主路徑。
+
+節點流程：
+
+```
+checkpoint → 風格 LoRA(node13, Pony 預設 0.0) → 角色 LoRA(node14, 選填)
+  → FaceID(node10/11/12, 選填) → ControlNet(node20-23, 選填, 預設關)
+  → KSampler 第一段(node3, 較低解析度, 24 步)
+  → VAE decode(node8) → 4x-UltraSharp 放大(node31) → 縮到 1.5x(node32) → VAE encode(node33)
+  → KSampler 第二段 hires(node34, denoise 0.4, 20 步) → VAE decode(node35)
+  → FaceDetailer 臉(node41, denoise 0.4) → FaceDetailer 手(node43, denoise 0.35)
+  → SaveImage(node9)
+```
+
+用不到的選填節點會被「改線＋刪節點」繞過（不是設強度 0——LoraLoader 找不到檔會
+驗證失敗），所以同一套模板能服務純文字、FaceID、角色 LoRA、ControlNet 的任意組合。
+
+### 為什麼選 ESRGAN 放大，而不是 latent upscale
+
+latent upscale 要 denoise ≥0.55 才蓋得掉插值糊，那正是 FaceID 身分飄移、手被重畫
+的區間；ESRGAN 提供真實像素細節，第二段 denoise 只要 0.4 就夠，臉不飄、手不壞。
+`4x-UltraSharp` 選用而非 `RealESRGAN_x4plus`，因為後者會把皮膚過度平滑，正是我們要
+消除的「塑膠感／3D render」來源。
+
+### 下載 upscale 模型
+
+`4x-UltraSharp.pth`（約 67 MB，[Kim2091/UltraSharp](https://huggingface.co/Kim2091/UltraSharp)），
+放到 `models/upscale/`，再依本 repo 慣例用 NTFS hardlink 接進 ComfyUI：
+
+```powershell
+New-Item -ItemType HardLink -Path "ComfyUI\models\upscale_models\4x-UltraSharp.pth" -Target "models\upscale\4x-UltraSharp.pth"
+```
+
+### 時間預算（RTX 2070 8GB，直式 1056×1536）
+
+| 階段 | 估時 |
+|---|---|
+| 第一段 base（0.72 MP × 24 步） | ~95 s |
+| ESRGAN + VAE encode/decode | ~15 s |
+| 第二段 hires（1.62 MP × 8 有效步） | ~70 s |
+| FaceDetailer 臉 | ~30 s |
+| FaceDetailer 手 | ~30 s |
+| 存檔 | ~5 s |
+| **合計** | **~245 s（<300 s）** |
+
+> 以上用目前「換入換出」狀態的實測速率估算；`INSIGHTFACE_PROVIDER=CPU`（HQ 預設）
+> 消除 FaceID 的 VRAM 帳外佔用後，預期整體降到 ~90 秒。實際數字用
+> `python benchmark.py --hq --anchor <臉圖>` 量測（見下方 Benchmark）。
+
+### ControlNet 預設關閉
+
+在 8GB 卡上，加 ControlNet OpenPose 單張約 390 秒，超過 5 分鐘目標（checkpoint +
+FaceID + CLIP vision + ControlNet 遠超 VRAM，模型反覆換入換出）。所以 HQ 預設不開
+ControlNet，只有真的要指定姿勢時才在 GUI／`--pose-reference` 開啟，GUI 也有超時警告。
+
 ## 生成參數
 
 `comfyui_client.py` 頂部的集中設定：
 
 | 參數 | 值 |
 |---|---|
-| CHECKPOINT | `juggernaut_xl_v9_photo.safetensors` |
+| CHECKPOINT（資料集流程） | `juggernaut_xl_v9_photo.safetensors`（`gen_anchors`/`gen_variations` 用） |
+| 自訂生圖/GUI 預設 checkpoint | `CyberRealisticPony_V18.0_F16.safetensors`（`DEFAULT_CUSTOM_CHECKPOINT`，Pony 系寫實） |
 | WIDTH × HEIGHT | 1024 × 1024（可調，見 `benchmark.py` 的 768 測試） |
 | BATCH_SIZE | 1（8GB VRAM 卡死限制，不做多圖 batch） |
 | STEPS | 30 |
@@ -807,6 +1034,14 @@ watermark, text
 | IP_ADAPTER_WEIGHT | 1.0（FaceID 自己的權重量表，背面鏡頭自動降為 0.3） |
 | 風格 LoRA 強度 | 2.5（`sdxl_photorealistic_slider_v1-0`，建議範圍 0-5.0） |
 | FACEDETAILER_DENOISE | 0.5（ADetailer 臉部/手部精修，選用功能才會用到） |
+| **HQ 路徑（`submit_generation_hq`，預設）** | 兩段式 base→ESRGAN hires→臉/手精修 |
+| UPSCALE_MODEL | `4x-UltraSharp.pth`（4x ESRGAN，皮膚細節優於 RealESRGAN） |
+| HIRES_SCALE / HIRES_DENOISE / HIRES_STEPS | 1.5 / 0.4 / 20 |
+| HQ_BASE_STEPS | 24（第一段），第一段解析度＝最終÷1.5 |
+| 最終解析度 | 正方 1248×1248、直式 1056×1536、橫式 1536×1056 |
+| FACEDETAILER_FACE / HAND_DENOISE | 0.4 / 0.35 |
+| CHARACTER_LORA_STRENGTH | 0.8（角色 LoRA，node 14，與 FaceID 並用） |
+| INSIGHTFACE_PROVIDER | `CPU`（避開 onnxruntime 佔用 torch 帳外 VRAM 造成的換入換出，可用環境變數覆蓋） |
 | ANIMATEDIFF_CHECKPOINT | `v1-5-pruned-emaonly.safetensors`（SD1.5，跟上面 SDXL 的 CHECKPOINT 分開） |
 | ANIMATEDIFF_MOTION_MODULE | `mm_sd_v15_v2.ckpt` |
 | ANIMATEDIFF_WIDTH × HEIGHT | 512 × 512（SD1.5 原生解析度） |
@@ -849,6 +1084,26 @@ python benchmark.py
 | Test A | 768×768 ×10 張 | 5192 → 6280 MB，穩定 | 20.4 s/張 | 無（+0 MB） |
 | Test B | 1024×1024 ×10 張 | 6280 → 5192 MB，穩定 | 36.5 s/張 | 無（+0 MB） |
 
+HQ 兩段式（`benchmark.py --hq --anchor <臉圖>`，逐階段計時 + 300 秒 pass/fail）：
+
+| 測試 | 最終解析度 | VRAM 峰值 | 平均耗時 | <300s |
+|---|---|---|---|---|
+| hq_square | 1248×1248 | 待測 | 待測 | 待測 |
+| hq_portrait | 1056×1536 | 待測 | 待測 | 待測 |
+
+> 加 `--insightface-provider CUDA` 與預設的 CPU 對照，可量出 FaceID 的 VRAM
+> 換入換出對耗時的影響；加 `--controlnet` 量 ControlNet 版本（預期超過 300 秒）。
+
+## 本地顯卡不夠力時：雲端 GPU
+
+文字生圖/圖生圖本地這張卡吃得消，影片生成（`video`/`video-animatediff`）和
+kohya_ss LoRA 訓練還撐不住——什麼時候該搬去 Replicate、什麼時候該搬去
+RunPod、怎麼接上現有的 `comfyui_client.py`，見 [CLOUD_GPU.md](CLOUD_GPU.md)。
+
+要把網頁部署到 AWS Amplify、GPU 運算外包給 Replicate/RunPod 的架構規劃
+（`gui.py`/`image_api.py` 哪些能重用、哪些要重寫），見
+[WEB_DEPLOYMENT.md](WEB_DEPLOYMENT.md)——目前只是規劃文件，還沒有對應實作。
+
 ## 資料夾結構
 
 ```
@@ -860,10 +1115,12 @@ AI-Image-Lab/
 │   ├── comfyui_client.py     # ComfyUI HTTP client（不 import torch）
 │   ├── gui.py                # Gradio 本地網頁 GUI（localhost:7860）
 │   ├── caption_image.py      # BLIP 圖像描述模型（用於自動產生 prompt）
+│   ├── translate_prompt.py   # Prompt 自動翻譯成英文（Google Translate 公開端點）
 │   ├── check_adetailer_models.py # ADetailer YOLO 模型自動檢查/下載腳本
 │   ├── benchmark.py          # VRAM/RAM 記憶體洩漏測試
 │   ├── workflow_template.json             # IP-Adapter workflow（variations 用）
 │   ├── workflow_template_txt2img.json     # 純 txt2img workflow（anchor 用）
+│   ├── workflow_template_img2img.json     # IP-Adapter + img2img workflow（gif 指令的 wiggle 幀用）
 │   ├── workflow_template_controlnet.json  # IP-Adapter + ControlNet 骨架 workflow
 │   ├── workflow_template_facedetailer.json # IP-Adapter + ADetailer 臉部/手部精修 workflow（YOLO）
 │   ├── workflow_template_mediapipe_facedetailer.json # 同上，臉部偵測改用 MediaPipe 網格
@@ -874,7 +1131,9 @@ AI-Image-Lab/
 ├── outputs/_comfyui_raw/     # ComfyUI 原始輸出暫存，不進 repo
 ├── captions/ evaluation/ samples/  # 保留給未來 kohya_ss LoRA 訓練階段用，目前空
 ├── comfyui-requirements.lock.txt   # ComfyUI 本體套件凍結版本清單
-└── comfyui-requirements-extra.lock.txt   # 網頁 GUI + 所有選用功能（ControlNet/ADetailer/mediapipe）套件凍結版本清單
+├── comfyui-requirements-extra.lock.txt   # 網頁 GUI + 所有選用功能（ControlNet/ADetailer/mediapipe）套件凍結版本清單
+├── CLOUD_GPU.md               # 本地顯卡不夠力時的雲端 GPU 參考（Replicate/RunPod）
+└── WEB_DEPLOYMENT.md          # 網頁部署規劃（AWS Amplify + Replicate/RunPod，尚無實作）
 ```
 
 ## 疑難排解
@@ -916,7 +1175,60 @@ RTX 2070 是 Turing 架構（compute capability 7.5），bf16 tensor core 要 Am
 > SDXL 在 fp16 下的已知問題（VAE 數值容易溢位），已知的標準解法是加
 > `--no_half_vae`（VAE 維持 fp32，UNet/text encoder 照常用 fp16），但**這個
 > 修正還沒有實際跑過驗證**，只是根據症狀對照到已知問題模式判斷出來的，下次
-> 繼續訓練測試時要先確認這個 flag 真的解決了 NaN 的問題，不要預設它已經修好。
+> 繼續訓練測試時要先確認這個 flag 真的解決了 NaN 的問題。
+>
+> **現在的做法**：不在本地用 fp16 硬撐，改到 RunPod 用 bf16 + `--no_half_vae`
+> 訓練（見下方「在 RunPod 訓練角色 LoRA」），bf16 本身就避開了 fp16 VAE 溢位。
+
+### 在 RunPod 訓練角色 LoRA（bf16 解決 NaN）
+
+本地 RTX 2070 不支援 bf16、fp16 又會讓 loss 從第一步就變成 NaN，所以角色 LoRA
+一律搬到 RunPod 用有 bf16 的卡（RTX 4090 / A100）訓練，訓好把 `.safetensors`
+拉回本地，和 IP-Adapter FaceID **並用**（LoRA 扛身分、FaceID 只修飄移）。
+
+底模用 **Pony V6 base**（`ponyDiffusionV6XL_v6StartWithThisOne.safetensors`），
+因為推論用的是 cyberrealistic_pony / pony_realism 等 Pony 系；Pony V6 重訓過
+text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給 Juggernaut 用
+就以 `--base sdxl` 再訓一次（不到 $1）。
+
+步驟：
+
+1. **補資料集（若太少）**：`xinyi`/`yuqing`/`wanling`/`ruoxi` 目前只有個位數張，
+   先在本地補到 40-60 張：
+   ```powershell
+   python generate_character.py variations --character xinyi --anchor <anchor.png> --count 60
+   ```
+2. **打包**（自動排除本地 fp16 產生的 `.npz` 快取，並依資料集張數算好 num_repeats）：
+   ```powershell
+   python runpod_bundle.py pack --character xinyi --base pony
+   ```
+3. **開 pod**：RunPod 控制台開一台 RTX 4090（Community，約 $0.34/hr），選官方
+   PyTorch template，掛一個 30GB Network Volume（模型與輸出持久化）。先把 Pony V6
+   base 下載到 `/workspace/models/`（一次即可）。
+4. **上傳並訓練**：
+   ```
+   # Windows：runpodctl send 印出一次性代碼
+   runpodctl send training\runpod_bundle\xinyi.zip
+   # Pod：
+   cd /workspace && runpodctl receive <代碼> && unzip -o xinyi.zip
+   bash runpod_train.sh xinyi pony
+   ```
+   約 1000 步、4090 上 ~30 分鐘、不到 $1。**前 20 步先確認 `avr_loss` 是有限值
+   （0.05-0.25）不是 NaN**；bf16 + `--no_half_vae` 正是修 NaN 的關鍵。
+5. **挑 epoch**：看 `output/xinyi/` 每個 epoch 的 sample 圖，通常第 6-8 個 epoch
+   在身分穩定與過擬合之間最平衡；`runpodctl send` 把該檔傳回。
+6. **安裝並註冊**：
+   ```powershell
+   python runpod_bundle.py install --file xinyi_pony_v1-000007.safetensors --character xinyi --base pony
+   ```
+   會複製到 `models/lora/` 並 hardlink 進 `ComfyUI/models/loras/`，再把印出來的
+   `lora` 欄位貼進 `generate_character.py` 的 `CHARACTERS["xinyi"]`。之後 HQ 生圖
+   選這個角色就會自動套 LoRA，並把 FaceID 權重降到 0.7。
+7. **用完務必停止 pod**（只留 Network Volume），否則按小時持續計費。
+
+> 本地 `datasets/character` 裡的 `.npz`（latent / text-encoder 快取）是舊 fp16
+> 那次 NaN 產生的，kohya 只驗 shape 不驗內容，且對 Pony 的 CLIP 也無效——打包時
+> 已自動排除，pod 上會乾淨重算。
 
 ### 生成中途卡住 / VRAM、RAM 用量偏低導致崩潰
 
@@ -930,9 +1242,10 @@ RTX 2070 是 Turing 架構（compute capability 7.5），bf16 tensor core 要 Am
 
 ## Roadmap（尚未完成）
 
-- **kohya_ss LoRA 訓練階段**：進行中，還沒有成功跑完一次。目前卡在訓練 loss
-  一直是 `NaN`（見上面「疑難排解」章節），`--no_half_vae` 是候選修正但還沒驗證。
-  `captions/` / `evaluation/` / `samples/` 目前是預留的空資料夾
+- **kohya_ss LoRA 訓練階段**：本地 fp16 會 NaN，已改為在 RunPod 用 bf16 +
+  `--no_half_vae` 訓練（見「在 RunPod 訓練角色 LoRA」章節，`runpod_bundle.py` +
+  `runpod_train.sh`）。訓好的 LoRA 與 FaceID 並用，`CHARACTERS` 的 `lora` 欄位
+  預設為 `None`，安裝後填入。`captions/` / `evaluation/` / `samples/` 仍是預留空資料夾
 - 早期用 `diffusers` 直接載入模型時曾發生過一次無 traceback 的批次崩潰
   （生成到第 37 張左右 exit code 1）。改用本 repo 現在的 ComfyUI + API 架構後
   未再重現（100+ 張連續生成、benchmark 皆無異常），但當時沒有做根因診斷，

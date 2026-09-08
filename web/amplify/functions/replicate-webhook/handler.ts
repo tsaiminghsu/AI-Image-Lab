@@ -24,15 +24,14 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     return { statusCode: 400, body: "missing prediction id" };
   }
 
-  // jobId 不是 predictionId，要反查——這裡假設 JOBS_TABLE 上有一個名叫
-  // byReplicatePredictionId 的 GSI（partition key: replicatePredictionId），
-  // 見 web/amplify/backend.ts。量小的時候這樣就夠，之後量大可以考慮改用
-  // Replicate prediction 建立時傳的自訂 metadata 之類的機制減少一次查詢。
+  // jobId 不是 predictionId，要反查——用 provider 中立的 byProviderJobId GSI
+  // （partition key: providerJobId，見 web/amplify/backend.ts），Replicate 跟
+  // RunPod 兩條路共用同一個欄位與索引。量小的時候這樣就夠。
   const { Items } = await ddb.send(
     new QueryCommand({
       TableName: TABLE,
-      IndexName: "byReplicatePredictionId",
-      KeyConditionExpression: "replicatePredictionId = :pid",
+      IndexName: "byProviderJobId",
+      KeyConditionExpression: "providerJobId = :pid",
       ExpressionAttributeValues: { ":pid": prediction.id },
     }),
   );

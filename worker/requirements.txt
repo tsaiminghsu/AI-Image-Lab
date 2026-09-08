@@ -1,0 +1,9 @@
+# Worker-only Python deps, layered ON TOP of ComfyUI's own environment
+# (ComfyUI installs torch + its requirements separately in the Dockerfile).
+# insightface / onnxruntime-gpu / ultralytics / controlnet_aux versions come
+# from the repo-root lock files, NOT here, so they stay in sync with local.
+runpod>=1.6.0
+boto3>=1.34.0
+requests>=2.31.0
+pillow>=10.0.0
+websockets>=12.0

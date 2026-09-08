@@ -39,6 +39,23 @@ REALISTIC_NEGATIVE = (
     "smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine"
 )
 
+# Pony-family checkpoints (client.PONY_CHECKPOINTS) were trained on a
+# "score_9, score_8_up, score_7_up"-style quality-tag prefix convention, not
+# plain natural language - this is a technical quality switch baked into
+# Pony's training data, not content description, so gen_custom() auto-
+# prepends it whenever a Pony checkpoint is selected (see below). Callers
+# (GUI/API/CLI) never need to know or type this themselves - prompt input
+# stays plain natural language no matter which checkpoint is picked.
+PONY_QUALITY_TAGS = "score_9, score_8_up, score_7_up"
+
+# Negative-side complement to PONY_QUALITY_TAGS - excludes the quality tiers
+# just below the positive prefix's floor (score_7_up means "7 or better", so
+# these push away from the 4-6 range). Same auto-prepend treatment, same
+# reasoning: a Pony-specific technical convention, not something callers
+# should need to know about or type into extra_negative/style_negative
+# themselves.
+PONY_QUALITY_NEGATIVE_TAGS = "score_6, score_5, score_4"
+
 # Always included no matter the content tier below - not a dial that gets
 # loosened for the suggestive/nsfw modes.
 AGE_SAFETY_NEGATIVE = "child, children, kid, minor, teen, teenager, underage, young girl"
@@ -141,9 +158,29 @@ CHARACTERS = {
     },
 }
 
+# Per-character LoRA registry. None until a LoRA is trained on RunPod and its
+# .safetensors is dropped into ComfyUI/models/loras/ (see runpod_bundle.py
+# install). When set, it's a dict:
+#   {"file": "xinyi_pony_v1.safetensors", "trigger": "xinyi", "base_family": "pony",
+#    "strength_model": 0.8, "strength_clip": 0.8, "faceid_weight": 0.7}
+# The trigger equals the CHARACTERS key (already the first caption token). Used
+# TOGETHER with IP-Adapter FaceID: the LoRA carries identity, FaceID (dropped to
+# faceid_weight) only corrects drift. base_family lets gen_custom warn when the
+# selected checkpoint family doesn't match what the LoRA was trained on.
 for _name, _profile in CHARACTERS.items():
     if _profile["age"] < MINIMUM_AGE:
         raise ValueError(f"character '{_name}' age {_profile['age']} is below MINIMUM_AGE={MINIMUM_AGE}")
+    _profile.setdefault("lora", None)
+
+# Where character LoRAs live locally (hardlinked from models/lora/, see README).
+# gen_custom checks a LoRA file exists here before wiring it into the workflow.
+COMFYUI_LORAS_DIR = os.path.join(os.path.dirname(__file__), "..", "ComfyUI", "models", "loras")
+
+# Default checkpoint for the HQ custom-generation path (GUI/API/CLI) when the
+# caller doesn't pick one. Pony-family photoreal merge - matches the GUI's
+# shipped default. client.CHECKPOINT stays juggernaut for the anchor/variations
+# dataset stages (gen_anchors / gen_variations), which are a separate concern.
+DEFAULT_CUSTOM_CHECKPOINT = "cyberrealistic_pony"
 
 
 def get_character(trigger):
@@ -453,10 +490,116 @@ def gen_suggestive_variations(trigger, anchor_path, out_dir, count, ip_adapter_w
     client.log_gpu_memory("after_suggestive_variation_batch")
 
 
+def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_positive, style_negative, checkpoint):
+    """Shared by gen_custom() and gen_gif() so both compose the final
+    positive/negative prompt strings identically - character identity
+    prefix, style terms, safety negatives, and the Pony quality-tag
+    auto-prepend all live in exactly one place instead of two copies that
+    could drift out of sync."""
+    style_positive = REALISTIC_STYLE if style_positive is None else style_positive
+    style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
+
+    safety_negative = SAFE_SAFETY_NEGATIVE if tier == "safe" else SUGGESTIVE_NEGATIVE
+    base_negative = f"{safety_negative}, {style_negative}" if style_negative else safety_negative
+    negative_prompt = f"{base_negative}, {extra_negative}" if extra_negative else base_negative
+    if checkpoint in client.PONY_CHECKPOINTS:
+        negative_prompt = f"{PONY_QUALITY_NEGATIVE_TAGS}, {negative_prompt}"
+
+    if trigger:
+        profile = get_character(trigger)
+        full_prompt = f"{character_base_prompt(trigger, profile)}, {prompt}"
+    else:
+        full_prompt = prompt
+    if style_positive:
+        full_prompt = f"{full_prompt}, {style_positive}"
+    if checkpoint in client.PONY_CHECKPOINTS:
+        full_prompt = f"{PONY_QUALITY_TAGS}, {full_prompt}"
+
+    return full_prompt, negative_prompt
+
+
+def _checkpoint_family(checkpoint_key):
+    """Maps a CHECKPOINTS key to a family label for LoRA compatibility checks."""
+    if checkpoint_key in client.PONY_CHECKPOINTS:
+        return "pony"
+    if checkpoint_key in client.SD15_CHECKPOINTS:
+        return "sd15"
+    return "sdxl"
+
+
+def _run_hq(full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose_reference_path,
+            width, height, ip_adapter_weight, effective_checkpoint, lora_strength,
+            character_lora_strength, controlnet_strength, hires_denoise, use_facedetailer,
+            face_denoise, hand_denoise):
+    """Resolves the per-character LoRA (if any), lowers FaceID weight when a
+    LoRA carries identity, uploads anchor/pose, and calls submit_generation_hq.
+    Shared by gen_custom's HQ branch. anchor_path (IP-Adapter) and
+    pose_reference_path (ControlNet) are both optional here - the HQ template
+    bypasses whichever nodes aren't needed."""
+    character_lora = None
+    resolved_lora_strength = character_lora_strength
+    if trigger:
+        loradef = get_character(trigger).get("lora")
+        if loradef:
+            fname = loradef["file"]
+            if os.path.isfile(os.path.join(COMFYUI_LORAS_DIR, fname)):
+                character_lora = fname
+                if resolved_lora_strength is None:
+                    resolved_lora_strength = loradef.get("strength_model", client.CHARACTER_LORA_STRENGTH)
+                fam = loradef.get("base_family")
+                if fam and effective_checkpoint and _checkpoint_family(effective_checkpoint) != fam:
+                    print(f"warning: character LoRA {fname} was trained on '{fam}' but checkpoint "
+                          f"{effective_checkpoint!r} is '{_checkpoint_family(effective_checkpoint)}' - "
+                          "identity may transfer poorly", flush=True)
+                # LoRA carries identity, so FaceID only corrects drift - drop its
+                # weight unless the caller explicitly changed it from the default.
+                if anchor_path and ip_adapter_weight == client.IP_ADAPTER_WEIGHT:
+                    ip_adapter_weight = loradef.get("faceid_weight", 0.7)
+            else:
+                print(f"warning: character LoRA {fname} not found in {COMFYUI_LORAS_DIR} - "
+                      "generating with FaceID only (train it on RunPod, see runpod_bundle.py install)", flush=True)
+
+    ip_filename = client.upload_reference_image(anchor_path) if anchor_path else None
+    pose_filename = client.upload_reference_image(pose_reference_path) if pose_reference_path else None
+
+    hq_kwargs = {}
+    if effective_checkpoint:
+        hq_kwargs["checkpoint"] = client.CHECKPOINTS[effective_checkpoint]
+    if lora_strength is not None:
+        hq_kwargs["lora_strength"] = lora_strength
+    elif effective_checkpoint in client.PONY_CHECKPOINTS:
+        hq_kwargs["lora_strength"] = 0.0  # style slider was tuned for juggernaut, off for Pony
+    if controlnet_strength is not None:
+        hq_kwargs["controlnet_strength"] = controlnet_strength
+
+    return client.submit_generation_hq(
+        prompt=full_prompt,
+        negative_prompt=negative_prompt,
+        seed=seed,
+        filename_prefix=stem,
+        ip_adapter_image_filename=ip_filename,
+        width=width,
+        height=height,
+        ip_adapter_weight=ip_adapter_weight,
+        character_lora=character_lora,
+        character_lora_strength=(resolved_lora_strength if resolved_lora_strength is not None
+                                 else client.CHARACTER_LORA_STRENGTH),
+        pose_image_filename=pose_filename,
+        hires=True,
+        hires_denoise=(hires_denoise if hires_denoise is not None else client.HIRES_DENOISE),
+        use_facedetailer=use_facedetailer,
+        face_denoise=(face_denoise if face_denoise is not None else client.FACEDETAILER_FACE_DENOISE),
+        hand_denoise=(hand_denoise if hand_denoise is not None else client.FACEDETAILER_HAND_DENOISE),
+        **hq_kwargs,
+    )
+
+
 def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_adapter_weight,
                 pose_reference_path=None, controlnet_strength=None, width=None, height=None,
-                use_facedetailer=False, facedetailer_denoise=None, facedetailer_backend="yolo",
-                style_positive=None, style_negative=None, checkpoint=None, lora_strength=None):
+                use_facedetailer=None, facedetailer_denoise=None, facedetailer_backend="yolo",
+                style_positive=None, style_negative=None, checkpoint=None, lora_strength=None,
+                hq=True, character_lora_strength=None, hires_denoise=None,
+                facedetailer_face_denoise=None, facedetailer_hand_denoise=None):
     """Free-form prompt generation for one-off tests. The descriptive part of
     the prompt is fully up to the caller, but the safety negatives are not a
     dial that gets turned off here: AGE_SAFETY_NEGATIVE is always included,
@@ -505,6 +648,14 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     checkpoint like pony, since that LoRA was tuned against Juggernaut's
     photoreal style, not Pony's more illustration-leaning training data.
 
+    checkpoints in comfyui_client.PONY_CHECKPOINTS (pony, cyberrealistic_pony,
+    pony_realism) expect a "score_9, score_8_up, score_7_up"-style quality-tag
+    prefix per Pony's training convention, plus its negative-side complement
+    ("score_6, score_5, score_4") - PONY_QUALITY_TAGS/PONY_QUALITY_NEGATIVE_TAGS
+    are auto-prepended to prompt/negative_prompt whenever one of these is
+    selected, so both stay plain natural language regardless of checkpoint;
+    callers never need to type either tag set themselves.
+
     checkpoints in comfyui_client.SD15_CHECKPOINTS (e.g. "realistic_vision",
     "cyberrealistic") are SD1.5, not SDXL/Pony - only plain txt2img works with
     these so far (no trigger/anchor_path, pose_reference_path, or
@@ -519,19 +670,38 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     same issue that build_variation_prompt's pick_angle() works around for
     the batch generators. Explicit width/height always wins over that
     default. Plain 1024x1024 stays the default with no pose reference."""
-    if pose_reference_path and not anchor_path:
-        raise SystemExit("pose_reference requires anchor_path (ControlNet workflow still needs a face anchor for IP-Adapter)")
-    if use_facedetailer and pose_reference_path:
-        raise SystemExit("use_facedetailer and pose_reference are on separate workflow templates and can't be combined yet")
-    if use_facedetailer and not anchor_path:
-        raise SystemExit("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
     if checkpoint and checkpoint not in client.CHECKPOINTS:
         raise SystemExit(f"unknown checkpoint {checkpoint!r} - choices: {sorted(client.CHECKPOINTS)}")
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
-    if is_sd15 and (anchor_path or pose_reference_path or use_facedetailer):
-        raise SystemExit(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up so far "
-                          "(anchor/IP-Adapter, pose_reference/ControlNet, and use_facedetailer all need "
-                          "the SDXL-family adapter files, which don't match SD1.5's UNet/CLIP shape)")
+
+    # HQ two-pass path is the default for SDXL/Pony. It combines the FaceID,
+    # ControlNet and FaceDetailer chains into one workflow, so the old "can't
+    # combine" restrictions only apply to the legacy (hq=False) path. SD1.5
+    # has no HQ path (no SDXL-family adapter/upscale wiring), so it falls back.
+    use_hq = hq and not is_sd15
+
+    if use_facedetailer is None:
+        use_facedetailer = use_hq  # HQ defaults FaceDetailer on; legacy defaults off
+
+    if not use_hq:
+        if pose_reference_path and not anchor_path:
+            raise SystemExit("pose_reference requires anchor_path (ControlNet workflow still needs a face anchor for IP-Adapter)")
+        if use_facedetailer and pose_reference_path:
+            raise SystemExit("use_facedetailer and pose_reference are on separate workflow templates and can't be combined yet (turn on hq to combine them)")
+        if use_facedetailer and not anchor_path:
+            raise SystemExit("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
+    if is_sd15 and (anchor_path or pose_reference_path):
+        raise SystemExit(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up "
+                          "(anchor/IP-Adapter and pose_reference/ControlNet need the SDXL-family "
+                          "adapter files, which don't match SD1.5's UNet/CLIP shape)")
+
+    # HQ custom generation defaults to the Pony-family photoreal checkpoint when
+    # the caller didn't pick one (matches the GUI default). Dataset stages
+    # (gen_anchors/gen_variations) keep client.CHECKPOINT (juggernaut) - separate.
+    effective_checkpoint = checkpoint
+    if effective_checkpoint is None and use_hq:
+        effective_checkpoint = DEFAULT_CUSTOM_CHECKPOINT
+
     if width is None or height is None:
         if is_sd15:
             width, height = client.SD15_WIDTH, client.SD15_HEIGHT
@@ -544,25 +714,23 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     if lora_strength is not None:
         ckpt_kwargs["lora_strength"] = lora_strength
 
-    style_positive = REALISTIC_STYLE if style_positive is None else style_positive
-    style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
-
-    safety_negative = SAFE_SAFETY_NEGATIVE if tier == "safe" else SUGGESTIVE_NEGATIVE
-    base_negative = f"{safety_negative}, {style_negative}" if style_negative else safety_negative
-    negative_prompt = f"{base_negative}, {extra_negative}" if extra_negative else base_negative
-
     os.makedirs(out_dir, exist_ok=True)
     stem = filename or f"custom_seed{seed}"
 
-    if trigger:
-        profile = get_character(trigger)
-        full_prompt = f"{character_base_prompt(trigger, profile)}, {prompt}"
-    else:
-        full_prompt = prompt
-    if style_positive:
-        full_prompt = f"{full_prompt}, {style_positive}"
+    full_prompt, negative_prompt = _build_prompt_and_negative(
+        prompt, extra_negative, tier, trigger, style_positive, style_negative, effective_checkpoint,
+    )
 
-    if pose_reference_path:
+    if use_hq:
+        raw_path = _run_hq(
+            full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose_reference_path,
+            width, height, ip_adapter_weight, effective_checkpoint, lora_strength,
+            character_lora_strength, controlnet_strength,
+            hires_denoise, use_facedetailer,
+            facedetailer_face_denoise if facedetailer_face_denoise is not None else facedetailer_denoise,
+            facedetailer_hand_denoise,
+        )
+    elif pose_reference_path:
         ref_filename = client.upload_reference_image(anchor_path)
         pose_filename = client.upload_reference_image(pose_reference_path)
         kwargs = dict(ckpt_kwargs)
@@ -637,6 +805,120 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     print(f"saved {img_path}", flush=True)
 
 
+GIF_WIGGLE_DENOISE = 0.45  # measured, not guessed: diffed actual output pixels at 0.3/0.5/0.7 against
+# the same base frame (juggernaut, 1024x1024). 0.3 -> ~19% of pixels changed >10/255, 0% changed
+# >50/255 - reads as static because it's texture/edge shimmer only (skin/hair/fabric grain jitter),
+# no actual pose movement. 0.7 -> 93%/36% changed, and the diff shows visible double-exposure
+# ghosting (hand and head clearly in two different positions) - past the "same pose" point, this is
+# a different pose the sampler resampled its way into, not the base frame wiggling. 0.45 sits inside
+# the still-unmeasured gap between those two data points, picked as a starting point that should read
+# as visible motion without yet crossing into pose drift - not itself verified at this exact value,
+# only bracketed between two that were.
+
+
+def gen_gif(prompt, extra_negative, tier, trigger, anchor_path, out_dir, base_seed, frame_count,
+            ip_adapter_weight, duration_ms=300, denoise=GIF_WIGGLE_DENOISE, width=None, height=None,
+            style_positive=None, style_negative=None, checkpoint=None, lora_strength=None):
+    """Generates ONE base frame via gen_custom() (full txt2img, establishes
+    the person/pose/scene), then frame_count-1 more frames via low-denoise
+    img2img on that SAME base frame image (same prompt, different seed each
+    time), then stitches all frames into an animated GIF with Pillow.
+
+    This is a fix for an earlier version of this function that called
+    gen_custom() from scratch for every frame (same prompt, different seed,
+    nothing else shared) - independent txt2img samples don't share any
+    structure with each other even under an identical prompt, so that
+    produced a "different person/outfit/scene each frame" slideshow instead
+    of the same scene wiggling. img2img at a low denoise barely perturbs the
+    base frame's composition, so every frame stays the same person, same
+    pose, same scene - the different seed only introduces small per-frame
+    variation (the "wiggle"), because the sampler starts from the base
+    frame's own (lightly re-noised) latent instead of pure noise.
+
+    denoise controls how far each wiggle frame is allowed to drift from the
+    base frame: 0 = identical to the base (no motion at all), 1 = fully
+    independent resample (back to the old from-scratch behavior). Measured
+    against real output (see GIF_WIGGLE_DENOISE's comment): 0.3 reads as
+    static (only texture/edge-level jitter, no pose movement), 0.7 already
+    shows the pose visibly drifting (double-exposure-style ghosting in a
+    pixel diff against the base frame) - default 0.45 sits in the
+    unmeasured gap between those two, turn it down toward 0.3 if frames
+    still drift too far, up toward 0.6-0.7 if they still look static.
+
+    Still not real motion like gen_video_animatediff - there's no temporal
+    model, just the same base image repeatedly perturbed with fresh noise -
+    but every frame now actually shares the base frame's composition, which
+    independent per-frame txt2img never guaranteed.
+
+    A face reference is required for the wiggle frames' IP-Adapter FaceID
+    conditioning: anchor_path if given, otherwise the base frame's own
+    generated image is used as its own face reference (self-conditioning) -
+    this assumes the base frame actually contains a recognizable face, which
+    holds for this project's normal character-generation use but won't for
+    an anchor-less, trigger-less object/scene prompt (e.g. "a cup of coffee
+    on a wooden table" from gen_custom's own docstring example) - IP-Adapter
+    FaceID has no face to lock onto in that case. gen_gif is meant for
+    character generation, not that edge case; use gen_custom directly for a
+    single object/scene image instead.
+
+    Deliberately skips pose_reference_path/use_facedetailer (gen_custom's
+    per-frame extras) - not wired into the img2img workflow template."""
+    if checkpoint in client.SD15_CHECKPOINTS:
+        raise SystemExit(f"checkpoint {checkpoint!r} is SD1.5 - gen_gif's img2img wiggle frames need "
+                          "IP-Adapter, which needs the SDXL-family model files SD1.5 doesn't have")
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    base_stem = f"gif_frame_000_seed{base_seed}"
+    gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, base_seed, base_stem, ip_adapter_weight,
+               width=width, height=height,
+               style_positive=style_positive, style_negative=style_negative,
+               checkpoint=checkpoint, lora_strength=lora_strength,
+               hq=False, use_facedetailer=False)  # gif base frame stays single-pass to match the img2img wiggle frames' size/speed
+    base_path = os.path.join(out_dir, f"{base_stem}.png")
+    frame_paths = [base_path]
+
+    full_prompt, negative_prompt = _build_prompt_and_negative(
+        prompt, extra_negative, tier, trigger, style_positive, style_negative, checkpoint,
+    )
+    ckpt_kwargs = {}
+    if checkpoint:
+        ckpt_kwargs["checkpoint"] = client.CHECKPOINTS[checkpoint]
+    if lora_strength is not None:
+        ckpt_kwargs["lora_strength"] = lora_strength
+
+    face_ref_path = anchor_path or base_path
+    ip_ref_filename = client.upload_reference_image(face_ref_path)
+    base_image_filename = client.upload_reference_image(base_path)
+
+    for i in range(1, frame_count):
+        seed = base_seed + i
+        stem = f"gif_frame_{i:03d}_seed{seed}"
+        raw_path = client.submit_img2img_generation(
+            prompt=full_prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            ip_adapter_image_filename=ip_ref_filename,
+            init_image_filename=base_image_filename,
+            denoise=denoise,
+            filename_prefix=stem,
+            ip_adapter_weight=ip_adapter_weight,
+            **ckpt_kwargs,
+        )
+        frame_path = os.path.join(out_dir, f"{stem}.png")
+        os.replace(raw_path, frame_path)
+        print(f"saved {frame_path}", flush=True)
+        frame_paths.append(frame_path)
+
+    from PIL import Image
+
+    frames = [Image.open(p).convert("RGB") for p in frame_paths]
+    gif_path = os.path.join(out_dir, f"gif_seed{base_seed}.gif")
+    frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=duration_ms, loop=0)
+    print(f"saved {gif_path}", flush=True)
+    return gif_path
+
+
 def gen_video(trigger, init_image_path, out_dir, seed, video_frames, fps, motion_bucket_id):
     """Animate an existing image (an anchor or a dataset variation) with SVD
     img2vid. Low-res/low-frame by default - see comfyui_client's VIDEO_* -
@@ -663,7 +945,8 @@ def gen_video(trigger, init_image_path, out_dir, seed, video_frames, fps, motion
 def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, out_dir, seed,
                            ip_adapter_weight=client.IP_ADAPTER_WEIGHT, facedetailer_denoise=None,
                            frames=None, fps=None, width=None, height=None,
-                           style_positive=None, style_negative=None, checkpoint=None):
+                           style_positive=None, style_negative=None, checkpoint=None,
+                           motion_lora=None, motion_lora_strength=1.0):
     """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking and
     a per-frame FaceDetailer face-fix pass - fixes the face warping that
     gen_video's plain SVD img2vid produces (SVD's temporal U-Net can't be
@@ -681,9 +964,18 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     checkpoint (optional) picks a name from comfyui_client.ANIMATEDIFF_CHECKPOINTS
     (e.g. "realistic_vision", "cyberrealistic") instead of the default plain
     SD1.5 base - must be SD1.5 (same UNet shape the motion module patches into),
-    NOT one of the SDXL/Pony names from comfyui_client.CHECKPOINTS."""
+    NOT one of the SDXL/Pony names from comfyui_client.CHECKPOINTS.
+
+    motion_lora (optional) picks a name from comfyui_client.ANIMATEDIFF_MOTION_LORAS
+    (e.g. "zoom_in") - conditions the motion module for that specific CAMERA
+    movement (zoom/pan/tilt/roll of the whole frame). This is NOT a control for
+    body-part-specific physical effects (no "bounce"/"jiggle" knob exists -
+    the motion module has no dedicated mechanism for that). motion_lora_strength
+    scales its effect, typical useful range is 0-2."""
     if checkpoint and checkpoint not in client.ANIMATEDIFF_CHECKPOINTS:
         raise SystemExit(f"unknown animatediff checkpoint {checkpoint!r} - choices: {sorted(client.ANIMATEDIFF_CHECKPOINTS)}")
+    if motion_lora and motion_lora not in client.ANIMATEDIFF_MOTION_LORAS:
+        raise SystemExit(f"unknown motion lora {motion_lora!r} - choices: {sorted(client.ANIMATEDIFF_MOTION_LORAS)}")
     style_positive = REALISTIC_STYLE if style_positive is None else style_positive
     style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
 
@@ -716,6 +1008,9 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
         kwargs["height"] = height
     if checkpoint:
         kwargs["checkpoint"] = client.ANIMATEDIFF_CHECKPOINTS[checkpoint]
+    if motion_lora:
+        kwargs["motion_lora_name"] = client.ANIMATEDIFF_MOTION_LORAS[motion_lora]
+        kwargs["motion_lora_strength"] = motion_lora_strength
 
     client.log_gpu_memory("before_animatediff")
     raw_path = client.submit_generation_animatediff(
@@ -789,6 +1084,29 @@ if __name__ == "__main__":
     p_custom.add_argument("--style-negative", default=None, help="overrides REALISTIC_NEGATIVE for this call only; omit to use the default. Never touches the age-safety/explicit-content negative terms, those aren't overridable")
     p_custom.add_argument("--checkpoint", default=None, choices=sorted(client.CHECKPOINTS), help="swap the SDXL checkpoint for this call only; omit for the pipeline default (juggernaut)")
     p_custom.add_argument("--lora-strength", type=float, default=None, help="overrides the sdxl_photorealistic_slider LoRA strength (baked into every template at 2.5); pass 0.0 when using --checkpoint pony, since that LoRA was tuned for juggernaut's photoreal style")
+    p_custom.add_argument("--no-hq", action="store_true", help="disable the default HQ two-pass path (base -> ESRGAN hires -> face/hand FaceDetailer) and use the legacy single-pass workflow instead")
+    p_custom.add_argument("--no-facedetailer", action="store_true", help="turn OFF the HQ path's face/hand FaceDetailer passes (on by default in HQ mode)")
+    p_custom.add_argument("--character-lora-strength", type=float, default=None, help="strength for the per-character LoRA (HQ path); defaults to the CHARACTERS profile's value or 0.8. Only used when the character has a trained LoRA")
+    p_custom.add_argument("--hires-denoise", type=float, default=None, help="HQ hires second-pass denoise; defaults to comfyui_client.HIRES_DENOISE (0.4). Higher restores more detail but risks identity drift")
+
+    p_gif = sub.add_parser("gif", help="batch-generate frame_count independent stills (same prompt, incrementing seed) and stitch them into an animated GIF - a fast flipbook-style preview, NOT smooth motion like video-animatediff")
+    p_gif.add_argument("--prompt", required=True, help="free-form positive prompt; combined with the character's identity prompt if --character is given")
+    p_gif.add_argument("--negative-prompt", default="", help="extra negative terms, appended on top of the mandatory safety negatives (never replaces them)")
+    p_gif.add_argument("--tier", choices=["safe", "suggestive"], default="safe")
+    p_gif.add_argument("--character", default=None, choices=sorted(CHARACTERS), help="optional - prepends this character's identity description")
+    p_gif.add_argument("--anchor", default=None, help="optional - face-conditions via IP-Adapter on this image. Must be a fictional/AI-generated face, never a real person's photo")
+    p_gif.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates")
+    p_gif.add_argument("--seed", type=int, default=9000, help="base seed - frame i uses seed + i")
+    p_gif.add_argument("--frames", type=int, default=8, help="total frames in the GIF - frame 1 is a full txt2img generation, frames 2+ are low-denoise img2img 'wiggle' variations of frame 1 (see gen_gif's docstring)")
+    p_gif.add_argument("--duration-ms", type=int, default=300, help="milliseconds each frame is shown for")
+    p_gif.add_argument("--denoise", type=float, default=GIF_WIGGLE_DENOISE, help="how far each wiggle frame can drift from frame 1's composition; 0=identical/no motion, 1=fully independent resample. Measured: 0.3 reads as static (texture jitter only), 0.7 already shows the pose visibly drifting - default 0.45 is the untested midpoint")
+    p_gif.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
+    p_gif.add_argument("--width", type=int, default=None)
+    p_gif.add_argument("--height", type=int, default=None)
+    p_gif.add_argument("--style-positive", default=None, help="overrides REALISTIC_STYLE for this call only; omit to use the default")
+    p_gif.add_argument("--style-negative", default=None, help="overrides REALISTIC_NEGATIVE for this call only; omit to use the default")
+    p_gif.add_argument("--checkpoint", default=None, choices=sorted(client.CHECKPOINTS), help="swap the SDXL checkpoint for this call only; omit for the pipeline default (juggernaut)")
+    p_gif.add_argument("--lora-strength", type=float, default=None, help="overrides the sdxl_photorealistic_slider LoRA strength; pass 0.0 when using a pony-family --checkpoint")
 
     p_video = sub.add_parser("video")
     p_video.add_argument("--character", required=True, choices=sorted(CHARACTERS))
@@ -816,6 +1134,8 @@ if __name__ == "__main__":
     p_video_ad.add_argument("--style-positive", default=None, help="overrides REALISTIC_STYLE for this call only; omit to use the default")
     p_video_ad.add_argument("--style-negative", default=None, help="overrides REALISTIC_NEGATIVE for this call only; omit to use the default. Never touches the age-safety/explicit-content negative terms, those aren't overridable")
     p_video_ad.add_argument("--checkpoint", default=None, choices=sorted(client.ANIMATEDIFF_CHECKPOINTS), help="swap the SD1.5 checkpoint AnimateDiff patches its motion module into; omit for the pipeline default (plain SD1.5 base)")
+    p_video_ad.add_argument("--motion-lora", default=None, choices=sorted(client.ANIMATEDIFF_MOTION_LORAS), help="camera-motion LoRA (zoom/pan/tilt/roll of the whole frame) - NOT a body-part physics control, no bounce/jiggle option exists. Requires the .ckpt downloaded to ComfyUI/models/animatediff_motion_lora/, see README")
+    p_video_ad.add_argument("--motion-lora-strength", type=float, default=1.0, help="scales the motion LoRA's effect; typical useful range is 0-2, values much above 1 tend to distort the frame")
 
     args = parser.parse_args()
     if args.mode == "list-characters":
@@ -838,14 +1158,30 @@ if __name__ == "__main__":
                                ip_adapter_weight=args.ip_adapter_weight, facedetailer_denoise=args.facedetailer_denoise,
                                frames=args.frames, fps=args.fps, width=args.width, height=args.height,
                                style_positive=args.style_positive, style_negative=args.style_negative,
-                               checkpoint=args.checkpoint)
+                               checkpoint=args.checkpoint,
+                               motion_lora=args.motion_lora, motion_lora_strength=args.motion_lora_strength)
     elif args.mode == "custom":
+        # use_facedetailer sentinel: None = auto (on for HQ, off for legacy);
+        # explicit flags override. --use-facedetailer forces on, --no-facedetailer off.
+        uf = None
+        if args.use_facedetailer:
+            uf = True
+        if args.no_facedetailer:
+            uf = False
         gen_custom(args.prompt, args.negative_prompt, args.tier, args.character, args.anchor, args.out, args.seed, args.filename, args.ip_adapter_weight,
                    pose_reference_path=args.pose_reference, controlnet_strength=args.controlnet_strength,
                    width=args.width, height=args.height,
-                   use_facedetailer=args.use_facedetailer, facedetailer_denoise=args.facedetailer_denoise,
+                   use_facedetailer=uf, facedetailer_denoise=args.facedetailer_denoise,
                    facedetailer_backend=args.facedetailer_backend,
                    style_positive=args.style_positive, style_negative=args.style_negative,
-                   checkpoint=args.checkpoint, lora_strength=args.lora_strength)
+                   checkpoint=args.checkpoint, lora_strength=args.lora_strength,
+                   hq=not args.no_hq, character_lora_strength=args.character_lora_strength,
+                   hires_denoise=args.hires_denoise)
+    elif args.mode == "gif":
+        gen_gif(args.prompt, args.negative_prompt, args.tier, args.character, args.anchor, args.out, args.seed, args.frames,
+                args.ip_adapter_weight, duration_ms=args.duration_ms, denoise=args.denoise,
+                width=args.width, height=args.height,
+                style_positive=args.style_positive, style_negative=args.style_negative,
+                checkpoint=args.checkpoint, lora_strength=args.lora_strength)
     else:
         gen_test_suggestive(args.character, args.anchor, args.out, args.seed, args.ip_adapter_weight)

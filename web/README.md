@@ -1,92 +1,105 @@
-# web/ — Amplify + Replicate 後端骨架
+# web/ — Amplify 後端（RunPod Serverless + Replicate 雙 provider）
 
-對應 [WEB_DEPLOYMENT.md](../WEB_DEPLOYMENT.md) 的 Phase 1：接 Replicate、
-webhook 模式、非同步 job-queue。
+對應 [WEB_DEPLOYMENT.md](../WEB_DEPLOYMENT.md)：非同步 job-queue、webhook 模式。
+現在同時接兩條 GPU 路：
 
-**驗證狀態**：`npm install` 實際裝過依賴（`package.json` 版本號是裝起來後
-從 `node_modules` 讀回來的真實版本，不是猜的），`npx tsc --noEmit` 對全部
-6 個原始檔通過型別檢查——過程中抓到並修掉兩個真的會編譯失敗的問題（
-`defineFunction` 沒有獨立的 `secrets` 選項，要跟 `environment` 合併用；
-`backend.<function>.resources.lambda` 是唯讀的 `IFunction` 介面，沒有
-`addEnvironment`，要呼叫 `backend.<function>.addEnvironment` 本身）。**但
-沒有實際 `npx ampx sandbox` 部署測試過**——這個環境沒有 AWS 帳號存取，CDK
-接線在型別層面正確不代表部署也一定順利（IAM 權限、資源命名限制這類問題
-只有真的部署才會浮現）。
+- **RunPod Serverless（預設）**：跑我們自建的 ComfyUI worker（見 repo 根目錄
+  `worker/`），沿用本地那套 FaceID / 角色 LoRA / HQ 兩段式 workflow，安全負面詞
+  是硬保證（worker 匯入 `generate_character.py`）。結果存進私有 S3 桶。
+- **Replicate**：跑別人包好的模型，安全負面詞只能 best-effort（`shared/safety.ts`）。
 
-## 這裡有什麼
+`provider` 由請求 body 的 `provider` 欄位決定，沒帶就用 `DEFAULT_PROVIDER`（預設
+`runpod`）。
+
+**驗證狀態**：`npm install` + `npx tsc --noEmit` 對全部原始檔通過型別檢查。**沒有
+實際 `npx ampx sandbox` 部署過**（這個環境沒有 AWS 帳號），CDK 接線型別正確不代表
+部署一定順利。
+
+## 結構
 
 ```
-web/
-├── amplify/
-│   ├── backend.ts                        # CDK 接線：DynamoDB + API Gateway + 兩個 Lambda
-│   └── functions/
-│       ├── generate/                     # POST /generate（送出）、GET /generate/{jobId}（查狀態）
-│       ├── replicate-webhook/            # POST /replicate-webhook（Replicate 完成通知）
-│       └── shared/safety.ts              # port 自 generate_character.py 的安全機制
-├── package.json
-└── tsconfig.json
+web/amplify/
+├── backend.ts                    # CDK：DynamoDB + API Gateway + 3 個 Lambda + S3 輸出桶
+└── functions/
+    ├── generate/                 # POST /generate（依 provider 分派）、GET /generate/{jobId}（查狀態 + presign）
+    │   └── providers/            # replicate.ts / runpod.ts / errors.ts
+    ├── replicate-webhook/        # POST /replicate-webhook（Replicate 完成通知，HMAC 驗證）
+    ├── runpod-webhook/           # POST /runpod-webhook（RunPod 完成通知，?token= 驗證）
+    └── shared/{safety.ts, provider-types.ts}
 ```
 
-## 還沒做的事（誠實列出，不要以為這裡就是完整實作）
+DynamoDB job 欄位：`jobId`（PK）、`provider`、`providerJobId`（GSI `byProviderJobId`
+反查用，兩條路共用）、`status`、`tier`、`characterId`、`outputKey`（RunPod 的 S3
+key）/`outputUrl`（Replicate 的暫存網址）、`seed`、`errorMessage`、時間戳。
 
-- **沒有實際部署測試過**——`npm install` + `npx tsc --noEmit` 都通過了，
-  但 `npx ampx sandbox` 需要 AWS 帳號憑證，這個環境沒有，沒辦法驗證 IAM
-  權限、資源命名這類只有真的部署才會浮現的問題
-- **完全沒有前端**——只有後端 API，Phase 3 才會處理
-- **只支援自由輸入 prompt**，`generate_character.py` 的 `CHARACTERS` 角色
-  設定檔（11 個角色的年齡/外貌/風格）還沒 port 過來，`generate/handler.ts`
-  現在只有 `prompt`/`tier` 兩個輸入欄位
-- **negative prompt 的安全保證是 best-effort**，不是本地 ComfyUI workflow
-  那種硬保證——見 `shared/safety.ts` 開頭註解，選用的 Replicate 模型如果
-  input schema 沒有 `negative_prompt` 欄位，這層防護實際上不會生效
-- **本地沒辦法測試**，因為 Lambda 需要 AWS 環境跑，`replicate-webhook` 也
-  需要一個外網可打到的網址（Replicate 才能真的送 webhook 過來）
+## 資料流
 
-## 設定步驟（要實際部署時）
+1. `POST /generate` → 依 provider 呼叫 `createRunpodJob` / `createReplicateJob` →
+   寫 `status: pending` + `providerJobId` → 立刻回 `{ jobId }`。
+2. provider 完成後打對應 webhook：Replicate 走 HMAC-SHA256 簽章；RunPod 走
+   `?token=<RUNPOD_WEBHOOK_TOKEN>`（timing-safe 比對）。webhook 用 GSI 反查 jobId，
+   更新 `status` 與 `outputKey`/`outputUrl`。
+3. `GET /generate/{jobId}`：若有 `outputKey` 就對私有 S3 桶產 1 小時 presigned URL
+   回給前端；Replicate 則直接回它的 `outputUrl`。
 
-1. **裝依賴**（`package.json` 的版本號已經實測 `npm install` 裝得起來、
-   `npx tsc --noEmit` 也通過，正常情況這步不會有版本衝突）：
+RunPod 的圖存進 **不公開**（BLOCK_ALL）的 S3 桶，30 天後自動刪，只能透過
+presigned URL 存取。
+
+## 還沒做的事
+
+- **沒有實際部署測試過**（沒有 AWS 帳號）。
+- **完全沒有前端**（Phase 3）。
+- **RunPod worker 的 Docker image 要另外建**：見 `worker/` 與
+  `.github/workflows/worker-image.yml`（在 GitHub Actions 上 build 推到 GHCR）。
+- **Cognito 還沒接**：目前對外驗證只有 `x-internal-key`（已改成 timing-safe 比對），
+  Phase 4 才換成正式登入。
+
+## 設定步驟（實際部署時）
+
+1. 裝依賴：
    ```powershell
    cd web
    npm install
    ```
 
-2. **選 Replicate 模型**：上 <https://replicate.com/explore> 找一個支援
-   image/video 生成的模型，進它的 API 分頁複製 **version id**（一長串
-   hash，不是 `owner/model-name` 這種名稱），本地先記下來，部署後設定成
-   `REPLICATE_MODEL_VERSION`
+2. 建 worker image 並開 RunPod endpoint（見 repo 根目錄 `worker/` 說明與
+   [../CLOUD_GPU.md](../CLOUD_GPU.md)）：push 觸發 GitHub Actions build → RunPod
+   建立 serverless endpoint（掛好 Network Volume，記下 endpoint id）→ 建一個只有
+   `s3:PutObject on generated/*` 權限的 IAM user，把 key 貼進 RunPod endpoint 的
+   secrets（`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_REGION`/`S3_BUCKET`）。
 
-3. **啟動 sandbox 開發環境**（需要先 `aws configure` 設好你自己的 AWS 帳號
-   憑證）：
+3. 啟動 sandbox（需先 `aws configure`）：
    ```powershell
    npx ampx sandbox
    ```
-   跑起來後用下面指令設定三個 secret：
+   設定 secret：
    ```powershell
+   npx ampx sandbox secret set INTERNAL_API_KEY
+   npx ampx sandbox secret set RUNPOD_API_KEY
+   npx ampx sandbox secret set RUNPOD_WEBHOOK_TOKEN
+   # 只有要用 Replicate 那條路才需要：
    npx ampx sandbox secret set REPLICATE_API_TOKEN
    npx ampx sandbox secret set REPLICATE_WEBHOOK_SECRET
-   npx ampx sandbox secret set INTERNAL_API_KEY
    ```
-   - `REPLICATE_API_TOKEN`：<https://replicate.com/account/api-tokens>
-   - `REPLICATE_WEBHOOK_SECRET`：Replicate 帳號的 webhook 簽章密鑰設定頁面
-     （見 [replicate.com/docs/topics/webhooks/verify-webhook](https://replicate.com/docs/topics/webhooks/verify-webhook)）
-   - `INTERNAL_API_KEY`：自己隨便產生一組長字串（例如
-     `openssl rand -hex 32`），前端呼叫 API 時要帶在 `x-internal-key` header
+   - `INTERNAL_API_KEY`：自己產一組長字串（`openssl rand -hex 32`），前端帶在
+     `x-internal-key` header
+   - `RUNPOD_API_KEY`：RunPod 帳號的 API key
+   - `RUNPOD_WEBHOOK_TOKEN`：自己產一組長字串，同一個值 generate 用來簽 webhook
+     URL、runpod-webhook 用來驗證
 
-4. **部署完成後**，去 Lambda 主控台把 `generate` function 的環境變數
-   `REPLICATE_MODEL_VERSION` 填上第 2 步拿到的 version id（`backend.ts`
-   目前先留空字串，避免寫死進原始碼跟著 git commit）
+4. 部署後在 Lambda 主控台把 `generate` 的環境變數填上：
+   - `RUNPOD_ENDPOINT_ID`：第 2 步的 endpoint id
+   - `REPLICATE_MODEL_VERSION`：只有要用 Replicate 才需要（見 `providers/replicate.ts`）
+   - `S3_BUCKET`（給 RunPod worker，不是 Lambda）：`backend.ts` 的 `addOutput`
+     會印出 `generatedBucketName`，那個值填進 RunPod endpoint 的 secrets
 
-5. **測試**：
+5. 測試（RunPod 路徑）：
    ```powershell
-   curl -X POST "<sandbox 輸出的 generationApiUrl>generate" `
-     -H "x-internal-key: <INTERNAL_API_KEY 的值>" `
+   curl -X POST "<generationApiUrl>generate" `
+     -H "x-internal-key: <INTERNAL_API_KEY>" `
      -H "Content-Type: application/json" `
-     -d '{\"prompt\": \"a photo of a cat\", \"tier\": \"safe\"}'
+     -d '{\"prompt\": \"sitting in a cafe\", \"characterId\": \"mei\", \"tier\": \"safe\", \"aspectRatio\": \"3:4\"}'
    ```
-   拿到 `jobId` 後過幾秒到幾分鐘（依模型而定）：
-   ```powershell
-   curl "<generationApiUrl>generate/<jobId>" -H "x-internal-key: <...>"
-   ```
-   `status` 應該從 `pending` 變成 `completed`（或 `failed`），`outputUrl`
-   會是生成結果的網址。
+   拿到 `jobId` 後輪詢，`status` 由 `pending` 轉 `completed`，`outputUrl` 是
+   presigned S3 網址。錯的 `?token=` 應該回 401；`tier` 非法值會被 worker 當成
+   `safe` 處理。

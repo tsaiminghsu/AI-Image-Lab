@@ -17,6 +17,7 @@ import gradio as gr
 import caption_image
 import comfyui_client as client
 import generate_character as gc
+import translate_prompt
 
 NO_CHARACTER = "(無 - 純文字生圖)"
 CHARACTER_CHOICES = [NO_CHARACTER] + sorted(gc.CHARACTERS)
@@ -42,6 +43,15 @@ def caption_uploaded_image(image_path):
     return caption, caption
 
 
+def translate_prompt_to_english(prompt_text):
+    if not prompt_text or not prompt_text.strip():
+        raise gr.Error("請先輸入 prompt")
+    try:
+        return translate_prompt.translate_to_english(prompt_text)
+    except RuntimeError as exc:
+        raise gr.Error(f"翻譯失敗（{exc}）——可以稍後再試一次，或直接自己改打英文") from exc
+
+
 def reset_resolution_for_sd15(checkpoint_choice):
     checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
     if checkpoint in client.SD15_CHECKPOINTS:
@@ -61,17 +71,21 @@ FACEDETAILER_BACKEND_MEDIAPIPE = "MediaPipe 臉部網格（貼合臉型輪廓）
 FACEDETAILER_BACKEND_CHOICES = [FACEDETAILER_BACKEND_YOLO, FACEDETAILER_BACKEND_MEDIAPIPE]
 
 
-CHECKPOINT_DEFAULT = "juggernaut (預設 - 寫實攝影風 SDXL)"
-CHECKPOINT_CHOICES = [CHECKPOINT_DEFAULT] + sorted(k for k in client.CHECKPOINTS if k != "juggernaut")
+CHECKPOINT_DEFAULT = "cyberrealistic_pony (預設 - Pony 系寫實)"
+CHECKPOINT_CHOICES = [CHECKPOINT_DEFAULT] + sorted(k for k in client.CHECKPOINTS if k != "cyberrealistic_pony")
 
 ANIMATEDIFF_CHECKPOINT_DEFAULT = "sd15_base (預設)"
 ANIMATEDIFF_CHECKPOINT_CHOICES = [ANIMATEDIFF_CHECKPOINT_DEFAULT] + sorted(
     k for k in client.ANIMATEDIFF_CHECKPOINTS if k != "sd15_base"
 )
 
+MOTION_LORA_NONE = "(無 - 純 prompt 描述動作)"
+MOTION_LORA_CHOICES = [MOTION_LORA_NONE] + sorted(client.ANIMATEDIFF_MOTION_LORAS)
+
 
 def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
-             pose_reference, controlnet_strength, resolution, use_facedetailer, facedetailer_denoise, facedetailer_backend,
+             pose_reference, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength,
+             use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
              style_positive, style_negative, checkpoint_choice, lora_strength):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
@@ -81,16 +95,19 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
         raise gr.Error("選了角色就要選一張 anchor 圖，或自行上傳一張")
     if pose_reference and not anchor_path:
         raise gr.Error("骨架姿勢參考圖需要搭配 anchor 圖（選一張角色 anchor 或自行上傳身分參考圖）")
-    if use_facedetailer and not anchor_path:
-        raise gr.Error("臉部/手部精修需要 anchor 圖（選一張角色 anchor 或自行上傳身分參考圖）")
-    if use_facedetailer and pose_reference:
-        raise gr.Error("臉部/手部精修跟骨架姿勢控制目前不能同時使用（兩套獨立 workflow，還沒合併）")
+    # In HQ mode FaceDetailer + ControlNet + FaceID all run in one workflow, so
+    # the old "can't combine" / "needs anchor" restrictions no longer apply.
+    if not use_hq:
+        if use_facedetailer and not anchor_path:
+            raise gr.Error("臉部/手部精修需要 anchor 圖（選一張角色 anchor 或自行上傳身分參考圖）；或打開 HQ 兩段式")
+        if use_facedetailer and pose_reference:
+            raise gr.Error("非 HQ 模式下臉部/手部精修跟骨架姿勢控制不能同時使用（兩套獨立 workflow）；打開 HQ 兩段式即可合併")
 
     checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
-    if is_sd15 and (anchor_path or pose_reference or use_facedetailer):
+    if is_sd15 and (anchor_path or pose_reference):
         raise gr.Error("這個 checkpoint 是 SD1.5，目前只支援純文字生圖——anchor（IP-Adapter）、"
-                        "骨架姿勢控制、臉部/手部精修都還沒接（那些用的是 SDXL 專用的模型檔，跟 SD1.5 對不上）")
+                        "骨架姿勢控制都還沒接（那些用的是 SDXL 專用的模型檔，跟 SD1.5 對不上）")
     if is_sd15 and resolution != RESOLUTION_AUTO:
         raise gr.Error("這個 checkpoint 是 SD1.5，畫布比例請選「自動」——其他選項的解析度是給 SDXL 用的，"
                         "套在 SD1.5 上解析度太高，容易出現肢體變形/重複身體部位")
@@ -110,29 +127,35 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     gc.gen_custom(prompt, negative_prompt, tier, trigger, anchor_path, out_dir, int(seed), stem, ip_adapter_weight,
                   pose_reference_path=pose_reference, controlnet_strength=controlnet_strength if pose_reference else None,
                   width=width, height=height,
-                  use_facedetailer=use_facedetailer, facedetailer_denoise=facedetailer_denoise if use_facedetailer else None,
+                  use_facedetailer=use_facedetailer,
                   facedetailer_backend=backend,
                   style_positive=style_positive, style_negative=style_negative,
-                  checkpoint=checkpoint, lora_strength=lora_strength)
+                  checkpoint=checkpoint, lora_strength=lora_strength,
+                  hq=use_hq, character_lora_strength=character_lora_strength,
+                  hires_denoise=hires_denoise if use_hq else None,
+                  facedetailer_face_denoise=face_denoise if use_facedetailer else None,
+                  facedetailer_hand_denoise=hand_denoise if use_facedetailer else None)
     return os.path.join(out_dir, f"{stem}.png")
 
 
 def generate_video_animatediff(character, face_ref, prompt, tier, negative_prompt, seed, ip_adapter_weight,
                                 facedetailer_denoise, frames, fps, width, height, style_positive, style_negative,
-                                checkpoint_choice):
+                                checkpoint_choice, motion_lora_choice, motion_lora_strength):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
     if not face_ref:
         raise gr.Error("請上傳臉部參考圖（用於 FaceID 鎖定長相）— 僅限虛構/AI生成的臉，禁止上傳真人照片")
     trigger = None if character == NO_CHARACTER else character
     checkpoint = None if checkpoint_choice == ANIMATEDIFF_CHECKPOINT_DEFAULT else checkpoint_choice
+    motion_lora = None if motion_lora_choice == MOTION_LORA_NONE else motion_lora_choice
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", "videos")
     gc.gen_video_animatediff(prompt, negative_prompt, tier, trigger, face_ref, out_dir, int(seed),
                               ip_adapter_weight=ip_adapter_weight,
                               facedetailer_denoise=facedetailer_denoise,
                               frames=int(frames), fps=int(fps), width=int(width), height=int(height),
                               style_positive=style_positive, style_negative=style_negative,
-                              checkpoint=checkpoint)
+                              checkpoint=checkpoint,
+                              motion_lora=motion_lora, motion_lora_strength=motion_lora_strength)
     return os.path.join(out_dir, f"animatediff_seed{int(seed)}.webm")
 
 
@@ -142,6 +165,23 @@ def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_i
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", character, "videos")
     gc.gen_video(character, init_image, out_dir, int(seed), int(frames), int(fps), int(motion_bucket_id))
     return os.path.join(out_dir, f"video_seed{int(seed)}.webm")
+
+
+def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_count, duration_ms, denoise,
+                  ip_adapter_weight, style_positive, style_negative, checkpoint_choice, lora_strength):
+    if not prompt.strip():
+        raise gr.Error("請輸入 prompt")
+    trigger = None if character == NO_CHARACTER else character
+    if trigger and not anchor:
+        raise gr.Error("選了角色就要選一張 anchor 圖")
+    checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
+    if checkpoint in client.SD15_CHECKPOINTS:
+        raise gr.Error("這個 checkpoint 是 SD1.5——批次 GIF 的每一張都要靠 IP-Adapter 鎖同一張臉，SD1.5 沒接這個功能，換一個 SDXL 系列的 checkpoint")
+    out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
+    return gc.gen_gif(prompt, negative_prompt, tier, trigger, anchor, out_dir, int(seed), int(frame_count),
+                       ip_adapter_weight, duration_ms=int(duration_ms), denoise=denoise,
+                       style_positive=style_positive, style_negative=style_negative,
+                       checkpoint=checkpoint, lora_strength=lora_strength)
 
 
 with gr.Blocks(title="AI Image Lab") as demo:
@@ -159,6 +199,16 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 caption_upload = gr.Image(label="上傳圖片", type="filepath")
                 caption_btn = gr.Button("產生 Prompt")
                 caption_output = gr.Textbox(label="產生的描述（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
+            with gr.Accordion("HQ 兩段式生成（預設開啟，5 分鐘內高品質）", open=True):
+                use_hq = gr.Checkbox(
+                    value=True,
+                    label="兩段式：先低解析度生成 → ESRGAN 放大 → 低 denoise 重採樣補細節 → 臉部/手部精修。"
+                          "修正失真與「3D render」感，並在有訓練好的角色 LoRA 時自動套用。關掉則走舊的單段式",
+                )
+                hires_denoise = gr.Slider(0.2, 0.6, value=client.HIRES_DENOISE, step=0.05,
+                                          label="Hires 第二段 denoise（0.4 建議；太高會讓臉飄移，太低補不到細節）")
+                character_lora_strength = gr.Slider(0.0, 1.2, value=client.CHARACTER_LORA_STRENGTH, step=0.05,
+                                                     label="角色 LoRA 強度（僅在該角色有訓練好的 LoRA 時作用，否則忽略）")
             with gr.Accordion("骨架姿勢控制（ControlNet，選填）", open=False):
                 pose_reference = gr.Image(
                     label="姿勢參考照片（自動抽取骨架，控制生成結果的姿勢）— 需要搭配上面的 anchor 圖。"
@@ -167,20 +217,24 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 )
                 controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
                                                  label="骨架控制強度（0=忽略骨架，1=嚴格鎖定姿勢）")
-            with gr.Accordion("臉部/手部精修（ADetailer，選填）", open=False):
+                gr.Markdown("⚠️ 在 RTX 2070 上加骨架控制單張可能超過 5 分鐘（模型換入換出），只在真的需要指定姿勢時開啟。")
+            with gr.Accordion("臉部/手部精修（ADetailer，HQ 模式預設開啟）", open=True):
                 use_facedetailer = gr.Checkbox(
-                    value=False,
+                    value=True,
                     label="生成後自動偵測臉部+手部，各自裁切放大重繪一次，修正常見的臉部/手指小瑕疵。"
-                          "需要 anchor 圖，不能跟骨架姿勢控制同時用",
+                          "HQ 模式可與骨架姿勢控制同時使用",
                 )
-                facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_DENOISE, step=0.05,
-                                                  label="精修強度（0=不變，1=該區域完全重畫）")
+                face_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_FACE_DENOISE, step=0.05,
+                                         label="臉部精修強度（0=不變，1=該區域完全重畫）")
+                hand_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_HAND_DENOISE, step=0.05,
+                                         label="手部精修強度（手部通常用比臉部略低的值，避免重畫出更糟的手）")
                 facedetailer_backend = gr.Radio(
                     FACEDETAILER_BACKEND_CHOICES, value=FACEDETAILER_BACKEND_YOLO,
-                    label="臉部偵測方式（手部一律用 YOLO，沒有對應的 MediaPipe 選項）",
+                    label="臉部偵測方式（HQ 模式一律用 YOLO；MediaPipe 只在關掉 HQ 的舊單段式路徑有作用）",
                 )
-            resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（正方形沒有足夠垂直空間放全身，會被裁成上半身）")
+            resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（HQ 最終尺寸：正方形→1248×1248、直式→1056×1536、橫式→1536×1056；正方形沒有足夠垂直空間放全身，會被裁成上半身）")
             prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting in a cozy library, reading a book, warm afternoon light")
+            translate_btn = gr.Button("翻譯成英文（CLIP 對中文支援不佳，建議先翻譯再送出；已經是英文按下去不會被改動）")
             negative_prompt = gr.Textbox(label="額外負面詞（選填，一次性追加，不影響下面的風格詞預設值）", lines=1)
             with gr.Accordion("風格正/負面詞（進階 - 可直接在這裡調整寫實感等風格用詞，不用改程式碼）", open=False):
                 gr.Markdown(
@@ -196,17 +250,18 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 "選 SD1.5 送出時會直接跳錯誤。\n"
                 "- 只要純文字生圖、想要更自然語言的 prompt、或想要 512×768 左右的原生解析度 → 可以切到 SD1.5 系列"
                 "（realistic_vision / cyberrealistic），但切過去後 anchor / 姿勢控制 / 精修都會被鎖住，畫布比例也只能選「自動」。\n"
-                "- pony / cyberrealistic_pony / pony_realism 用 booru tag 風格 prompt（例如 `score_9, score_8_up`），"
-                "且下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
+                "- pony / cyberrealistic_pony / pony_realism 需要的 `score_9, score_8_up, score_7_up` 品質 tag 前綴"
+                "會自動加上，Prompt 欄位一樣打自然語言就好，不用自己記得加。"
+                "下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
             )
             checkpoint_choice = gr.Dropdown(
-                CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
+                CHECKPOINT_CHOICES, value="cyberrealistic_pony", label="Checkpoint 模型",
             )
             lora_strength = gr.Slider(
-                0.0, 3.0, value=2.5, step=0.1,
+                0.0, 3.0, value=0.0, step=0.1,
                 label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
             )
-            tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
+            tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
             seed = gr.Number(value=9000, label="Seed", precision=0)
             ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
             btn = gr.Button("生成", variant="primary")
@@ -217,7 +272,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
     anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
     checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution)
     caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
-    btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, controlnet_strength, resolution, use_facedetailer, facedetailer_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
+    translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
+    btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
 
     gr.Markdown("---\n## AnimateDiff 動態影片（SD1.5 + FaceID 鎖臉 + 逐幀臉部精修）")
     gr.Markdown(
@@ -234,6 +290,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 type="filepath",
             )
             video_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting by a window, gentle breeze, turning head slightly")
+            video_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
             video_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
             video_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
             with gr.Row():
@@ -253,15 +310,27 @@ with gr.Blocks(title="AI Image Lab") as demo:
             with gr.Accordion("風格正/負面詞（進階，跟上面圖片區塊獨立設定）", open=False):
                 video_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
                 video_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+            with gr.Accordion("Motion LoRA（選用，鏡頭運動控制）", open=False):
+                gr.Markdown(
+                    "官方 AnimateDiff Motion LoRA，控制的是**整個畫面的鏡頭運動**（縮放/平移/"
+                    "傾斜/旋轉），**不是特定身體部位的物理晃動效果**（沒有「彈跳」「晃動」這類選項，"
+                    "motion module 本身沒有對應的控制機制）。要先下載對應的 `.ckpt` 檔案放到"
+                    "`ComfyUI/models/animatediff_motion_lora/`，見 README「AnimateDiff Motion LoRA」"
+                    "安裝章節，沒下載的話選了會生成失敗。"
+                )
+                video_motion_lora = gr.Dropdown(MOTION_LORA_CHOICES, value=MOTION_LORA_NONE, label="鏡頭運動")
+                video_motion_lora_strength = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="強度（超過 1 容易讓畫面明顯扭曲）")
             video_btn = gr.Button("生成影片", variant="primary")
         with gr.Column():
             video_output = gr.Video(label="結果")
 
+    video_translate_btn.click(translate_prompt_to_english, inputs=video_prompt, outputs=video_prompt)
     video_btn.click(
         generate_video_animatediff,
         inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed,
                 video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
-                video_style_positive, video_style_negative, video_checkpoint_choice],
+                video_style_positive, video_style_negative, video_checkpoint_choice,
+                video_motion_lora, video_motion_lora_strength],
         outputs=video_output,
     )
 
@@ -291,6 +360,58 @@ with gr.Blocks(title="AI Image Lab") as demo:
         generate_video_svd,
         inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion],
         outputs=svd_output,
+    )
+
+    gr.Markdown("---\n## 批次生成 GIF（同一個場景微幅變化，組成動畫）")
+    gr.Markdown(
+        "先生成第一張（完整生成），後面每一張都是拿**同一張第一張的圖**用低 denoise 的 img2img 去微調"
+        "（同一個 prompt，只有 seed 不同），組成一個會動的 GIF——同一個人、同一個姿勢、同一個場景，"
+        "只有細節隨每張的 seed 有小幅變化，靠「動作幅度」滑桿控制變化大小。"
+        "**這不是像 AnimateDiff 那樣有時序關聯的平滑動態**，是同一張圖反覆微調出來的效果，"
+        "沒有動作連貫的「進行中」的感覺，比較像是原地小幅度的浮動/晃動；想要真正平滑、有動作進展的"
+        "動態影片，請用上面的「AnimateDiff 動態影片」區塊。生成速度比 AnimateDiff 快很多"
+        "（每張都是普通靜態圖，沒有影格數的額外負擔）。"
+    )
+    with gr.Row():
+        with gr.Column():
+            gif_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
+            gif_anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
+            gif_anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
+            gif_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: standing in a park, looking at the camera")
+            gif_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
+            gif_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
+            with gr.Accordion("風格正/負面詞（進階，跟上面「自訂生圖」區塊獨立設定）", open=False):
+                gif_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                gif_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+            gif_checkpoint_choice = gr.Dropdown(
+                CHECKPOINT_CHOICES, value="cyberrealistic_pony",
+                label="Checkpoint 模型（選了角色/anchor 就只能 SDXL 系列，跟上面「自訂生圖」區塊的規則一樣）",
+            )
+            gif_lora_strength = gr.Slider(0.0, 3.0, value=0.0, step=0.1, label="寫實風格 LoRA 強度（pony 系建議 0）")
+            gif_tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（露骨內容依然封鎖）")
+            gif_seed = gr.Number(value=9000, label="起始 Seed（每張圖依序 +1）", precision=0)
+            with gr.Row():
+                gif_frames = gr.Slider(2, 20, value=8, step=1, label="張數")
+                gif_duration = gr.Slider(100, 1000, value=300, step=50, label="每張顯示時間（毫秒）")
+            gif_denoise = gr.Slider(
+                0.0, 1.0, value=gc.GIF_WIGGLE_DENOISE, step=0.05,
+                label="動作幅度（實測：0.3 幾乎看不出變化，0.7 姿勢已經明顯跑掉；0.45 是還沒驗證過的中間值，"
+                      "看起來太靜止就往上調，姿勢跑掉就往下調）",
+            )
+            gif_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（有選角色才有作用）")
+            gif_btn = gr.Button("生成 GIF", variant="primary")
+        with gr.Column():
+            gif_output = gr.Image(label="結果（GIF，會自動播放）")
+
+    gif_character.change(refresh_anchors, inputs=gif_character, outputs=[gif_anchor, gif_anchor_preview])
+    gif_anchor.change(lambda path: path, inputs=gif_anchor, outputs=gif_anchor_preview)
+    gif_translate_btn.click(translate_prompt_to_english, inputs=gif_prompt, outputs=gif_prompt)
+    gif_btn.click(
+        generate_gif,
+        inputs=[gif_character, gif_anchor, gif_prompt, gif_tier, gif_negative_prompt, gif_seed, gif_frames,
+                gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
+                gif_checkpoint_choice, gif_lora_strength],
+        outputs=gif_output,
     )
 
 if __name__ == "__main__":

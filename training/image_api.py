@@ -46,7 +46,12 @@ class GenerateRequest(BaseModel):
     trigger: str | None = None
     anchor_path: str | None = None
     tier: Literal["safe", "suggestive"] = "safe"
-    use_facedetailer: bool = False
+    # HQ two-pass path (base -> ESRGAN hires -> face/hand FaceDetailer + per-character
+    # LoRA when available). Default on for quality; set False for the fast legacy
+    # single-pass path. When hq is on, FaceDetailer runs by default (use_facedetailer
+    # left None = auto), so callers usually don't need to set use_facedetailer.
+    hq: bool = True
+    use_facedetailer: bool | None = None
 
 
 def _default_anchor_for(trigger: str) -> str | None:
@@ -72,6 +77,7 @@ def _run_job(job_id: str, req: GenerateRequest) -> None:
             filename=job_id,
             ip_adapter_weight=gc.client.IP_ADAPTER_WEIGHT,
             use_facedetailer=req.use_facedetailer,
+            hq=req.hq,
         )
         image_path = os.path.join(OUTPUT_DIR, f"{job_id}.png")
         with _jobs_lock:

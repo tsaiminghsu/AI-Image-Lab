@@ -16,8 +16,14 @@ import time
 
 import requests
 
-COMFYUI_URL = "http://127.0.0.1:8188"
+# Overridable so the exact same client code runs unchanged inside a RunPod
+# Serverless worker (ComfyUI on localhost there too) or against a RunPod Pod
+# (https://<POD_ID>-8188.proxy.runpod.net) - see CLOUD_GPU.md. _submit_and_wait/
+# _download_output read this module global at call time, so nothing else needs
+# to change.
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
 WORKFLOW_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template.json")
+WORKFLOW_TEMPLATE_HQ_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_hq.json")
 WORKFLOW_TEMPLATE_TXT2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img.json")
 WORKFLOW_TEMPLATE_TXT2IMG_SD15_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img_sd15.json")
 WORKFLOW_TEMPLATE_IMG2VID_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2vid.json")
@@ -25,20 +31,25 @@ WORKFLOW_TEMPLATE_CONTROLNET_PATH = os.path.join(os.path.dirname(__file__), "wor
 WORKFLOW_TEMPLATE_FACEDETAILER_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_facedetailer.json")
 WORKFLOW_TEMPLATE_MEDIAPIPE_FACEDETAILER_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_mediapipe_facedetailer.json")
 WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_animatediff_facedetailer.json")
+WORKFLOW_TEMPLATE_IMG2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2img.json")
 
 CHECKPOINTS = {
     "juggernaut": "juggernaut_xl_v9_photo.safetensors",
     "pony": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",  # same SDXL UNet/CLIP shape as
     # juggernaut, so it drops into the exact same workflow templates (IP-Adapter FaceID, ControlNet,
     # FaceDetailer all reuse the SDXL-family files already installed). Trained on booru tags, not
-    # natural language - prompts benefit from a "score_9, score_8_up, score_7_up" quality-tag prefix.
+    # natural language - benefits from a "score_9, score_8_up, score_7_up" quality-tag prefix, which
+    # generate_character.py's gen_custom() auto-prepends when this checkpoint is picked (see
+    # PONY_CHECKPOINTS below) - callers never need to type the tag themselves, prompt input stays
+    # plain natural language regardless of checkpoint choice.
     # sdxl_photorealistic_slider_v1-0.safetensors (baked into every template at strength 2.5) was
     # tuned against photoreal SDXL checkpoints, not Pony's more illustration-leaning training data -
     # pass lora_strength=0.0 when using pony to leave it out rather than fighting its style.
     "cyberrealistic_pony": "CyberRealisticPony_V18.0_F16.safetensors",  # also Pony/SDXL-architecture
     # (same drop-in compatibility as "pony" above) - Cyberdelia's photoreal-tuned merge onto the Pony
     # base, meant to keep Pony's prompt/tag conventions while looking less illustration/anime-leaning
-    # than vanilla Pony Diffusion. Same score_9/score_8_up prompt convention applies.
+    # than vanilla Pony Diffusion. Same score_9/score_8_up prompt convention applies (auto-prepended,
+    # see PONY_CHECKPOINTS).
     "realistic_vision": "Realistic_Vision_V6.0_NV_B1_fp16.safetensors",  # SD1.5, not SDXL - different
     # UNet/CLIP shape than every checkpoint above, so it does NOT drop into the SDXL workflow templates
     # (the baked-in sdxl_photorealistic_slider LoRA and IP-Adapter/ControlNet SDXL model files don't
@@ -47,12 +58,19 @@ CHECKPOINTS = {
     # not Pony's booru tags. Native training resolution is ~512x512-768 range, not SDXL's 1024.
     "cyberrealistic": "CyberRealistic_FINAL_FP16.safetensors",  # SD1.5, same caveats as realistic_vision above
     "pony_realism": "ponyRealism_V22.safetensors",  # also Pony/SDXL-architecture (same drop-in
-    # compatibility as "pony"/"cyberrealistic_pony") - ZyloO's photoreal-tuned Pony checkpoint, VAE baked in.
+    # compatibility as "pony"/"cyberrealistic_pony") - ZyloO's photoreal-tuned Pony checkpoint, VAE
+    # baked in. Same score_9/score_8_up prompt convention applies (auto-prepended, see PONY_CHECKPOINTS).
 }
 CHECKPOINT = CHECKPOINTS["juggernaut"]
 SD15_CHECKPOINTS = {"realistic_vision", "cyberrealistic"}  # keys into CHECKPOINTS that are SD1.5,
 # not SDXL/Pony - callers use this to route to submit_txt2img_generation_sd15 and pick SD15-appropriate
 # resolution instead of the SDXL-family submit_* functions (which all assume an SDXL-shaped checkpoint)
+PONY_CHECKPOINTS = {"pony", "cyberrealistic_pony", "pony_realism"}  # keys into CHECKPOINTS that are
+# Pony-Diffusion-architecture (SDXL-shaped, drop into the same workflow templates as juggernaut, but
+# trained on a "score_9, score_8_up, score_7_up"-style quality-tag prefix convention rather than plain
+# natural language) - generate_character.py's gen_custom() uses this set to auto-prepend that prefix,
+# so every caller (GUI/API/CLI) can keep writing plain natural-language prompts no matter which
+# checkpoint is selected, instead of needing to know/type the Pony-specific tag convention themselves.
 SD15_WIDTH, SD15_HEIGHT = 512, 768
 WIDTH, HEIGHT = 1024, 1024   # switch to 768/832/896 as needed - not hardcoded elsewhere
 BATCH_SIZE = 1                # RTX 2070 8GB - always 1, no multi-image batches
@@ -91,6 +109,44 @@ CONTROLNET_STRENGTH = 0.8  # 0=ignored, 1=rigidly locked to the skeleton; 0.8 le
 # VRAM/time cost compared to the checkpoint/FaceID/ControlNet stack) - see
 # check_adetailer_models.py for the one-time download.
 FACEDETAILER_DENOISE = 0.5  # 0=no change, 1=fully re-generate the cropped region from noise
+
+# --- HQ two-pass path (workflow_template_hq.json, submit_generation_hq) ---
+# The single unified high-quality path: style LoRA -> optional character LoRA ->
+# FaceID -> optional ControlNet -> base KSampler at a LOWER first-pass resolution
+# -> ESRGAN model upscale + downscale to the target -> second KSampler at low
+# denoise (hires fix) -> FaceDetailer face pass -> FaceDetailer hand pass. Replaces
+# the three separate FaceID / FaceDetailer / ControlNet templates for the main
+# path by bypassing (rewiring + dropping) whichever optional nodes aren't needed.
+UPSCALE_MODEL = "4x-UltraSharp.pth"  # 4x ESRGAN, ~67MB - real pixel detail so the
+# hires pass only needs denoise ~0.4 (vs latent upscale's >=0.55 where FaceID
+# identity drifts and hands get re-invented). Chosen over RealESRGAN_x4plus, which
+# over-smooths skin - the "plastic"/3D-render complaint. Put the .pth in
+# models/upscale/ and NTFS-hardlink into ComfyUI/models/upscale_models/ (README).
+UPSCALE_MODEL_SCALE = 4  # the model's native scale factor (4x-UltraSharp is 4x)
+HIRES_SCALE = 1.5        # final size / first-pass size. 1.5x keeps the 8GB card
+# out of the 1024->1536^2 (2.4MP) danger zone while still restoring real detail.
+HIRES_DENOISE = 0.4
+HIRES_STEPS = 20
+HQ_BASE_STEPS = 24
+# Explicit first-pass sizes for the three canonical output sizes (all /64 for the
+# UNet and /8 for the VAE). Anything else falls back to round64(dim / HIRES_SCALE).
+HQ_FIRST_PASS = {
+    (1024, 1024): (832, 832),    # square   -> 1248x1248
+    (832, 1216): (704, 1024),    # portrait -> 1056x1536 (full-body / back view)
+    (1216, 832): (1024, 704),    # landscape-> 1536x1056
+}
+FACEDETAILER_FACE_DENOISE = 0.4
+FACEDETAILER_HAND_DENOISE = 0.35
+FACEDETAILER_FACE_GUIDE_SIZE = 768
+FACEDETAILER_HAND_GUIDE_SIZE = 512
+CHARACTER_LORA_STRENGTH = 0.8  # per-character LoRA (node 14), trained on RunPod;
+# used TOGETHER with FaceID (which drops to faceid_weight ~0.7 when a LoRA is present)
+INSIGHTFACE_PROVIDER = os.environ.get("INSIGHTFACE_PROVIDER", "CPU")  # "CPU" or "CUDA".
+# FaceID's insightface runs an onnxruntime session whose ~1GB VRAM lives OUTSIDE
+# torch's allocator, so ComfyUI's VRAM accounting is wrong and it thrashes (the
+# reason FaceID cost 150-180s vs 36s plain). Detection runs once per anchor (~1-2s)
+# and its output is cached across seeds, so CPU barely costs anything and stops the
+# thrash. Override to CUDA to A/B the difference (see benchmark.py).
 
 # SVD (Stable Video Diffusion) img2vid - low-res/low-frame defaults, 8GB VRAM
 # can't comfortably run the model's native 1024x576 training resolution
@@ -142,6 +198,28 @@ ANIMATEDIFF_CHECKPOINTS = {
 # NOT sharing CHECKPOINTS/SD15_CHECKPOINTS directly since those also list SDXL/Pony entries that would
 # crash AnimateDiff (motion module tensor shapes don't match an SDXL UNet)
 ANIMATEDIFF_MOTION_MODULE = "mm_sd_v15_v2.ckpt"
+
+# Motion LoRAs (official guoyww/animatediff release) - these condition the
+# motion module for a specific CAMERA movement (zoom/pan/tilt/roll of the
+# whole frame), not a body-part-specific physical effect (e.g. no "bounce"/
+# "jiggle" control - the motion module has no dedicated mechanism for that,
+# camera-motion LoRAs are the only officially-supported motion LoRA category
+# for this v2 motion module). Only compatible with v2-based motion modules
+# (mm_sd_v15_v2 - what ANIMATEDIFF_MOTION_MODULE already is - and mm-p_0.5/
+# mm-p_0.75), per the ComfyUI-AnimateDiff-Evolved project's own compatibility
+# notes. Download to ComfyUI/models/animatediff_motion_lora/, see README's
+# "AnimateDiff Motion LoRA" install section. Optional - submit_generation_
+# animatediff() only wires the loader node in when motion_lora_name is given.
+ANIMATEDIFF_MOTION_LORAS = {
+    "zoom_in": "v2_lora_ZoomIn.ckpt",
+    "zoom_out": "v2_lora_ZoomOut.ckpt",
+    "pan_left": "v2_lora_PanLeft.ckpt",
+    "pan_right": "v2_lora_PanRight.ckpt",
+    "tilt_up": "v2_lora_TiltUp.ckpt",
+    "tilt_down": "v2_lora_TiltDown.ckpt",
+    "rolling_clockwise": "v2_lora_RollingClockwise.ckpt",
+    "rolling_anticlockwise": "v2_lora_RollingAnticlockwise.ckpt",
+}
 ANIMATEDIFF_WIDTH, ANIMATEDIFF_HEIGHT = 512, 512
 ANIMATEDIFF_FRAMES = 16   # mm_sd_v15_v2's trained context length. Tried going over this via a
 # sliding-context-window node (ADE_StandardUniformContextOptions) to get more time for an action
@@ -244,6 +322,54 @@ def submit_generation(
     wf["3"]["inputs"]["cfg"] = cfg
     wf["3"]["inputs"]["sampler_name"] = SAMPLER
     wf["3"]["inputs"]["scheduler"] = SCHEDULER
+    wf["9"]["inputs"]["filename_prefix"] = filename_prefix
+
+    return _submit_and_wait(wf)
+
+
+def submit_img2img_generation(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    ip_adapter_image_filename: str,
+    init_image_filename: str,
+    denoise: float,
+    filename_prefix: str,
+    steps: int = STEPS,
+    cfg: float = CFG,
+    ip_adapter_weight: float = IP_ADAPTER_WEIGHT,
+    checkpoint: str = CHECKPOINT,
+    lora_strength: float = None,
+) -> str:
+    """img2img on an existing image (init_image_filename), with IP-Adapter
+    FaceID conditioning same as submit_generation. Used by generate_character.
+    gen_gif()'s "wiggle" frames: starting from the same init image every call
+    with a low denoise keeps composition/pose locked to that image while a
+    different seed each call still introduces small per-frame variation -
+    unlike a from-scratch txt2img call (submit_generation), which resamples
+    the whole composition independently every time with no shared structure
+    between calls at all. width/height aren't parameters here - VAEEncode
+    just encodes whatever size init_image_filename already is, output stays
+    that size. Both image filenames must already be uploaded (see
+    upload_reference_image) - can be the same file (the init image's own
+    face doubling as the FaceID reference) or different ones."""
+    wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_IMG2IMG_PATH))
+    wf["4"]["inputs"]["ckpt_name"] = checkpoint
+    if lora_strength is not None:
+        wf["13"]["inputs"]["strength_model"] = lora_strength
+        wf["13"]["inputs"]["strength_clip"] = lora_strength
+    wf["10"]["inputs"]["image"] = ip_adapter_image_filename
+    wf["11"]["inputs"]["preset"] = IP_ADAPTER_PRESET
+    wf["12"]["inputs"]["weight"] = ip_adapter_weight
+    wf["6"]["inputs"]["text"] = prompt
+    wf["7"]["inputs"]["text"] = negative_prompt
+    wf["20"]["inputs"]["image"] = init_image_filename
+    wf["3"]["inputs"]["seed"] = seed
+    wf["3"]["inputs"]["steps"] = steps
+    wf["3"]["inputs"]["cfg"] = cfg
+    wf["3"]["inputs"]["sampler_name"] = SAMPLER
+    wf["3"]["inputs"]["scheduler"] = SCHEDULER
+    wf["3"]["inputs"]["denoise"] = denoise
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
 
     return _submit_and_wait(wf)
@@ -420,6 +546,8 @@ def submit_generation_animatediff(
     ip_adapter_weight: float = IP_ADAPTER_WEIGHT,
     facedetailer_denoise: float = FACEDETAILER_DENOISE,
     checkpoint: str = ANIMATEDIFF_CHECKPOINT,
+    motion_lora_name: str = None,
+    motion_lora_strength: float = 1.0,
 ) -> str:
     """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking and
     a video-native FaceDetailer face-fix pass (Impact Pack's "Detailer For
@@ -433,10 +561,25 @@ def submit_generation_animatediff(
     independently, causing visible flicker between frames. face_ref_image_filename
     must already be uploaded (see upload_reference_image) - same anchor image
     used for still-image FaceID generation works here. Returns the local path
-    of the saved .webm."""
+    of the saved .webm.
+
+    motion_lora_name (optional) is a filename from ANIMATEDIFF_MOTION_LORAS
+    (e.g. "v2_lora_ZoomIn.ckpt") - conditions the motion module for a specific
+    CAMERA movement, not a body-part physical effect. The loader node
+    (ADE_AnimateDiffLoRALoader) is only added to the workflow when this is
+    given - the template has no baked-in placeholder for it, since it's an
+    optional input on node "2" (ADE_AnimateDiffLoaderGen1), not a required
+    one. motion_lora_strength scales its effect (node default/typical range
+    is 0-2, values much above 1 tend to distort the frame)."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH))
     wf["1"]["inputs"]["ckpt_name"] = checkpoint
     wf["2"]["inputs"]["model_name"] = ANIMATEDIFF_MOTION_MODULE
+    if motion_lora_name:
+        wf["60"] = {
+            "class_type": "ADE_AnimateDiffLoRALoader",
+            "inputs": {"name": motion_lora_name, "strength": motion_lora_strength},
+        }
+        wf["2"]["inputs"]["motion_lora"] = ["60", 0]
     wf["10"]["inputs"]["image"] = face_ref_image_filename
     wf["11"]["inputs"]["preset"] = IP_ADAPTER_PRESET
     wf["12"]["inputs"]["weight"] = ip_adapter_weight
@@ -566,8 +709,180 @@ def submit_img2vid_generation(
     return _submit_and_wait(wf, output_node_id="7", timeout_seconds=POLL_TIMEOUT_SECONDS_VIDEO)
 
 
-def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS) -> str:
-    r = requests.post(f"{COMFYUI_URL}/prompt", json={"prompt": wf}, timeout=30)
+def _round64(x: int) -> int:
+    """Round to the nearest multiple of 64 (SDXL UNet + VAE both want /64)."""
+    return max(64, int(round(x / 64.0)) * 64)
+
+
+def _rewire(wf: dict, old_ref: list, new_ref: list) -> None:
+    """Replace every node input that links to old_ref (e.g. ["14", 0]) with
+    new_ref, so a node can be dropped and its consumers re-pointed at its
+    upstream. Used to bypass optional HQ nodes (character LoRA / ControlNet /
+    IP-Adapter / hires / FaceDetailer) instead of keeping separate templates -
+    a LoraLoader with a missing file fails validation, so it must be removed
+    from the graph entirely, not just set to strength 0."""
+    for node in wf.values():
+        for key, val in node.get("inputs", {}).items():
+            if isinstance(val, list) and len(val) == 2 and val == old_ref:
+                node["inputs"][key] = list(new_ref)
+
+
+def _drop_nodes(wf: dict, ids) -> None:
+    for node_id in ids:
+        wf.pop(node_id, None)
+
+
+def submit_generation_hq(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    ip_adapter_image_filename: str = None,
+    width: int = WIDTH,
+    height: int = HEIGHT,
+    steps: int = HQ_BASE_STEPS,
+    cfg: float = CFG,
+    ip_adapter_weight: float = IP_ADAPTER_WEIGHT,
+    checkpoint: str = CHECKPOINT,
+    lora_strength: float = None,
+    character_lora: str = None,
+    character_lora_strength: float = CHARACTER_LORA_STRENGTH,
+    pose_image_filename: str = None,
+    controlnet_strength: float = CONTROLNET_STRENGTH,
+    hires: bool = True,
+    hires_denoise: float = HIRES_DENOISE,
+    hires_steps: int = HIRES_STEPS,
+    use_facedetailer: bool = True,
+    face_denoise: float = FACEDETAILER_FACE_DENOISE,
+    hand_denoise: float = FACEDETAILER_HAND_DENOISE,
+    client_id: str = None,
+) -> str:
+    """Unified high-quality generation (see workflow_template_hq.json and the
+    HQ constants above). width/height are the FINAL output size; the first
+    pass runs at HQ_FIRST_PASS[(w,h)] (or round64(dim/HIRES_SCALE)) and the
+    hires pass brings it up to width/height via ESRGAN + a low-denoise resample.
+
+    Optional stages are bypassed by rewiring + dropping their nodes so one
+    template serves every combination:
+      - character_lora=None  -> drop node 14 (second LoraLoader)
+      - ip_adapter_image_filename=None -> drop the IP-Adapter chain (10/11/12)
+      - pose_image_filename=None -> drop the ControlNet chain (20-23)
+      - hires=False -> drop the ESRGAN/hires chain (30-35)
+      - use_facedetailer=False -> drop the FaceDetailer chain (40-43)
+
+    character_lora is a filename (or "characters/<id>.safetensors" subpath)
+    relative to ComfyUI's loras dir; used TOGETHER with FaceID (callers lower
+    ip_adapter_weight to ~0.7 when a LoRA is present - the LoRA carries
+    identity, FaceID only corrects drift). ControlNet is honoured when
+    pose_image_filename is given but is the slowest stage on 8GB - callers
+    keep it off by default."""
+    wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_HQ_PATH))
+    wf["4"]["inputs"]["ckpt_name"] = checkpoint
+
+    # node 13: style slider LoRA (default baked at 0.0 for Pony)
+    if lora_strength is not None:
+        wf["13"]["inputs"]["strength_model"] = lora_strength
+        wf["13"]["inputs"]["strength_clip"] = lora_strength
+
+    # node 14: per-character LoRA
+    if character_lora:
+        wf["14"]["inputs"]["lora_name"] = character_lora
+        wf["14"]["inputs"]["strength_model"] = character_lora_strength
+        wf["14"]["inputs"]["strength_clip"] = character_lora_strength
+    else:
+        _rewire(wf, ["14", 0], ["13", 0])
+        _rewire(wf, ["14", 1], ["13", 1])
+        _drop_nodes(wf, ["14"])
+
+    # nodes 10/11/12: IP-Adapter FaceID
+    if ip_adapter_image_filename:
+        wf["10"]["inputs"]["image"] = ip_adapter_image_filename
+        wf["11"]["inputs"]["preset"] = IP_ADAPTER_PRESET
+        wf["11"]["inputs"]["provider"] = INSIGHTFACE_PROVIDER
+        wf["12"]["inputs"]["weight"] = ip_adapter_weight
+        wf["12"]["inputs"]["weight_faceidv2"] = ip_adapter_weight
+        model_source = ["12", 0]
+    else:
+        # KSamplers/FaceDetailer take the model straight from node 14 (or 13 if
+        # 14 was dropped - _rewire above already collapsed 14->13 in that case).
+        model_source = ["14", 0] if character_lora else ["13", 0]
+        _rewire(wf, ["12", 0], model_source)
+        _drop_nodes(wf, ["10", "11", "12"])
+
+    wf["6"]["inputs"]["text"] = prompt
+    wf["7"]["inputs"]["text"] = negative_prompt
+
+    # nodes 20-23: ControlNet OpenPose (optional, slowest on 8GB)
+    if pose_image_filename:
+        wf["20"]["inputs"]["image"] = pose_image_filename
+        wf["22"]["inputs"]["control_net_name"] = CONTROLNET_MODEL
+        wf["23"]["inputs"]["strength"] = controlnet_strength
+    else:
+        # pass 1 KSampler positive/negative go straight to the text encoders
+        _rewire(wf, ["23", 0], ["6", 0])
+        _rewire(wf, ["23", 1], ["7", 0])
+        _drop_nodes(wf, ["20", "21", "22", "23"])
+
+    # first-pass resolution
+    fp_w, fp_h = HQ_FIRST_PASS.get((width, height), (_round64(width / HIRES_SCALE), _round64(height / HIRES_SCALE)))
+    wf["5"]["inputs"]["width"] = fp_w
+    wf["5"]["inputs"]["height"] = fp_h
+    wf["5"]["inputs"]["batch_size"] = BATCH_SIZE
+
+    wf["3"]["inputs"]["seed"] = seed
+    wf["3"]["inputs"]["steps"] = steps
+    wf["3"]["inputs"]["cfg"] = cfg
+    wf["3"]["inputs"]["sampler_name"] = SAMPLER
+    wf["3"]["inputs"]["scheduler"] = SCHEDULER
+
+    # nodes 30-35: ESRGAN upscale + hires resample. scale_by brings the 4x
+    # ESRGAN output down to the requested HIRES_SCALE of the first pass.
+    if hires:
+        wf["30"]["inputs"]["model_name"] = UPSCALE_MODEL
+        wf["32"]["inputs"]["scale_by"] = HIRES_SCALE / UPSCALE_MODEL_SCALE
+        wf["34"]["inputs"]["model"] = list(model_source)
+        wf["34"]["inputs"]["seed"] = seed
+        wf["34"]["inputs"]["steps"] = hires_steps
+        wf["34"]["inputs"]["cfg"] = cfg
+        wf["34"]["inputs"]["sampler_name"] = SAMPLER
+        wf["34"]["inputs"]["scheduler"] = SCHEDULER
+        wf["34"]["inputs"]["denoise"] = hires_denoise
+    else:
+        _rewire(wf, ["35", 0], ["8", 0])
+        _drop_nodes(wf, ["30", "31", "32", "33", "34", "35"])
+
+    # nodes 40-43: FaceDetailer face pass then hand pass
+    if use_facedetailer:
+        wf["41"]["inputs"]["model"] = list(model_source)
+        wf["41"]["inputs"]["seed"] = seed
+        wf["41"]["inputs"]["cfg"] = cfg
+        wf["41"]["inputs"]["sampler_name"] = SAMPLER
+        wf["41"]["inputs"]["scheduler"] = SCHEDULER
+        wf["41"]["inputs"]["denoise"] = face_denoise
+        wf["41"]["inputs"]["guide_size"] = FACEDETAILER_FACE_GUIDE_SIZE
+        wf["43"]["inputs"]["model"] = list(model_source)
+        wf["43"]["inputs"]["seed"] = seed
+        wf["43"]["inputs"]["cfg"] = cfg
+        wf["43"]["inputs"]["sampler_name"] = SAMPLER
+        wf["43"]["inputs"]["scheduler"] = SCHEDULER
+        wf["43"]["inputs"]["denoise"] = hand_denoise
+        wf["43"]["inputs"]["guide_size"] = FACEDETAILER_HAND_GUIDE_SIZE
+    else:
+        # SaveImage takes the hires (or base) decode directly
+        _rewire(wf, ["43", 0], ["35", 0] if hires else ["8", 0])
+        _drop_nodes(wf, ["40", "41", "42", "43"])
+
+    wf["9"]["inputs"]["filename_prefix"] = filename_prefix
+
+    return _submit_and_wait(wf, client_id=client_id)
+
+
+def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
+                     client_id: str = None) -> str:
+    payload = {"prompt": wf}
+    if client_id:
+        payload["client_id"] = client_id
+    r = requests.post(f"{COMFYUI_URL}/prompt", json=payload, timeout=30)
     r.raise_for_status()
     body = r.json()
     if body.get("node_errors"):
@@ -608,7 +923,12 @@ def _download_output(image_info: dict) -> str:
     }
     r = requests.get(f"{COMFYUI_URL}/view", params=params, timeout=60)
     r.raise_for_status()
-    out_dir = os.path.join(os.path.dirname(__file__), "..", "outputs", "_comfyui_raw")
+    # Overridable so the RunPod worker can write to a tempdir instead of the
+    # repo's outputs/ tree (which doesn't exist in the container).
+    out_dir = os.environ.get(
+        "COMFYUI_RAW_OUTPUT_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "outputs", "_comfyui_raw"),
+    )
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, image_info["filename"])
     with open(out_path, "wb") as f:

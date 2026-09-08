@@ -1,0 +1,24 @@
+# Points ComfyUI at the RunPod Network Volume mounted at /runpod-volume, so the
+# ~12GB of weights live on the volume (not baked into the image). ComfyUI and
+# the custom nodes (ComfyUI_IPAdapter_plus, Impact-Subpack, controlnet_aux)
+# resolve model files through folder_paths, which honours this file.
+#
+# Populate the volume once with worker/download_models.sh (run on a pod with the
+# volume mounted). Layout under base_path below:
+#   checkpoints/  loras/(+ loras/characters/<loraId>.safetensors)  ipadapter/
+#   clip_vision/  controlnet/  ultralytics/bbox/  upscale_models/
+#   insightface/models/buffalo_l/*.onnx
+runpod_volume:
+    base_path: /runpod-volume/models
+    checkpoints: checkpoints
+    loras: loras
+    ipadapter: ipadapter
+    clip_vision: clip_vision
+    controlnet: controlnet
+    upscale_models: upscale_models
+    # Impact-Subpack looks up YOLO detectors under an "ultralytics" folder key.
+    ultralytics: ultralytics
+    ultralytics_bbox: ultralytics/bbox
+    ultralytics_segm: ultralytics/segm
+    # ComfyUI_IPAdapter_plus + FaceID read insightface models from here.
+    insightface: insightface

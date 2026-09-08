@@ -28,6 +28,13 @@ venv/
 training/logs/
 training/*.log
 
+# Node / Amplify (web/) - installed packages and CDK/sandbox build output,
+# regenerable via `npm install` / `npx ampx sandbox` (see web/README.md)
+node_modules/
+web/.amplify/
+web/cdk.out/
+web/amplify_outputs.json
+
 # OS
 Thumbs.db
 .DS_Store

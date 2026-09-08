@@ -19,5 +19,10 @@ export const generate = defineFunction({
   environment: {
     REPLICATE_API_TOKEN: secret("REPLICATE_API_TOKEN"),
     INTERNAL_API_KEY: secret("INTERNAL_API_KEY"),
+    // RunPod Serverless path (see providers/runpod.ts). API key authenticates
+    // the /run call; the webhook token is appended to the callback URL so
+    // runpod-webhook can verify the callback (RunPod has no HMAC signing).
+    RUNPOD_API_KEY: secret("RUNPOD_API_KEY"),
+    RUNPOD_WEBHOOK_TOKEN: secret("RUNPOD_WEBHOOK_TOKEN"),
   },
 });

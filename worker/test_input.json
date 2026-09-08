@@ -1,0 +1,9 @@
+{
+  "input": {
+    "prompt": "sitting in a cozy library, reading a book, warm afternoon light",
+    "tier": "safe",
+    "characterId": "mei",
+    "aspectRatio": "3:4",
+    "seed": 12345
+  }
+}
