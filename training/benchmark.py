@@ -12,6 +12,7 @@ import time
 import uuid
 
 import comfyui_client as client
+import pose_skeletons
 import requests
 
 PROMPT = (
@@ -114,7 +115,8 @@ def run_test(name, width, height, count):
 # node id -> HQ pipeline stage label, for per-stage timing (see run_hq_test).
 HQ_STAGE_NAMES = {
     "3": "pass1_base",
-    "21": "openpose",
+    "21": "openpose",           # photo pose path only; a library skeleton skips this node
+    "22": "controlnet_load",    # skeleton path: the ControlLora build lands mostly in pass1_base
     "31": "esrgan_upscale",
     "34": "pass2_hires",
     "41": "facedetailer_face",
@@ -183,13 +185,26 @@ class WsStageTimer:
         return out
 
 
-def run_hq_test(name, width, height, count, anchor=None, character_lora=None, controlnet=False):
+def run_hq_test(name, width, height, count, anchor=None, character_lora=None, controlnet=False, pose=None):
     print(f"\n=== {name}: HQ two-pass, final {width}x{height}, {count} images "
-          f"(insightface provider={client.INSIGHTFACE_PROVIDER}, controlnet={controlnet}) ===", flush=True)
+          f"(insightface provider={client.INSIGHTFACE_PROVIDER}, controlnet={controlnet}, pose={pose}) ===", flush=True)
     before_vram, total_vram = client.log_gpu_memory(f"{name}_before")
 
     ip_name = client.upload_reference_image(anchor) if anchor else None
-    pose_name = ip_name if controlnet else None  # reuse the anchor's own pose as a stand-in skeleton
+    # A --pose picks a real library skeleton (fed to ControlNet directly, no
+    # preprocessor); plain --controlnet without --pose falls back to reusing the
+    # anchor photo as a stand-in (goes through OpenposePreprocessor).
+    pose_is_skeleton = False
+    if pose:
+        skel = pose_skeletons.resolve(pose)
+        if not skel:
+            raise SystemExit(f"unknown pose {pose!r} - choices: {pose_skeletons.list_names()}")
+        pose_name = client.upload_reference_image(skel)
+        pose_is_skeleton = True
+    elif controlnet:
+        pose_name = ip_name  # reuse the anchor's own pose as a stand-in skeleton (needs --anchor)
+    else:
+        pose_name = None
 
     per_image_times = []
     passed = 0
@@ -208,6 +223,7 @@ def run_hq_test(name, width, height, count, anchor=None, character_lora=None, co
                 height=height,
                 character_lora=character_lora,
                 pose_image_filename=pose_name,
+                pose_is_skeleton=pose_is_skeleton,
                 hires=True,
                 use_facedetailer=True,
                 client_id=client_id,
@@ -238,7 +254,8 @@ if __name__ == "__main__":
     parser.add_argument("--hq", action="store_true", help="run the HQ two-pass benchmark (square + portrait) instead of the plain txt2img tests")
     parser.add_argument("--anchor", default=None, help="face anchor image for the HQ test's IP-Adapter FaceID (a fictional/AI face)")
     parser.add_argument("--character-lora", default=None, help="optional character LoRA filename (relative to ComfyUI/models/loras) to include in the HQ test")
-    parser.add_argument("--controlnet", action="store_true", help="also add the ControlNet OpenPose stage to the HQ test (expected to exceed the 5-minute budget on 8GB)")
+    parser.add_argument("--controlnet", action="store_true", help="add the ControlNet OpenPose stage to the HQ test. Without --pose it reuses the --anchor photo as a stand-in skeleton (needs --anchor, runs the preprocessor); with --pose it feeds a library skeleton directly")
+    parser.add_argument("--pose", default=None, help="use a training/poses/ library skeleton for the ControlNet stage (implies --controlnet, no --anchor needed for the pose)")
     parser.add_argument("--insightface-provider", choices=["CPU", "CUDA"], default=None,
                         help="override comfyui_client.INSIGHTFACE_PROVIDER for the HQ test to A/B the VRAM-thrash hypothesis")
     args = parser.parse_args()
@@ -249,9 +266,11 @@ if __name__ == "__main__":
     if args.hq:
         results = [
             run_hq_test("hq_square", 1024, 1024, args.count, anchor=args.anchor,
-                        character_lora=args.character_lora, controlnet=args.controlnet),
+                        character_lora=args.character_lora,
+                        controlnet=args.controlnet or bool(args.pose), pose=args.pose),
             run_hq_test("hq_portrait", 832, 1216, args.count, anchor=args.anchor,
-                        character_lora=args.character_lora, controlnet=args.controlnet),
+                        character_lora=args.character_lora,
+                        controlnet=args.controlnet or bool(args.pose), pose=args.pose),
         ]
         print("\n\n========== HQ FINAL REPORT ==========")
         for r in results:

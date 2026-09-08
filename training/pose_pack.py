@@ -40,11 +40,12 @@ Usage:
 
 import argparse
 import os
-import re
+import sys
 import time
 
 import comfyui_client as client
 import generate_character as gc
+import pose_skeletons
 
 REF_DIR = os.path.join(os.path.dirname(__file__), "reference_candidates")
 
@@ -71,12 +72,19 @@ NEUTRAL_ANGLE_FOR_POSES = "full body shot"
 NEUTRAL_POSE_FOR_ANGLES = "standing straight"
 
 
-def out_dir_for(facedetailer):
+def out_dir_for(facedetailer, controlnet=False, strength=None):
+    if controlnet:
+        name = "pose_pack_controlnet"
+        # keep strength sweeps in separate dirs so they coexist for comparison
+        if strength is not None and abs(strength - client.CONTROLNET_STRENGTH) > 1e-6:
+            name += f"_s{strength:g}"
+        return os.path.join(REF_DIR, name)
     return os.path.join(REF_DIR, "pose_pack_facedetailer" if facedetailer else "pose_pack")
 
 
-def slugify(tag):
-    return re.sub(r"[^a-z0-9]+", "_", tag.lower()).strip("_")[:60]
+# Kept as a module-level alias so callers/tests using pose_pack.slugify keep
+# working; the single source of truth lives in pose_skeletons.
+slugify = pose_skeletons.slugify
 
 
 def image_size(path):
@@ -88,15 +96,19 @@ def image_size(path):
         return None
 
 
-def build_prompt(tag, category, trigger, checkpoint_key):
+def build_prompt(tag, category, trigger, checkpoint_key, extra=None):
     """Assembles the scene description the same way the variations flow does
     (angle + pose + outfit + lighting + background), then hands it to the
-    shared prompt builder for identity/style/safety/Pony handling."""
+    shared prompt builder for identity/style/safety/Pony handling. `extra` is
+    an optional camera/pose hint appended to the scene - used by the ControlNet
+    path to pair a skeleton with its intended camera (see pose_skeletons)."""
     if category == "poses":
         pose, angle = tag, NEUTRAL_ANGLE_FOR_POSES
     else:
         pose, angle = NEUTRAL_POSE_FOR_ANGLES, tag
     scene = f"{angle}, {pose}, {FIXED_OUTFIT}, {FIXED_LIGHTING}, {FIXED_BACKGROUND}"
+    if extra:
+        scene = f"{scene}, {extra}"
     return gc._build_prompt_and_negative(
         scene, None, "safe", trigger, None, None, checkpoint_key,
     )
@@ -109,7 +121,14 @@ def generate(args, out_dir):
 
     results = []
     todo = [(cat, tag) for cat in args.categories for tag in CATEGORIES[cat][0]]
-    path_label = "HQ facedetailer (hires off)" if args.facedetailer else "plain txt2img"
+    if args.only:
+        todo = [(c, t) for (c, t) in todo if any(s.lower() in t.lower() for s in args.only)]
+    if args.controlnet:
+        path_label = f"HQ facedetailer + ControlNet OpenPose (strength {args.controlnet_strength:g})"
+    elif args.facedetailer:
+        path_label = "HQ facedetailer (hires off)"
+    else:
+        path_label = "plain txt2img"
     print(f"{len(todo)} tags | character={args.character} checkpoint={args.checkpoint} "
           f"seed={args.seed} | {path_label}\n", flush=True)
 
@@ -119,19 +138,36 @@ def generate(args, out_dir):
         os.makedirs(cat_dir, exist_ok=True)
         out_path = os.path.join(cat_dir, f"{slugify(tag)}.png")
 
+        # ControlNet mode: use the library skeleton if this tag has one; tags
+        # without a skeleton (gaze/expression) fall back to the plain HQ path
+        # and are marked text-only in the index rather than skipped.
+        skel_path = pose_skeletons.resolve(tag) if args.controlnet else None
+
         if os.path.exists(out_path) and not args.force:
             print(f"[{i}/{len(todo)}] skip (exists) {category}/{tag}", flush=True)
             results.append({"category": category, "tag": tag, "path": out_path,
-                            "size": image_size(out_path), "elapsed": None})
+                            "size": image_size(out_path), "elapsed": None, "skeleton": skel_path})
             continue
 
-        prompt, negative = build_prompt(tag, category, args.character, args.checkpoint)
+        extra = pose_skeletons.load_meta(tag).get("prompt_hint") if skel_path else None
+        prompt, negative = build_prompt(tag, category, args.character, args.checkpoint, extra=extra)
         # Style slider LoRA was tuned for photoreal SDXL, not Pony - see
         # comfyui_client.CHECKPOINTS notes.
         lora_strength = 0.0 if is_pony else None
         t0 = time.time()
         try:
-            if args.facedetailer:
+            if args.controlnet and skel_path:
+                pose_name = client.upload_reference_image(skel_path)
+                raw = client.submit_generation_hq(
+                    prompt=prompt, negative_prompt=negative, seed=args.seed,
+                    filename_prefix=f"posepack_{category}_{slugify(tag)}",
+                    width=width, height=height, checkpoint=checkpoint_file,
+                    lora_strength=lora_strength,
+                    pose_image_filename=pose_name, pose_is_skeleton=True,
+                    controlnet_strength=args.controlnet_strength,
+                    hires=False, use_facedetailer=True,
+                )
+            elif args.facedetailer or args.controlnet:
                 raw = client.submit_generation_hq(
                     prompt=prompt, negative_prompt=negative, seed=args.seed,
                     filename_prefix=f"posepack_{category}_{slugify(tag)}",
@@ -149,23 +185,30 @@ def generate(args, out_dir):
             elapsed = time.time() - t0
             os.replace(raw, out_path)
             size = image_size(out_path)
-            print(f"[{i}/{len(todo)}] OK {elapsed:5.1f}s {size[0]}x{size[1]} {category}/{tag}", flush=True)
+            marker = " [skel]" if (args.controlnet and skel_path) else (" [text-only]" if args.controlnet else "")
+            print(f"[{i}/{len(todo)}] OK {elapsed:5.1f}s {size[0]}x{size[1]} {category}/{tag}{marker}", flush=True)
             results.append({"category": category, "tag": tag, "path": out_path,
-                            "size": size, "elapsed": elapsed})
+                            "size": size, "elapsed": elapsed, "skeleton": skel_path})
         except Exception as exc:
             elapsed = time.time() - t0
             print(f"[{i}/{len(todo)}] FAIL {elapsed:5.1f}s {category}/{tag}: {exc}", flush=True)
             results.append({"category": category, "tag": tag, "path": None,
-                            "size": None, "elapsed": elapsed})
+                            "size": None, "elapsed": elapsed, "skeleton": skel_path})
     return results
 
 
-def build_contact_sheets(categories, out_dir):
+def build_contact_sheets(categories, out_dir, skeleton_lookup=None):
     """One labelled contact sheet per category - the actual browsing artifact;
-    the per-tag PNGs are for looking at a specific tag up close."""
+    the per-tag PNGs are for looking at a specific tag up close.
+
+    When skeleton_lookup ({tag: skeleton_path|None}) is given (ControlNet mode),
+    each cell shows the input skeleton next to the render so you can check
+    limb-for-limb that the pose was followed; tags with no skeleton get a grey
+    'text only' placeholder in the skeleton slot."""
     from PIL import Image, ImageDraw, ImageFont
 
-    THUMB_W, COLS, LABEL_H, PAD = 320, 5, 26, 8
+    THUMB_W, LABEL_H, PAD = 320, 26, 8
+    COLS = 3 if skeleton_lookup else 5
     try:
         font = ImageFont.truetype("arial.ttf", 14)
     except OSError:
@@ -185,21 +228,32 @@ def build_contact_sheets(categories, out_dir):
         # for - those differ on the HQ path (see module docstring).
         first = image_size(os.path.join(cat_dir, f"{slugify(tags[0])}.png"))
         thumb_h = round(THUMB_W * first[1] / first[0]) if first else THUMB_W
+        cell_w = (2 * THUMB_W + PAD) if skeleton_lookup else THUMB_W
         cell_h = thumb_h + LABEL_H
         rows = (len(tags) + COLS - 1) // COLS
         sheet = Image.new("RGB",
-                          (COLS * THUMB_W + (COLS + 1) * PAD, rows * cell_h + (rows + 1) * PAD),
+                          (COLS * cell_w + (COLS + 1) * PAD, rows * cell_h + (rows + 1) * PAD),
                           "white")
         draw = ImageDraw.Draw(sheet)
 
         for idx, tag in enumerate(tags):
             r, c = divmod(idx, COLS)
-            x = PAD + c * (THUMB_W + PAD)
+            x = PAD + c * (cell_w + PAD)
             y = PAD + r * (cell_h + PAD)
+            if skeleton_lookup is not None:
+                skel = skeleton_lookup.get(tag)
+                if skel and os.path.exists(skel):
+                    with Image.open(skel) as sk:
+                        sheet.paste(sk.convert("RGB").resize((THUMB_W, thumb_h), Image.LANCZOS), (x, y))
+                else:
+                    ph = Image.new("RGB", (THUMB_W, thumb_h), (40, 40, 40))
+                    ImageDraw.Draw(ph).text((8, thumb_h // 2 - 8), "text only", fill="white", font=font)
+                    sheet.paste(ph, (x, y))
+                x += THUMB_W + PAD
             with Image.open(os.path.join(cat_dir, f"{slugify(tag)}.png")) as im:
                 sheet.paste(im.convert("RGB").resize((THUMB_W, thumb_h), Image.LANCZOS), (x, y))
             label = tag if len(tag) <= 46 else tag[:43] + "..."
-            draw.text((x + 2, y + thumb_h + 6), label, fill="black", font=font)
+            draw.text((PAD + c * (cell_w + PAD) + 2, y + thumb_h + 6), label, fill="black", font=font)
 
         path = os.path.join(out_dir, f"contact_sheet_{category}.png")
         sheet.save(path)
@@ -212,8 +266,14 @@ def write_index(results, args, sheets, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "INDEX.md")
     timed = [r for r in results if r["elapsed"] is not None]
-    path_label = ("HQ path with FaceDetailer, hires off"
-                  if args.facedetailer else "plain txt2img (no FaceID / hires / FaceDetailer)")
+    if args.controlnet:
+        path_label = (f"HQ path with FaceDetailer + ControlNet OpenPose "
+                      f"(skeleton library, strength {args.controlnet_strength:g}, hires off)")
+    elif args.facedetailer:
+        path_label = "HQ path with FaceDetailer, hires off"
+    else:
+        path_label = "plain txt2img (no FaceID / hires / FaceDetailer)"
+    regen_flag = " --controlnet" if args.controlnet else (" --facedetailer" if args.facedetailer else "")
     with open(path, "w", encoding="utf-8") as f:
         f.write("# Pose / angle tag reference pack\n\n")
         f.write(f"- Character: `{args.character}` | Checkpoint: `{args.checkpoint}` | "
@@ -228,22 +288,40 @@ def write_index(results, args, sheets, out_dir):
                 "comparison is still clean.\n")
         f.write("- Resolution columns are the ACTUAL produced size; `submit_generation_hq` does not "
                 "honour the requested width/height (see pose_pack.py module docstring).\n")
+        if args.controlnet:
+            f.write("- Skeletons come from the `training/poses/` library (fed to ControlNet directly, "
+                    "no preprocessor). Tags without a skeleton are generated text-only for comparison.\n")
         if timed:
             total = sum(r["elapsed"] for r in timed)
             f.write(f"- Generated {len(timed)} images in {total/60:.1f} min "
                     f"(avg {total/len(timed):.1f}s)\n")
+            if args.controlnet and len(timed) >= 2:
+                # first generation is cold (loads the 774MB control-lora); the
+                # rest are the number that matters for the per-image budget
+                cold = timed[0]["elapsed"]
+                rest = sorted(r["elapsed"] for r in timed[1:])
+                median = rest[len(rest) // 2]
+                f.write(f"- ControlNet timing: first tag {cold:.1f}s (cold, includes control-lora load), "
+                        f"median of the rest {median:.1f}s\n")
         f.write("\nTag pools live in `generate_character.py` - regenerate with "
-                "`python training/pose_pack.py"
-                f"{' --facedetailer' if args.facedetailer else ''}`.\n")
+                f"`python training/pose_pack.py{regen_flag}`.\n")
         for category, sheet_path, n in sheets:
             f.write(f"\n## {category} ({n})\n\n")
             f.write(f"![{category}]({os.path.basename(sheet_path)})\n\n")
-            f.write("| Tag | File | Resolution | Time |\n|---|---|---|---|\n")
+            if args.controlnet:
+                f.write("| Tag | File | Skeleton | Resolution | Time |\n|---|---|---|---|---|\n")
+            else:
+                f.write("| Tag | File | Resolution | Time |\n|---|---|---|---|\n")
             for r in [x for x in results if x["category"] == category]:
                 t = f"{r['elapsed']:.1f}s" if r["elapsed"] is not None else "cached"
                 status = f"`{category}/{slugify(r['tag'])}.png`" if r["path"] else "**FAILED**"
                 res = f"{r['size'][0]}x{r['size'][1]}" if r["size"] else "-"
-                f.write(f"| {r['tag']} | {status} | {res} | {t} |\n")
+                if args.controlnet:
+                    skel = r.get("skeleton")
+                    skel_cell = f"`../../poses/{slugify(r['tag'])}.png`" if skel else "none (text only)"
+                    f.write(f"| {r['tag']} | {status} | {skel_cell} | {res} | {t} |\n")
+                else:
+                    f.write(f"| {r['tag']} | {status} | {res} | {t} |\n")
     print(f"index: {path}", flush=True)
     return path
 
@@ -257,29 +335,48 @@ def main():
     p.add_argument("--facedetailer", action="store_true",
                    help="run the HQ path with the FaceDetailer face/hand pass (hires off) - "
                         "+14s per tag, fixes the asymmetric eyes of the plain path")
+    p.add_argument("--controlnet", action="store_true",
+                   help="feed each pose tag its training/poses/ skeleton through ControlNet OpenPose "
+                        "(implies the FaceDetailer HQ path); tags without a skeleton run text-only. "
+                        "Defaults --categories to just 'poses'.")
+    p.add_argument("--controlnet-strength", type=float, default=client.CONTROLNET_STRENGTH,
+                   help="ControlNet conditioning strength (0=ignored, 1=rigid); sweep to pick a default")
+    p.add_argument("--only", nargs="+", help="restrict to tags containing any of these substrings")
     p.add_argument("--force", action="store_true", help="regenerate images that already exist")
     p.add_argument("--contact-sheet-only", action="store_true", help="rebuild sheets/index from existing PNGs")
     args = p.parse_args()
 
     if args.checkpoint in client.SD15_CHECKPOINTS:
         raise SystemExit(f"{args.checkpoint} is SD1.5; this pack targets the SDXL/Pony txt2img path")
+    # ControlNet skeletons only exist for the POSES pool; default there unless the
+    # user explicitly asked for other categories.
+    if args.controlnet and not _categories_explicit(sys.argv):
+        args.categories = ["poses"]
 
-    out_dir = out_dir_for(args.facedetailer)
+    out_dir = out_dir_for(args.facedetailer, args.controlnet, args.controlnet_strength)
     if args.contact_sheet_only:
         results = []
         for c in args.categories:
             for t in CATEGORIES[c][0]:
+                if args.only and not any(s.lower() in t.lower() for s in args.only):
+                    continue
                 fp = os.path.join(out_dir, c, f"{slugify(t)}.png")
                 results.append({"category": c, "tag": t,
                                 "path": fp if os.path.exists(fp) else None,
-                                "size": image_size(fp), "elapsed": None})
+                                "size": image_size(fp), "elapsed": None,
+                                "skeleton": pose_skeletons.resolve(t) if args.controlnet else None})
     else:
         results = generate(args, out_dir)
 
-    sheets = build_contact_sheets(args.categories, out_dir)
+    skeleton_lookup = ({r["tag"]: r.get("skeleton") for r in results} if args.controlnet else None)
+    sheets = build_contact_sheets(args.categories, out_dir, skeleton_lookup)
     write_index(results, args, sheets, out_dir)
     ok = sum(1 for r in results if r["path"] and os.path.exists(r["path"]))
     print(f"\n{ok}/{len(results)} tags rendered -> {out_dir}")
+
+
+def _categories_explicit(argv):
+    return any(a == "--categories" for a in argv)
 
 
 if __name__ == "__main__":

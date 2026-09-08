@@ -749,6 +749,7 @@ def submit_generation_hq(
     character_lora_strength: float = CHARACTER_LORA_STRENGTH,
     pose_image_filename: str = None,
     controlnet_strength: float = CONTROLNET_STRENGTH,
+    pose_is_skeleton: bool = False,
     hires: bool = True,
     hires_denoise: float = HIRES_DENOISE,
     hires_steps: int = HIRES_STEPS,
@@ -775,7 +776,10 @@ def submit_generation_hq(
     ip_adapter_weight to ~0.7 when a LoRA is present - the LoRA carries
     identity, FaceID only corrects drift). ControlNet is honoured when
     pose_image_filename is given but is the slowest stage on 8GB - callers
-    keep it off by default."""
+    keep it off by default. pose_is_skeleton=True means pose_image_filename is
+    already an OpenPose skeleton render (from training/poses/) rather than a
+    photo, so the OpenposePreprocessor (node 21) is skipped and the skeleton
+    feeds ControlNet directly."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_HQ_PATH))
     wf["4"]["inputs"]["ckpt_name"] = checkpoint
 
@@ -817,6 +821,13 @@ def submit_generation_hq(
         wf["20"]["inputs"]["image"] = pose_image_filename
         wf["22"]["inputs"]["control_net_name"] = CONTROLNET_MODEL
         wf["23"]["inputs"]["strength"] = controlnet_strength
+        if pose_is_skeleton:
+            # The image IS already an OpenPose skeleton render (from the pose
+            # library), not a photo - feed node 23 straight from LoadImage and
+            # drop the preprocessor, which would otherwise try to detect a body
+            # in a stick figure and produce garbage.
+            _rewire(wf, ["21", 0], ["20", 0])
+            _drop_nodes(wf, ["21"])
     else:
         # pass 1 KSampler positive/negative go straight to the text encoders
         _rewire(wf, ["23", 0], ["6", 0])

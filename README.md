@@ -209,12 +209,13 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py anchor --
 基礎安裝完成、確認可以正常生圖之後才需要裝這個——用 OpenPose 骨架精確控制生成
 姿勢，解決純文字描述姿勢常常不準的問題。
 
-> **效能取捨,實測數據**:8GB VRAM 卡上，checkpoint(6.6GB)+ FaceID(1.49GB+
-> 372MB LoRA)+ CLIP vision(2.5GB)+ ControlNet(774MB)+ OpenPose 偵測模型
-> 全部疊在一起，遠超過顯存容量，ComfyUI 得不斷把模型搬進搬出，實測生成時間從
-> 純 FaceID 的 150-180 秒/張拉長到有骨架時的 440 秒/張(約 2.5-3 倍)。**建議
-> 只在真的需要精確複製某個姿勢時才用 `--pose-reference`**，其他情況單靠
-> prompt 描述 + FaceID 身分條件化就夠用、速度也快得多。
+> **效能取捨**:8GB VRAM 卡上，checkpoint(6.6GB)+ FaceID(1.49GB+ 372MB LoRA)+
+> CLIP vision(2.5GB)+ ControlNet(774MB)+ OpenPose 偵測模型全部疊在一起會超過顯存，
+> ComfyUI 得把模型搬進搬出。**那個 440 秒/張是舊的 legacy 單段式路徑（`submit_generation_with_pose`）
+> 且掛 FaceID 的手估值**——瓶頸是 FaceID 的 VRAM 帳外佔用，不是 ControlNet。實務上
+> 不掛 FaceID 走骨架庫（見下方「ControlNet 姿勢骨架庫」）單張約 60-90 秒。裝這個
+> custom node 是為了 `--pose-reference`（上傳照片抽骨架）；預先畫好的骨架庫
+> （`--pose`）連 preprocessor 都不用跑。
 
 ### 1. Clone 前處理 custom node
 
@@ -1033,11 +1034,27 @@ New-Item -ItemType HardLink -Path "ComfyUI\models\upscale_models\4x-UltraSharp.p
 > 消除 FaceID 的 VRAM 帳外佔用後，預期整體降到 ~90 秒。實際數字用
 > `python benchmark.py --hq --anchor <臉圖>` 量測（見下方 Benchmark）。
 
-### ControlNet 預設關閉
+### ControlNet 姿勢骨架庫（修正 checkpoint 壓不住的姿勢）
 
-在 8GB 卡上，加 ControlNet OpenPose 單張約 390 秒，超過 5 分鐘目標（checkpoint +
-FaceID + CLIP vision + ControlNet 遠超 VRAM，模型反覆換入換出）。所以 HQ 預設不開
-ControlNet，只有真的要指定姿勢時才在 GUI／`--pose-reference` 開啟，GUI 也有超時警告。
+`training/pose_skeletons.py` + `training/poses/` 提供一組預先畫好的 OpenPose 骨架，
+對應 `POSES` 標籤，餵給 HQ 模板既有的 ControlNet（節點 20-23）來鎖定身體姿勢。動機：
+上面「姿勢/角度標籤實測」證明 Pony 系 checkpoint 對 5 個 `lying on ...` 標籤完全不聽
+文字（都塌成坐姿），只有骨架壓得住。
+
+- 骨架庫 17 個姿勢：15 個從既有 `pose_pack_facedetailer` 產圖用 OpenposePreprocessor
+  擷取，5 個躺姿手工重寫關鍵點（擷取出來的是坐姿失敗版）。`<slug>.json` 是關鍵點來源，
+  `<slug>.png` 是 commit 進版控的骨架，產圖時不需要 torch。
+- 骨架是**預先畫好的**，直接餵 ControlNet（`pose_is_skeleton=True` 跳過 preprocessor）；
+  上傳照片走 `--pose-reference` 才會跑 preprocessor 抽骨架。
+- 用法：CLI `--pose <名稱>`、GUI ControlNet accordion 的「姿勢骨架庫」下拉、
+  `pose_pack.py --controlnet`（產全套對照）、`benchmark.py --hq --pose <名稱>`。
+
+**耗時修正（實測完成）**：舊版這裡寫「單張約 390 秒、預設關閉」，那是掛 FaceID + 舊
+`INSIGHTFACE_PROVIDER=CUDA` 換入換出時代的手估值，從未實測。`pose_pack --controlnet`
+實測完整 20 pose 套件（HQ + FaceDetailer + 骨架庫，不掛 FaceID）：冷啟 84.5s（含
+control-lora 載入）、中位數 102.5s（其餘 19 張）、平均 100.6s。遠低於 300 秒目標——
+ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓躺姿正確躺下，預設沿用
+`CONTROLNET_STRENGTH=0.8`。
 
 ## 生成參數
 
@@ -1115,7 +1132,8 @@ HQ 兩段式（`benchmark.py --hq --anchor <臉圖>`，逐階段計時 + 300 秒
 | hq_portrait | 1056×1536 | 待測 | 待測 | 待測 |
 
 > 加 `--insightface-provider CUDA` 與預設的 CPU 對照，可量出 FaceID 的 VRAM
-> 換入換出對耗時的影響；加 `--controlnet` 量 ControlNet 版本（預期超過 300 秒）。
+> 換入換出對耗時的影響。ControlNet 骨架庫版本用 `--pose <名稱>` 量（不掛 FaceID
+> 時實測約 60-90 秒，見上方「ControlNet 姿勢骨架庫」）。
 
 ## 本地顯卡不夠力時：雲端 GPU
 

@@ -22,6 +22,7 @@ import os
 import random
 
 import comfyui_client as client
+import pose_skeletons
 
 # "photorealistic, high detail" reads to SDXL as "polished digital art" as
 # much as "photo" - it's a big part of why outputs look like a 3D render.
@@ -530,7 +531,7 @@ def _checkpoint_family(checkpoint_key):
 def _run_hq(full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose_reference_path,
             width, height, ip_adapter_weight, effective_checkpoint, lora_strength,
             character_lora_strength, controlnet_strength, hires_denoise, use_facedetailer,
-            face_denoise, hand_denoise):
+            face_denoise, hand_denoise, pose_is_skeleton=False):
     """Resolves the per-character LoRA (if any), lowers FaceID weight when a
     LoRA carries identity, uploads anchor/pose, and calls submit_generation_hq.
     Shared by gen_custom's HQ branch. anchor_path (IP-Adapter) and
@@ -585,6 +586,7 @@ def _run_hq(full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose
         character_lora_strength=(resolved_lora_strength if resolved_lora_strength is not None
                                  else client.CHARACTER_LORA_STRENGTH),
         pose_image_filename=pose_filename,
+        pose_is_skeleton=pose_is_skeleton,
         hires=True,
         hires_denoise=(hires_denoise if hires_denoise is not None else client.HIRES_DENOISE),
         use_facedetailer=use_facedetailer,
@@ -599,7 +601,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
                 use_facedetailer=None, facedetailer_denoise=None, facedetailer_backend="yolo",
                 style_positive=None, style_negative=None, checkpoint=None, lora_strength=None,
                 hq=True, character_lora_strength=None, hires_denoise=None,
-                facedetailer_face_denoise=None, facedetailer_hand_denoise=None):
+                facedetailer_face_denoise=None, facedetailer_hand_denoise=None, pose_name=None):
     """Free-form prompt generation for one-off tests. The descriptive part of
     the prompt is fully up to the caller, but the safety negatives are not a
     dial that gets turned off here: AGE_SAFETY_NEGATIVE is always included,
@@ -614,15 +616,20 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     a fictional/AI-generated face, same as every other anchor in this
     project - never a real person's photo.
 
-    pose_reference_path (optional) additionally skeleton-conditions the pose
-    via ControlNet (see comfyui_client.submit_generation_with_pose) - the
-    OpenposePreprocessor node extracts a skeleton from this photo, no
-    per-character setup needed. Requires anchor_path (the workflow still
-    face-conditions via IP-Adapter alongside the pose control); pose_reference
-    is about body position, not identity, so it doesn't need to be the same
-    photo as anchor_path and doesn't carry the same fictional-only
-    requirement - a real person's photo is fine here since only the
-    stick-figure pose is extracted, no face/identity data crosses over.
+    pose_name (optional) picks a pre-built skeleton from the training/poses/
+    library (pose_skeletons.resolve) and feeds it to ControlNet directly - the
+    fix for pose tags Pony checkpoints ignore from text alone (lying down etc).
+    HQ path only; the library entry's camera prompt_hint is appended to the
+    prompt so the 2D skeleton isn't ambiguous. Mutually exclusive with
+    pose_reference_path.
+
+    pose_reference_path (optional) is the photo equivalent: the
+    OpenposePreprocessor extracts a skeleton from this image at run time. In the
+    HQ path it needs no anchor and combines freely with FaceID/FaceDetailer;
+    only the legacy (hq=False) path still requires anchor_path. pose_reference
+    is about body position, not identity, so it needn't be the same photo as
+    anchor_path and doesn't carry the fictional-only requirement - a real
+    person's photo is fine since only the stick-figure pose is extracted.
 
     facedetailer_backend picks which face detector the face pass uses when
     use_facedetailer is set: "yolo" (default, bounding-box detection via
@@ -674,11 +681,34 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
         raise SystemExit(f"unknown checkpoint {checkpoint!r} - choices: {sorted(client.CHECKPOINTS)}")
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
 
+    # pose_name selects a pre-built skeleton from the training/poses/ library
+    # (fed to ControlNet directly, no preprocessor) - distinct from
+    # pose_reference_path, which is a photo the OpenposePreprocessor turns into
+    # a skeleton. The library exists because Pony checkpoints ignore pose tags
+    # like "lying on ..." from text alone (see pose_skeletons.py). Its camera
+    # hint is appended to the prompt so the 2D skeleton isn't ambiguous.
+    pose_is_skeleton = False
+    if pose_name:
+        if pose_reference_path:
+            raise SystemExit("pass either pose_name (library skeleton) or pose_reference_path (photo), not both")
+        skel = pose_skeletons.resolve(pose_name)
+        if not skel:
+            raise SystemExit(f"unknown pose {pose_name!r} - choices: {pose_skeletons.list_names()}")
+        pose_reference_path = skel
+        pose_is_skeleton = True
+        hint = pose_skeletons.load_meta(pose_name).get("prompt_hint")
+        if hint:
+            prompt = f"{prompt}, {hint}"
+
     # HQ two-pass path is the default for SDXL/Pony. It combines the FaceID,
     # ControlNet and FaceDetailer chains into one workflow, so the old "can't
     # combine" restrictions only apply to the legacy (hq=False) path. SD1.5
     # has no HQ path (no SDXL-family adapter/upscale wiring), so it falls back.
     use_hq = hq and not is_sd15
+
+    if pose_is_skeleton and not use_hq:
+        raise SystemExit("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
+                         "directly, which only the HQ template wires up (drop --no-hq)")
 
     if use_facedetailer is None:
         use_facedetailer = use_hq  # HQ defaults FaceDetailer on; legacy defaults off
@@ -729,6 +759,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
             hires_denoise, use_facedetailer,
             facedetailer_face_denoise if facedetailer_face_denoise is not None else facedetailer_denoise,
             facedetailer_hand_denoise,
+            pose_is_skeleton=pose_is_skeleton,
         )
     elif pose_reference_path:
         ref_filename = client.upload_reference_image(anchor_path)
@@ -1073,7 +1104,11 @@ if __name__ == "__main__":
     p_custom.add_argument("--seed", type=int, default=9000)
     p_custom.add_argument("--filename", default=None)
     p_custom.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
-    p_custom.add_argument("--pose-reference", default=None, help="optional - skeleton-conditions the pose via ControlNet (OpenPose), extracted from this photo. Requires --anchor. Unlike --anchor, this can be any photo (only stick-figure joint positions are extracted, no face/identity data carries over)")
+    p_custom.add_argument("--pose", default=None, choices=pose_skeletons.list_names() or None,
+                          help="optional - use a pre-built skeleton from the training/poses/ library "
+                               "(HQ path only). Fixes pose tags the checkpoint ignores from text alone "
+                               "(e.g. lying down). Mutually exclusive with --pose-reference")
+    p_custom.add_argument("--pose-reference", default=None, help="optional - skeleton-conditions the pose via ControlNet (OpenPose), extracted from this photo (the OpenposePreprocessor runs on it). Unlike --anchor, this can be any photo (only stick-figure joint positions are extracted, no face/identity data carries over). For a pre-built library skeleton use --pose instead")
     p_custom.add_argument("--controlnet-strength", type=float, default=None, help="0=ignored, 1=rigidly locked to the skeleton; defaults to comfyui_client.CONTROLNET_STRENGTH (0.8) if omitted")
     p_custom.add_argument("--width", type=int, default=None, help="defaults to 832 (portrait) if --pose-reference is given, else 1024 (square)")
     p_custom.add_argument("--height", type=int, default=None, help="defaults to 1216 (portrait) if --pose-reference is given, else 1024 (square)")
@@ -1176,7 +1211,7 @@ if __name__ == "__main__":
                    style_positive=args.style_positive, style_negative=args.style_negative,
                    checkpoint=args.checkpoint, lora_strength=args.lora_strength,
                    hq=not args.no_hq, character_lora_strength=args.character_lora_strength,
-                   hires_denoise=args.hires_denoise)
+                   hires_denoise=args.hires_denoise, pose_name=args.pose)
     elif args.mode == "gif":
         gen_gif(args.prompt, args.negative_prompt, args.tier, args.character, args.anchor, args.out, args.seed, args.frames,
                 args.ip_adapter_weight, duration_ms=args.duration_ms, denoise=args.denoise,

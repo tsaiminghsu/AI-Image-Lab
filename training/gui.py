@@ -17,10 +17,19 @@ import gradio as gr
 import caption_image
 import comfyui_client as client
 import generate_character as gc
+import pose_skeletons
 import translate_prompt
 
 NO_CHARACTER = "(無 - 純文字生圖)"
 CHARACTER_CHOICES = [NO_CHARACTER] + sorted(gc.CHARACTERS)
+POSE_NONE = "(無 - 不用骨架庫)"
+
+
+def _pose_preview(pose_library):
+    """Show the selected library skeleton so the user sees what pose they picked."""
+    if not pose_library or pose_library == POSE_NONE:
+        return None
+    return pose_skeletons.resolve(pose_library)
 
 
 def list_anchors(character):
@@ -84,8 +93,8 @@ MOTION_LORA_CHOICES = [MOTION_LORA_NONE] + sorted(client.ANIMATEDIFF_MOTION_LORA
 
 
 def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
-             pose_reference, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength,
-             use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
+             pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
+             character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
              style_positive, style_negative, checkpoint_choice, lora_strength):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
@@ -93,15 +102,21 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     anchor_path = custom_anchor or anchor
     if trigger and not anchor_path:
         raise gr.Error("選了角色就要選一張 anchor 圖，或自行上傳一張")
-    if pose_reference and not anchor_path:
-        raise gr.Error("骨架姿勢參考圖需要搭配 anchor 圖（選一張角色 anchor 或自行上傳身分參考圖）")
+    # An uploaded photo (pose_reference) wins over a library pick; a library
+    # skeleton goes through pose_name (fed to ControlNet directly, no preprocessor).
+    pose_name = None if (pose_reference or pose_library == POSE_NONE) else pose_library
     # In HQ mode FaceDetailer + ControlNet + FaceID all run in one workflow, so
-    # the old "can't combine" / "needs anchor" restrictions no longer apply.
+    # the old "can't combine" / "needs anchor" restrictions only apply to the
+    # legacy (non-HQ) path.
     if not use_hq:
+        if pose_reference and not anchor_path:
+            raise gr.Error("非 HQ 模式下骨架姿勢參考圖需要搭配 anchor 圖（選一張角色 anchor 或自行上傳身分參考圖）；或打開 HQ 兩段式")
         if use_facedetailer and not anchor_path:
             raise gr.Error("臉部/手部精修需要 anchor 圖（選一張角色 anchor 或自行上傳身分參考圖）；或打開 HQ 兩段式")
         if use_facedetailer and pose_reference:
             raise gr.Error("非 HQ 模式下臉部/手部精修跟骨架姿勢控制不能同時使用（兩套獨立 workflow）；打開 HQ 兩段式即可合併")
+        if pose_name:
+            raise gr.Error("骨架庫需要 HQ 兩段式（直接餵 ControlNet）；請打開 HQ 兩段式")
 
     checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
@@ -125,7 +140,8 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     stem = f"gui_seed{int(seed)}"
     backend = "mediapipe" if facedetailer_backend == FACEDETAILER_BACKEND_MEDIAPIPE else "yolo"
     gc.gen_custom(prompt, negative_prompt, tier, trigger, anchor_path, out_dir, int(seed), stem, ip_adapter_weight,
-                  pose_reference_path=pose_reference, controlnet_strength=controlnet_strength if pose_reference else None,
+                  pose_reference_path=pose_reference, pose_name=pose_name,
+                  controlnet_strength=controlnet_strength if (pose_reference or pose_name) else None,
                   width=width, height=height,
                   use_facedetailer=use_facedetailer,
                   facedetailer_backend=backend,
@@ -210,14 +226,22 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 character_lora_strength = gr.Slider(0.0, 1.2, value=client.CHARACTER_LORA_STRENGTH, step=0.05,
                                                      label="角色 LoRA 強度（僅在該角色有訓練好的 LoRA 時作用，否則忽略）")
             with gr.Accordion("骨架姿勢控制（ControlNet，選填）", open=False):
+                pose_library = gr.Dropdown(
+                    [POSE_NONE] + pose_skeletons.list_names(), value=POSE_NONE,
+                    label="姿勢骨架庫（選一個內建姿勢；用來壓住 checkpoint 靠文字壓不住的姿勢，例如各種躺姿）。"
+                          "若同時上傳了下方的參考照片，以照片為準",
+                )
+                skeleton_preview = gr.Image(label="骨架預覽", interactive=False, height=200)
                 pose_reference = gr.Image(
-                    label="姿勢參考照片（自動抽取骨架，控制生成結果的姿勢）— 需要搭配上面的 anchor 圖。"
-                          "此圖只抽取關節骨架，不會保留臉部/身分資訊，可以是任何照片",
+                    label="或：自訂姿勢參考照片（自動抽取骨架）。此圖只抽取關節骨架，"
+                          "不會保留臉部/身分資訊，可以是任何照片",
                     type="filepath",
                 )
                 controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
                                                  label="骨架控制強度（0=忽略骨架，1=嚴格鎖定姿勢）")
-                gr.Markdown("⚠️ 在 RTX 2070 上加骨架控制單張可能超過 5 分鐘（模型換入換出），只在真的需要指定姿勢時開啟。")
+                gr.Markdown("ℹ️ 內建骨架庫用預先畫好的骨架直接餵 ControlNet（跳過 preprocessor），"
+                            "不掛 FaceID 時單張約 60-90 秒。上傳照片則多一道骨架抽取。")
+                pose_library.change(_pose_preview, inputs=pose_library, outputs=skeleton_preview)
             with gr.Accordion("臉部/手部精修（ADetailer，HQ 模式預設開啟）", open=True):
                 use_facedetailer = gr.Checkbox(
                     value=True,
@@ -273,7 +297,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
     checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution)
     caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
     translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
-    btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
+    btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
 
     gr.Markdown("---\n## AnimateDiff 動態影片（SD1.5 + FaceID 鎖臉 + 逐幀臉部精修）")
     gr.Markdown(
