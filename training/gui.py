@@ -4,11 +4,14 @@ Runs entirely on localhost (server_name="127.0.0.1", share=False) - this
 handles suggestive-tier content and must never be exposed to the public
 internet via Gradio's share tunnel.
 
-Requires the ComfyUI server to already be running (see comfyui_client.py's
-module docstring for the start command) - this GUI is just a client, same
-as generate_character.py's CLI.
+ComfyUI no longer needs to be pre-started separately: _ensure_comfyui()
+launches it on the first actual generate click if it isn't already up, and
+_shutdown_comfyui() stops it again on exit (only if this GUI started it) -
+so leaving the GUI open unused doesn't leave the ~2GB ComfyUI process
+running for no reason.
 """
 
+import atexit
 import glob
 import os
 
@@ -19,6 +22,30 @@ import comfyui_client as client
 import generate_character as gc
 import pose_skeletons
 import translate_prompt
+
+_comfyui_process = None  # only set when this GUI auto-started ComfyUI itself
+
+
+def _ensure_comfyui():
+    """Start ComfyUI on first actual generation instead of requiring it
+    pre-started just to open the GUI - keeps the ~2GB process off when the
+    GUI is only sitting open unused."""
+    global _comfyui_process
+    if client.is_server_running():
+        return
+    if _comfyui_process is not None and _comfyui_process.poll() is None:
+        return  # already starting from a previous click
+    gr.Info("ComfyUI 尚未啟動，正在自動啟動（第一次可能要等幾秒）...")
+    _comfyui_process = client.start_server()
+
+
+@atexit.register
+def _shutdown_comfyui():
+    # Only kill the process this GUI started itself - never touch a ComfyUI
+    # the user is running separately in its own terminal.
+    if _comfyui_process is not None and _comfyui_process.poll() is None:
+        _comfyui_process.terminate()
+
 
 NO_CHARACTER = "(無 - 純文字生圖)"
 CHARACTER_CHOICES = [NO_CHARACTER] + sorted(gc.CHARACTERS)
@@ -98,6 +125,7 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
              style_positive, style_negative, checkpoint_choice, lora_strength):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
+    _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
     anchor_path = custom_anchor or anchor
     if trigger and not anchor_path:
@@ -174,6 +202,7 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
         raise gr.Error("請輸入 prompt")
     if not face_ref:
         raise gr.Error("請上傳臉部參考圖（用於 FaceID 鎖定長相）— 僅限虛構/AI生成的臉，禁止上傳真人照片")
+    _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
     checkpoint = None if checkpoint_choice == ANIMATEDIFF_CHECKPOINT_DEFAULT else checkpoint_choice
     motion_lora = None if motion_lora_choice == MOTION_LORA_NONE else motion_lora_choice
@@ -191,6 +220,7 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
 def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_id):
     if not init_image:
         raise gr.Error("請上傳要配上動作的圖片")
+    _ensure_comfyui()
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", character, "videos")
     gc.gen_video(character, init_image, out_dir, int(seed), int(frames), int(fps), int(motion_bucket_id))
     return os.path.join(out_dir, f"video_seed{int(seed)}.webm")
@@ -200,6 +230,7 @@ def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_c
                   ip_adapter_weight, style_positive, style_negative, checkpoint_choice, lora_strength):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
+    _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
     if trigger and not anchor:
         raise gr.Error("選了角色就要選一張 anchor 圖")

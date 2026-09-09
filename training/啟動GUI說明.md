@@ -15,16 +15,17 @@
 
 ## 正確啟動步驟
 
-1. 確認 ComfyUI server 已經在跑（GUI 靠它做實際生成，沒開會連不到）：
-   ```powershell
-   D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py --listen 127.0.0.1 --port 8188
-   ```
-2. 另開一個終端機視窗，啟動 GUI：
+1. 啟動 GUI（不用再另外手動先開 ComfyUI——按下「生成」時 gui.py 會自動偵測
+   ComfyUI 有沒有在跑，沒有的話會自己啟動，第一次生成會多等幾秒）：
    ```powershell
    cd D:\AI-Image-Lab\training
    D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe gui.py
    ```
-3. 瀏覽器開啟 **`http://127.0.0.1:7861`**（不是 7860）。
+2. 瀏覽器開啟 **`http://127.0.0.1:7861`**（不是 7860）。
+
+關掉 gui.py（Ctrl+C）時，如果 ComfyUI 是它自己啟動的，也會一併關閉，
+不會留著佔記憶體；如果 ComfyUI 是你自己另開終端機手動啟動的，gui.py
+不會去動它。
 
 ## 怎麼確認自己開對頁面
 
@@ -36,8 +37,11 @@
 
 ## 疑難排解
 
-- **`:7861` 打不開**：GUI 可能還沒啟動或已經當掉。回到終端機執行上面步驟 2 的
+- **`:7861` 打不開**：GUI 可能還沒啟動或已經當掉。回到終端機執行上面步驟 1 的
   指令重新啟動。
+- **按下「生成」後卡在啟動 ComfyUI**：第一次自動啟動通常幾秒內會連上；如果
+  一直失敗，看 gui.py 所在的終端機視窗有沒有印出 ComfyUI 的錯誤訊息（例如
+  8188 埠被其他程式佔用）。
 - **畫面卡住、生成完了但看不到結果**：通常是瀏覽器分頁還連著重啟前的舊
   session。按 **Ctrl+F5**（強制重新整理）而不是一般 F5。
 - **確認目前哪個 port 有服務在跑**（PowerShell）：

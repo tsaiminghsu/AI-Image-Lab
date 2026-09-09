@@ -177,14 +177,17 @@ uv pip install --python .venv\Scripts\python.exe insightface onnx --no-deps
 第一次執行時會自動下載（約 280MB）到 `ComfyUI/models/insightface/`，下載完
 會快取，之後不用重新下載。
 
-### 4. 啟動 ComfyUI server（保持常駐）
+### 4. 啟動 ComfyUI server
 
 ```powershell
 D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py --listen 127.0.0.1 --port 8188
 ```
 
-這個 process 要一直開著——`training/` 底下的腳本都是透過 HTTP 呼叫它，
-不會自己啟動或關閉 ComfyUI。
+`training/` 底下的 CLI 腳本（`generate_character.py` 等）都是透過 HTTP 呼叫
+ComfyUI，不會自己啟動或關閉它，所以用 CLI 之前要先手動啟動、全程保持常駐。
+
+> 網頁 GUI（`gui.py`）不在此限——它會在你按下「生成」時自動偵測 ComfyUI
+> 有沒有在跑，沒有的話自動啟動，不用先手動執行這一步，見下面「網頁 GUI」章節。
 
 ### 快速測試安裝是否成功
 
@@ -489,8 +492,12 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py
 ### 前置條件
 
 - 已裝好 GUI 需要的套件（見上面「2b. 一鍵安裝網頁 GUI + 所有選用功能套件」）
-- ComfyUI server 已經在執行（見上面「啟動 ComfyUI server」章節）
 - 開發者終端機或 PowerShell
+
+不需要先手動啟動 ComfyUI server——`gui.py` 會在你第一次按下「生成」時自動
+偵測、自動啟動，開著 GUI 但沒生圖不會多佔用 ComfyUI 那份記憶體（VRAM/RAM
+各約 2GB）。CLI（`generate_character.py`）沒有這個自動啟動，仍需照上面
+「啟動 ComfyUI server」章節手動先開。
 
 ### 啟動 GUI
 
@@ -503,7 +510,7 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe gui.py
 
 執行後終端機會輸出類似：
 ```
-* Running on http://127.0.0.1:7860
+* Running on http://127.0.0.1:7861
 ```
 
 #### 方式 2：背景執行（不佔用終端機）
@@ -515,9 +522,25 @@ Start-Process powershell -ArgumentList '-NoExit','-Command','D:\AI-Image-Lab\Com
 
 ### 使用網頁
 
-GUI 啟動後，在瀏覽器打開：**http://127.0.0.1:7860**
+GUI 啟動後，在瀏覽器打開：**http://127.0.0.1:7861**（不是 Gradio 預設的
+7860——這個 port 被固定改掉是為了避開 kohya_ss 自己的訓練 GUI，見
+`training/啟動GUI說明.md`）。
 
-網頁會顯示生圖表單，填完後按「生成」，通常 30 秒到 1 分鐘內圖片會出現在右側
+網頁會顯示生圖表單，填完後按「生成」。第一次按下去如果 ComfyUI 還沒啟動，
+會先自動啟動它（多等幾秒），之後同一個 session 內都是熱的，通常 30 秒到
+1 分鐘內圖片會出現在右側。
+
+### 關閉 ComfyUI（用完釋放記憶體）
+
+`gui.py` 退出時，如果 ComfyUI 是它自己自動啟動的，會一併關閉；如果 ComfyUI
+是你自己另開終端機手動啟動的，`gui.py` 不會去動它。想在 GUI 還開著的情況下
+單獨關掉 ComfyUI（例如要挪出 VRAM 給 kohya_ss 訓練），跑：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.ps1
+```
+
+下次按「生成」時 GUI 會自動重新啟動它。
 
 ### GUI 功能
 
@@ -1207,7 +1230,8 @@ AI-Image-Lab/
 ├── training/
 │   ├── generate_character.py # CLI 入口：角色定義 + prompt 組裝
 │   ├── comfyui_client.py     # ComfyUI HTTP client（不 import torch）
-│   ├── gui.py                # Gradio 本地網頁 GUI（localhost:7860）
+│   ├── gui.py                # Gradio 本地網頁 GUI（localhost:7861，會自動啟動/關閉 ComfyUI）
+│   ├── stop_comfyui.ps1      # 手動關閉 ComfyUI server，釋放 VRAM/RAM
 │   ├── caption_image.py      # BLIP 圖像描述模型（用於自動產生 prompt）
 │   ├── translate_prompt.py   # Prompt 自動翻譯成英文（Google Translate 公開端點）
 │   ├── check_adetailer_models.py # ADetailer YOLO 模型自動檢查/下載腳本
@@ -1235,7 +1259,7 @@ AI-Image-Lab/
 ### ComfyUI 跟 kohya_ss LoRA 訓練不能同時執行
 
 **症狀**：網頁 GUI 突然生不出圖片、連線錯誤，但 GUI process 本身還在跑
-（`localhost:7860` 打得開），問題出在 ComfyUI（`localhost:8188`）連不上。
+（`localhost:7861` 打得開），問題出在 ComfyUI（`localhost:8188`）連不上。
 
 **原因**：這兩個都要用同一張 8GB VRAM 的 RTX 2070。ComfyUI 常駐時已經佔用
 checkpoint(6.6GB)+ FaceID(1.49GB+372MB LoRA)+ CLIP vision(2.5GB) 等模型；
@@ -1249,9 +1273,13 @@ OOM 崩潰，重則兩個都跑不動或系統整個卡住。**這是本專案�
 
 ```powershell
 # 停止 ComfyUI（訓練前）
-Get-CimInstance Win32_Process -Filter "name like '%python%'" | Where-Object { $_.CommandLine -like '*ComfyUI*main.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.ps1
+```
 
-# 訓練跑完/中斷後，重啟 ComfyUI（恢復生圖）
+訓練跑完/中斷後要恢復生圖：如果是用網頁 GUI，直接按「生成」就會自動重新
+啟動 ComfyUI；如果是用 CLI，要手動重啟：
+
+```powershell
 D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py --listen 127.0.0.1 --port 8188
 ```
 

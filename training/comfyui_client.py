@@ -12,6 +12,7 @@ Start the server once, separately, before using this client:
 import copy
 import json
 import os
+import subprocess
 import time
 
 import requests
@@ -22,6 +23,7 @@ import requests
 # _download_output read this module global at call time, so nothing else needs
 # to change.
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
+COMFYUI_DIR = os.path.join(os.path.dirname(__file__), "..", "ComfyUI")
 WORKFLOW_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template.json")
 WORKFLOW_TEMPLATE_HQ_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_hq.json")
 WORKFLOW_TEMPLATE_TXT2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img.json")
@@ -259,6 +261,37 @@ POLL_TIMEOUT_SECONDS_VIDEO = 1800  # svd.safetensors is ~9.5GB - first load / sw
 def _load_template(path=WORKFLOW_TEMPLATE_PATH):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def is_server_running(timeout: float = 2) -> bool:
+    """Cheap reachability check - lets gui.py start ComfyUI on demand instead
+    of requiring it pre-started for every session (idle ComfyUI otherwise
+    sits at ~2GB RAM/VRAM doing nothing)."""
+    try:
+        requests.get(f"{COMFYUI_URL}/system_stats", timeout=timeout)
+        return True
+    except requests.exceptions.RequestException:
+        return False
+
+
+def start_server(startup_timeout: float = 120) -> subprocess.Popen:
+    """Launch the ComfyUI server as a background process and block until it
+    responds. Assumes this repo's local layout (COMFYUI_DIR) - not used by
+    the cloud worker, which manages its own already-running ComfyUI process
+    via COMFYUI_URL instead."""
+    python_exe = os.path.join(COMFYUI_DIR, ".venv", "Scripts", "python.exe")
+    process = subprocess.Popen(
+        [python_exe, "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+        cwd=COMFYUI_DIR,
+    )
+    deadline = time.time() + startup_timeout
+    while time.time() < deadline:
+        if is_server_running():
+            return process
+        if process.poll() is not None:
+            raise RuntimeError(f"ComfyUI process exited early (code {process.returncode})")
+        time.sleep(1)
+    raise TimeoutError(f"ComfyUI server didn't come up within {startup_timeout}s")
 
 
 def log_gpu_memory(stage: str):
