@@ -163,6 +163,13 @@ def generate(args, out_dir):
         # without a skeleton (gaze/expression) fall back to the plain HQ path
         # and are marked text-only in the index rather than skipped.
         skel_path = pose_skeletons.resolve(tag) if args.controlnet else None
+        if skel_path and pose_skeletons.crop_fraction(tag, width, height) > pose_skeletons.CANVAS_CROP_TOLERANCE:
+            # Can't happen for the poses category (FULL_BODY_RESOLUTION matches the
+            # skeletons), but a cropped hint is silently destructive, so never ship
+            # one - drop to text-only and say so.
+            print(f"[{i}/{len(todo)}] {category}/{tag}: skeleton dropped, "
+                  f"{width}x{height} would crop it", flush=True)
+            skel_path = None
 
         if os.path.exists(out_path) and not args.force:
             print(f"[{i}/{len(todo)}] skip (exists) {category}/{tag}", flush=True)

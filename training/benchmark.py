@@ -264,13 +264,24 @@ if __name__ == "__main__":
         client.INSIGHTFACE_PROVIDER = args.insightface_provider
 
     if args.hq:
+        canvases = [("hq_square", 1024, 1024), ("hq_portrait", 832, 1216)]
+        if args.pose:
+            # ControlNet center-crops the hint to the canvas aspect, so timing a
+            # portrait skeleton on the square canvas would measure a broken pose.
+            keep = []
+            for name, w, h in canvases:
+                loss = pose_skeletons.crop_fraction(args.pose, w, h)
+                if loss > pose_skeletons.CANVAS_CROP_TOLERANCE:
+                    print(f"skipping {name}: {w}x{h} would crop {loss * 100:.0f}% off "
+                          f"the '{args.pose}' skeleton", flush=True)
+                else:
+                    keep.append((name, w, h))
+            canvases = keep
         results = [
-            run_hq_test("hq_square", 1024, 1024, args.count, anchor=args.anchor,
+            run_hq_test(name, w, h, args.count, anchor=args.anchor,
                         character_lora=args.character_lora,
-                        controlnet=args.controlnet or bool(args.pose), pose=args.pose),
-            run_hq_test("hq_portrait", 832, 1216, args.count, anchor=args.anchor,
-                        character_lora=args.character_lora,
-                        controlnet=args.controlnet or bool(args.pose), pose=args.pose),
+                        controlnet=args.controlnet or bool(args.pose), pose=args.pose)
+            for name, w, h in canvases
         ]
         print("\n\n========== HQ FINAL REPORT ==========")
         for r in results:

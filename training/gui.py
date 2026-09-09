@@ -136,6 +136,19 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     else:
         width, height = None, None  # gen_custom's own auto default (SD15_WIDTH/HEIGHT for is_sd15)
 
+    if pose_name and width:
+        # ControlNet center-crops the skeleton to the canvas aspect, so a square
+        # canvas quietly cuts off its head and feet. Stop rather than produce a
+        # broken pose the user has no way to diagnose.
+        loss = pose_skeletons.crop_fraction(pose_name, width, height)
+        if loss > pose_skeletons.CANVAS_CROP_TOLERANCE:
+            sw, sh = pose_skeletons.canvas_for(pose_name)
+            raise gr.Error(
+                f"骨架庫姿勢「{pose_name}」是 {sw}x{sh} 直式，這個畫布比例會把骨架"
+                f"裁掉 {loss * 100:.0f}%（頭跟腳會被切掉），姿勢就散了。"
+                "畫布比例請改成「自動」或「直向」。"
+            )
+
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
     stem = f"gui_seed{int(seed)}"
     backend = "mediapipe" if facedetailer_backend == FACEDETAILER_BACKEND_MEDIAPIPE else "yolo"

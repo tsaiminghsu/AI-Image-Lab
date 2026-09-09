@@ -735,8 +735,19 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     if width is None or height is None:
         if is_sd15:
             width, height = client.SD15_WIDTH, client.SD15_HEIGHT
+        elif pose_is_skeleton:
+            # match the skeleton's own canvas so ControlNet has nothing to crop
+            width, height = pose_skeletons.canvas_for(pose_name)
         else:
             width, height = FULL_BODY_RESOLUTION if pose_reference_path else (client.WIDTH, client.HEIGHT)
+
+    if pose_is_skeleton:
+        # An explicit mismatching size is silently destructive otherwise: the hint
+        # is center-cropped to the canvas aspect, not letterboxed.
+        try:
+            pose_skeletons.check_canvas(pose_name, width, height)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
 
     ckpt_kwargs = {}
     if checkpoint:

@@ -1052,6 +1052,14 @@ New-Item -ItemType HardLink -Path "ComfyUI\models\upscale_models\4x-UltraSharp.p
   上傳照片走 `--pose-reference` 才會跑 preprocessor 抽骨架。
 - 用法：CLI `--pose <名稱>`、GUI ControlNet accordion 的「姿勢骨架庫」下拉、
   `pose_pack.py --controlnet`（產全套對照）、`benchmark.py --hq --pose <名稱>`。
+- **畫布比例必須跟骨架一致**。ControlNet 不會加黑邊，`common_upscale(..., "center")`
+  是先把骨架 center-crop 成目標比例再縮放，所以直式骨架配正方形畫布會被裁掉 32% 的
+  高度（頭跟腳直接消失，模型自己補），這是這條路徑最容易踩到的失真來源。不指定尺寸
+  時會自動採用骨架自己的畫布；明確指定不相容的尺寸會被擋下來而不是靜默裁切
+  （CLI/`gen_custom` 拋錯並附上裁切百分比、GUI 跳 `gr.Error`、`benchmark --pose`
+  跳過不相容畫布、`pose_pack --controlnet` 退回純文字並印出原因）。容許值是
+  `pose_skeletons.CANVAS_CROP_TOLERANCE`（5%）：實際的 832×1216→704×1024 只掉 0.5%，
+  正方形掉 32%、橫式掉 53%。
 
 **耗時修正（實測完成）**：舊版這裡寫「單張約 390 秒、預設關閉」，那是掛 FaceID + 舊
 `INSIGHTFACE_PROVIDER=CUDA` 換入換出時代的手估值，從未實測。`pose_pack --controlnet`

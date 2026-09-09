@@ -44,6 +44,9 @@ import sys
 POSES_DIR = os.path.join(os.path.dirname(__file__), "poses")
 CANVAS_W, CANVAS_H = 832, 1216  # matches FULL_BODY_RESOLUTION; ControlNet resizes to the latent anyway
 NUM_BODY_KEYPOINTS = 18
+# How much of a skeleton may be center-cropped away before it's an error rather
+# than rounding. The real portrait path (832x1216 -> 704x1024) loses 0.5%.
+CANVAS_CROP_TOLERANCE = 0.05
 
 _CONTROLNET_AUX_SRC = os.path.join(
     os.path.dirname(__file__), "..", "ComfyUI", "custom_nodes",
@@ -92,6 +95,46 @@ def load_meta(name_or_tag):
         return {}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def canvas_for(name_or_tag):
+    """The skeleton's native canvas as (width, height)."""
+    meta = load_meta(name_or_tag)
+    return int(meta.get("canvas_width") or CANVAS_W), int(meta.get("canvas_height") or CANVAS_H)
+
+
+def crop_fraction(name_or_tag, width, height):
+    """How much of the skeleton ComfyUI will throw away to fit a width x height
+    canvas, as a fraction of its longer dimension.
+
+    ControlNet resizes the hint with common_upscale(..., "center") (see
+    ComfyUI/comfy/controlnet.py), which center-crops to the TARGET ASPECT before
+    scaling. A portrait skeleton on a square canvas therefore loses its head and
+    feet before the model ever sees it, and the pose silently falls apart - the
+    model is left inventing whatever got cropped."""
+    if not width or not height:
+        return 0.0
+    sw, sh = canvas_for(name_or_tag)
+    a_skel, a_target = sw / sh, width / height
+    return 1.0 - min(a_skel, a_target) / max(a_skel, a_target)
+
+
+def check_canvas(name_or_tag, width, height, tolerance=CANVAS_CROP_TOLERANCE):
+    """Raise ValueError if this canvas would meaningfully crop the skeleton.
+
+    The legitimate case (832x1216 skeleton -> 704x1024 first pass) loses ~0.5%,
+    well under the tolerance; a square canvas loses ~32% and is always a mistake."""
+    loss = crop_fraction(name_or_tag, width, height)
+    if loss <= tolerance:
+        return
+    sw, sh = canvas_for(name_or_tag)
+    raise ValueError(
+        f"canvas {width}x{height} would crop {loss * 100:.0f}% off the "
+        f"'{name_or_tag}' skeleton ({sw}x{sh}). ControlNet center-crops the hint "
+        f"to the canvas aspect, so the head and feet get cut off before the model "
+        f"sees them and the pose falls apart. Use {sw}x{sh}, or leave the size "
+        f"unset to get it automatically."
+    )
 
 
 def _keypoints_from_flat(flat):

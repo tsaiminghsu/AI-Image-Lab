@@ -94,6 +94,26 @@ python benchmark.py --hq --pose walking
 In the GUI, the ControlNet accordion has a "姿勢骨架庫" dropdown; an uploaded
 photo overrides the dropdown.
 
+### The canvas must match the skeleton's aspect
+
+ControlNet does not letterbox the hint. `common_upscale(..., "center")` in
+`ComfyUI/comfy/controlnet.py` **center-crops it to the target aspect** first, so a
+portrait skeleton on a square canvas loses about 32% of its height: the head and
+feet are gone before the model sees them, and it invents whatever was cropped.
+That is the single easiest way to get a distorted result out of this library.
+
+Leaving the size unset picks the skeleton's own canvas, so the default is always
+right. An explicitly mismatched size is refused rather than silently cropped:
+
+- `gen_custom` / CLI `--pose` raises with the crop percentage and the size to use
+- the GUI raises the same as a `gr.Error` and tells you to switch to 自動 or 直向
+- `benchmark.py --pose` skips canvases the skeleton doesn't fit
+- `pose_pack --controlnet` drops the skeleton to text-only and prints why
+
+The tolerance is `pose_skeletons.CANVAS_CROP_TOLERANCE` (5%). The real path,
+832x1216 skeleton to a 704x1024 first pass, loses 0.5% and passes; a square
+canvas loses 32% and a landscape one 53%, so both are blocked.
+
 ## Adding or fixing a pose
 
 Edit the `<slug>.json` keypoints, then re-render:
