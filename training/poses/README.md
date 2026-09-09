@@ -34,6 +34,19 @@ Three sources (see `pose_skeletons.py`):
 1. **Extracted** (15 poses the checkpoint renders correctly - standing, sitting,
    yoga, walking): `pose_skeletons.py extract --from-pack` ran OpenposePreprocessor
    over the existing `reference_candidates/pose_pack_facedetailer/poses/` renders.
+
+   Six of those (`standing_straight`, `arms_crossed`, `hand_touching_hair`,
+   `hands_in_pockets`, `leaning_against_a_wall`, `jogging_pose_mid_stride`) came
+   out with no knees/ankles: the 704x1024 source renders were cropped at about
+   the knee, so the detector clamped the last visible joint to the frame edge and
+   dropped the rest. A skeleton like that only constrains down to the thigh, and
+   the model is left to invent the lower legs. They have since been repaired -
+   both legs rebuilt from the surviving hip->knee direction using limb lengths of
+   0.83x the spine (neck to hip centre, measured in pixel space), then the whole
+   figure uniformly scaled to about 66% so the full body fits the canvas. The
+   0.83 ratio is taken from `walking`, the only skeleton in that extraction with
+   complete legs, so it matches this character and render pipeline rather than a
+   generic anatomy chart.
 2. **Hand-authored, in the POSES pool** (the 5 `lying on ...` poses): their renders
    were the seated failure, so extracting them would just capture that. The keypoint
    JSON was written by hand using an extracted standing skeleton for limb proportions.
