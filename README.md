@@ -1041,9 +1041,13 @@ New-Item -ItemType HardLink -Path "ComfyUI\models\upscale_models\4x-UltraSharp.p
 上面「姿勢/角度標籤實測」證明 Pony 系 checkpoint 對 5 個 `lying on ...` 標籤完全不聽
 文字（都塌成坐姿），只有骨架壓得住。
 
-- 骨架庫 17 個姿勢：15 個從既有 `pose_pack_facedetailer` 產圖用 OpenposePreprocessor
-  擷取，5 個躺姿手工重寫關鍵點（擷取出來的是坐姿失敗版）。`<slug>.json` 是關鍵點來源，
+- 骨架庫 31 個姿勢：15 個從既有 `pose_pack_facedetailer` 產圖用 OpenposePreprocessor
+  擷取，5 個躺姿手工重寫關鍵點（擷取出來的是坐姿失敗版），另外 14 個手工新增
+  （跪、蹲、盤腿、斜倚、跳躍、揮手、背面回頭等）。`<slug>.json` 是關鍵點來源，
   `<slug>.png` 是 commit 進版控的骨架，產圖時不需要 torch。
+- 後面 14 個是**只存在於骨架庫**、刻意不加進 `generate_character.POSES`：資料集
+  variations 流程會從 POSES 隨機抽，而那條路徑不掛 ControlNet，把「非骨架不可」的
+  姿勢丟進去只會增加失敗圖。它們照樣能用 `--pose`、GUI 下拉、`pose_pack --controlnet`。
 - 骨架是**預先畫好的**，直接餵 ControlNet（`pose_is_skeleton=True` 跳過 preprocessor）；
   上傳照片走 `--pose-reference` 才會跑 preprocessor 抽骨架。
 - 用法：CLI `--pose <名稱>`、GUI ControlNet accordion 的「姿勢骨架庫」下拉、

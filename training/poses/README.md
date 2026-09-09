@@ -29,21 +29,40 @@ was trained on:
 
 ## How these were built
 
-Two sources (see `pose_skeletons.py`):
+Three sources (see `pose_skeletons.py`):
 
 1. **Extracted** (15 poses the checkpoint renders correctly - standing, sitting,
    yoga, walking): `pose_skeletons.py extract --from-pack` ran OpenposePreprocessor
    over the existing `reference_candidates/pose_pack_facedetailer/poses/` renders.
-2. **Hand-authored** (the 5 `lying on ...` poses): their renders were the seated
-   failure, so extracting them would just capture that. The keypoint JSON was
-   written by hand using an extracted standing skeleton for limb proportions. A
-   2D skeleton is ambiguous about camera height (a body "lying, seen from above"
-   and one "standing, seen head-on" differ only in proportions), so each lying
-   entry carries a `prompt_hint` (e.g. "high angle shot from above, lying flat")
-   that the pose paths append to the prompt.
+2. **Hand-authored, in the POSES pool** (the 5 `lying on ...` poses): their renders
+   were the seated failure, so extracting them would just capture that. The keypoint
+   JSON was written by hand using an extracted standing skeleton for limb proportions.
+3. **Hand-authored, library-only** (14 more: kneeling, squatting, cross-legged,
+   reclining, jumping, waving, back-to-camera ...). See below.
+
+A 2D skeleton is ambiguous about camera height - a body "lying, seen from above"
+and one "standing, seen head-on" differ only in proportions - so entries carry a
+`prompt_hint` (e.g. "high angle shot from above, lying flat") that the pose paths
+append to the prompt.
 
 Gaze/expression tags (`looking at camera`, `slight smile`, ...) are intentionally
 not in the library - they aren't body poses.
+
+## Library-only poses (not in `generate_character.POSES`)
+
+The 14 poses added in the second batch exist **only here**, on purpose. The dataset
+variations flow (`build_variation_prompt`) picks from `POSES` at random and runs
+**without** ControlNet, so putting skeleton-dependent poses into that pool would
+just add failures to generated datasets. They are reachable everywhere a skeleton
+is actually used:
+
+- `generate_character.py custom --pose <slug>`
+- the GUI's 姿勢骨架庫 dropdown
+- `pose_pack.py --controlnet` (which folds them in via `pose_pack.library_only_tags`,
+  taking their prompt text from each JSON's `tag` field)
+
+If one of them ever proves reliable from text alone, it can be promoted into
+`POSES`; nothing else has to change.
 
 ## Using a pose
 

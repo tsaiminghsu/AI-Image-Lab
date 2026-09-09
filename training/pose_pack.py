@@ -96,6 +96,26 @@ def image_size(path):
         return None
 
 
+def library_only_tags(categories, controlnet):
+    """Skeletons in training/poses/ that aren't in the POSES pool.
+
+    Those poses (kneeling, squatting, reclining, jumping ...) are deliberately
+    kept out of gc.POSES: the dataset variations flow picks POSES at random
+    WITHOUT ControlNet, so seeding it with poses that need a skeleton would just
+    add failures there. They still deserve a reference render, so the ControlNet
+    pack picks them up here. Their prompt text comes from the JSON's `tag`."""
+    if not controlnet or "poses" not in categories:
+        return []
+    known = {slugify(t) for t in CATEGORIES["poses"][0]}
+    extra = []
+    for slug in pose_skeletons.list_names():
+        if slug in known:
+            continue
+        tag = pose_skeletons.load_meta(slug).get("tag") or slug.replace("_", " ")
+        extra.append(("poses", tag))
+    return extra
+
+
 def build_prompt(tag, category, trigger, checkpoint_key, extra=None):
     """Assembles the scene description the same way the variations flow does
     (angle + pose + outfit + lighting + background), then hands it to the
@@ -121,6 +141,7 @@ def generate(args, out_dir):
 
     results = []
     todo = [(cat, tag) for cat in args.categories for tag in CATEGORIES[cat][0]]
+    todo += library_only_tags(args.categories, args.controlnet)
     if args.only:
         todo = [(c, t) for (c, t) in todo if any(s.lower() in t.lower() for s in args.only)]
     if args.controlnet:
@@ -197,7 +218,7 @@ def generate(args, out_dir):
     return results
 
 
-def build_contact_sheets(categories, out_dir, skeleton_lookup=None):
+def build_contact_sheets(categories, out_dir, skeleton_lookup=None, tags_by_category=None):
     """One labelled contact sheet per category - the actual browsing artifact;
     the per-tag PNGs are for looking at a specific tag up close.
 
@@ -219,7 +240,10 @@ def build_contact_sheets(categories, out_dir, skeleton_lookup=None):
         cat_dir = os.path.join(out_dir, category)
         if not os.path.isdir(cat_dir):
             continue
-        tags = [t for t in CATEGORIES[category][0]
+        # Prefer the tags actually generated (that's what carries library-only
+        # poses); fall back to the category pool.
+        pool = (tags_by_category or {}).get(category) or CATEGORIES[category][0]
+        tags = [t for t in pool
                 if os.path.exists(os.path.join(cat_dir, f"{slugify(t)}.png"))]
         if not tags:
             continue
@@ -355,21 +379,25 @@ def main():
 
     out_dir = out_dir_for(args.facedetailer, args.controlnet, args.controlnet_strength)
     if args.contact_sheet_only:
+        pairs = [(c, t) for c in args.categories for t in CATEGORIES[c][0]]
+        pairs += library_only_tags(args.categories, args.controlnet)
         results = []
-        for c in args.categories:
-            for t in CATEGORIES[c][0]:
-                if args.only and not any(s.lower() in t.lower() for s in args.only):
-                    continue
-                fp = os.path.join(out_dir, c, f"{slugify(t)}.png")
-                results.append({"category": c, "tag": t,
-                                "path": fp if os.path.exists(fp) else None,
-                                "size": image_size(fp), "elapsed": None,
-                                "skeleton": pose_skeletons.resolve(t) if args.controlnet else None})
+        for c, t in pairs:
+            if args.only and not any(s.lower() in t.lower() for s in args.only):
+                continue
+            fp = os.path.join(out_dir, c, f"{slugify(t)}.png")
+            results.append({"category": c, "tag": t,
+                            "path": fp if os.path.exists(fp) else None,
+                            "size": image_size(fp), "elapsed": None,
+                            "skeleton": pose_skeletons.resolve(t) if args.controlnet else None})
     else:
         results = generate(args, out_dir)
 
     skeleton_lookup = ({r["tag"]: r.get("skeleton") for r in results} if args.controlnet else None)
-    sheets = build_contact_sheets(args.categories, out_dir, skeleton_lookup)
+    tags_by_category = {}
+    for r in results:
+        tags_by_category.setdefault(r["category"], []).append(r["tag"])
+    sheets = build_contact_sheets(args.categories, out_dir, skeleton_lookup, tags_by_category)
     write_index(results, args, sheets, out_dir)
     ok = sum(1 for r in results if r["path"] and os.path.exists(r["path"]))
     print(f"\n{ok}/{len(results)} tags rendered -> {out_dir}")
