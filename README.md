@@ -1061,16 +1061,46 @@ New-Item -ItemType HardLink -Path "ComfyUI\models\upscale_models\4x-UltraSharp.p
   `pose_skeletons.CANVAS_CROP_TOLERANCE`（5%）：實際的 832×1216→704×1024 只掉 0.5%，
   正方形掉 32%、橫式掉 53%。
 
-**壓縮姿勢的重複人物**：ControlNet 是加性引導，骨架只說「這裡有一個身體」，不會說
-「而且別處不准有人」。躺/跪/蹲這類姿勢在直式畫布上垂直只佔不到 60%（31 個骨架裡有
-12 個），留下的大片空白模型有機率拿來長出第二個人。實測 `kneeling_sitting_back_on_heels`
-三個 seed 中有一個變成兩個人，而且是**第一段**就產生的（把 hires 也接上 ControlNet
-不能修，已驗證無效）。真正的缺口是負面提示裡本來完全沒有「只要一個人」的詞；補上
-`multiple people, two people, duplicate, twins, extra person, crowd`（見
-`generate_character.QUALITY_NEGATIVE`）後，原本失敗的 seed 就正常了。這組詞對 safe
-與 suggestive 兩個 tier 都always-on，`style_negative` 覆寫不到。
-註：這個改動之後產生的圖跟先前 commit 的 checkpoint 對照表／姿勢整合包不再嚴格可比，
-要對照請重跑。
+**重複人物**：某些姿勢會生出第二個人。實測 `kneeling_sitting_back_on_heels` 在
+cyberrealistic_pony 上三個 seed 中有一個變成兩個人，而且是**第一段**就產生的（把 hires
+也接上 ControlNet 不能修，已驗證無效並回退）。負面提示原本完全沒有「只要一個人」的詞，
+補上 `multiple people, two people, duplicate, twins, extra person, crowd`（見
+`generate_character.QUALITY_NEGATIVE`，safe/suggestive 兩個 tier 都 always-on，
+`style_negative` 覆寫不到）後，原本失敗的那個 seed 就正常了。
+
+但**這組負面詞並沒有根除問題**：後續的 checkpoint 矩陣測試（負面詞已生效）裡，pony 與
+pony_realism 在同一個跪姿的**純文字**條件下仍然各生出兩個人。同時要更正一個先前的錯誤
+推論——我一度把重複歸因於「壓縮骨架留下大片空白」，矩陣結果不支持這個說法：12 個有骨架
+的格子全是單人，2 次重複反而都發生在沒有骨架的純文字組。**骨架是抑制重複的，不是造成
+重複的。** 重複比較像是特定 checkpoint 加特定姿勢描述的傾向，seed 相關。
+
+註：加了那組負面詞之後產生的圖，跟先前 commit 的 checkpoint 對照表／姿勢整合包不再嚴格
+可比，要對照請重跑。
+
+### 骨架庫在各 checkpoint 的實測（4 × 3 × 2 矩陣）
+
+4 個 SDXL 系 checkpoint × 3 個姿勢 × 純文字/骨架，seed 88001，**兩種條件 prompt 完全
+相同**（骨架的 `prompt_hint` 在純文字組也照加），唯一變數是 ControlNet。兩個 SD1.5
+checkpoint 不列入，control-lora 是 SDXL 形狀接不上。
+
+| 姿勢 | juggernaut | pony | pony_realism | cyberrealistic_pony |
+|---|---|---|---|---|
+| lying on side（純文字） | 靠牆半坐 | 大致躺著 | 側坐 | 側坐 |
+| lying on side（骨架） | 躺 | 躺 | 躺 | 躺 |
+| kneeling（純文字） | 蹲非跪 | **兩個人** | **兩個人** | 跪 |
+| kneeling（骨架） | 跪 | 跪 | 跪 | 跪 |
+| squatting（純文字） | 坐在箱子上 | 蹲 | 蹲 | 蹲 |
+| squatting（骨架） | 低蹲（仍最弱） | 蹲 | 蹲 | 蹲 |
+
+結論：
+
+- **沒有任何一個 checkpoint 靠純文字是可靠的**，只是各自壞在不同姿勢。12 個純文字格子
+  有 6 個明顯失敗，12 個骨架格子全部正確且單人。骨架庫對四個 checkpoint 都有用，不是
+  只有 cyberrealistic_pony 需要。
+- **失敗模式因 checkpoint 而異**：juggernaut 傾向替換成「比較安全」的姿勢（把蹲畫成坐在
+  箱子上），Pony 系則傾向多生一個人。
+- **骨架的成本與 checkpoint 無關**，四個都一致增加約 20-30 秒。
+- pony（base）即使給寫實 prompt 仍偏插畫風，這是它本來的特性，與骨架無關。
 
 **耗時修正（實測完成）**：舊版這裡寫「單張約 390 秒、預設關閉」，那是掛 FaceID + 舊
 `INSIGHTFACE_PROVIDER=CUDA` 換入換出時代的手估值，從未實測。`pose_pack --controlnet`
