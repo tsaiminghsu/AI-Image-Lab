@@ -1061,6 +1061,17 @@ New-Item -ItemType HardLink -Path "ComfyUI\models\upscale_models\4x-UltraSharp.p
   `pose_skeletons.CANVAS_CROP_TOLERANCE`（5%）：實際的 832×1216→704×1024 只掉 0.5%，
   正方形掉 32%、橫式掉 53%。
 
+**壓縮姿勢的重複人物**：ControlNet 是加性引導，骨架只說「這裡有一個身體」，不會說
+「而且別處不准有人」。躺/跪/蹲這類姿勢在直式畫布上垂直只佔不到 60%（31 個骨架裡有
+12 個），留下的大片空白模型有機率拿來長出第二個人。實測 `kneeling_sitting_back_on_heels`
+三個 seed 中有一個變成兩個人，而且是**第一段**就產生的（把 hires 也接上 ControlNet
+不能修，已驗證無效）。真正的缺口是負面提示裡本來完全沒有「只要一個人」的詞；補上
+`multiple people, two people, duplicate, twins, extra person, crowd`（見
+`generate_character.QUALITY_NEGATIVE`）後，原本失敗的 seed 就正常了。這組詞對 safe
+與 suggestive 兩個 tier 都always-on，`style_negative` 覆寫不到。
+註：這個改動之後產生的圖跟先前 commit 的 checkpoint 對照表／姿勢整合包不再嚴格可比，
+要對照請重跑。
+
 **耗時修正（實測完成）**：舊版這裡寫「單張約 390 秒、預設關閉」，那是掛 FaceID + 舊
 `INSIGHTFACE_PROVIDER=CUDA` 換入換出時代的手估值，從未實測。`pose_pack --controlnet`
 實測完整 20 pose 套件（HQ + FaceDetailer + 骨架庫，不掛 FaceID）：冷啟 84.5s（含

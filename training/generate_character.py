@@ -61,13 +61,26 @@ PONY_QUALITY_NEGATIVE_TAGS = "score_6, score_5, score_4"
 # loosened for the suggestive/nsfw modes.
 AGE_SAFETY_NEGATIVE = "child, children, kid, minor, teen, teenager, underage, young girl"
 
+# Always-on correctness floor, shared by both content tiers so the two can't
+# drift apart. The solo terms are here because ControlNet is additive guidance:
+# a skeleton says "a body goes here", never "and nobody else", so a compact pose
+# that leaves large empty margins (kneeling, lying, squatting) can render a
+# SECOND person in the empty space. Measured on the kneeling skeleton: 1 of 3
+# seeds duplicated, and adding these terms fixed the failing seed. Every
+# generator in this project renders exactly one character, so this is always the
+# intent, pose or not.
+QUALITY_NEGATIVE = (
+    "lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, "
+    "multiple people, two people, duplicate, twins, extra person, crowd"
+)
+
 # Safety-only, no style/quality terms baked in - kept separate from
 # REALISTIC_NEGATIVE specifically so gen_custom's style_negative param (see
 # below, exposed as an editable GUI field) can be freely overridden without
 # ever touching this. Never expose this constant itself as user-editable.
 SAFE_SAFETY_NEGATIVE = (
     f"nsfw, nude, naked, explicit, sexual content, {AGE_SAFETY_NEGATIVE}, "
-    "lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text"
+    f"{QUALITY_NEGATIVE}"
 )
 
 NEGATIVE_PROMPT = f"{SAFE_SAFETY_NEGATIVE}, {REALISTIC_NEGATIVE}"
@@ -79,7 +92,7 @@ SUGGESTIVE_NEGATIVE = (
     f"exposed genitalia, exposed vulva, exposed penis, exposed nipples, "
     f"sexual intercourse, penetration, pornographic, explicit sexual act, "
     f"{AGE_SAFETY_NEGATIVE}, "
-    "lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text"
+    f"{QUALITY_NEGATIVE}"
 )
 
 # Hard floor - 16/17 are minors in most jurisdictions and are never
