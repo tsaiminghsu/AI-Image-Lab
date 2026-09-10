@@ -21,6 +21,7 @@ import caption_image
 import comfyui_client as client
 import generate_character as gc
 import pose_skeletons
+import talking_head
 import translate_prompt
 
 _comfyui_process = None  # only set when this GUI auto-started ComfyUI itself
@@ -110,10 +111,13 @@ FACEDETAILER_BACKEND_CHOICES = [FACEDETAILER_BACKEND_YOLO, FACEDETAILER_BACKEND_
 CHECKPOINT_DEFAULT = "cyberrealistic_pony (預設 - Pony 系寫實)"
 CHECKPOINT_CHOICES = [CHECKPOINT_DEFAULT] + sorted(k for k in client.CHECKPOINTS if k != "cyberrealistic_pony")
 
-ANIMATEDIFF_CHECKPOINT_DEFAULT = "sd15_base (預設)"
+ANIMATEDIFF_CHECKPOINT_DEFAULT = "realistic_vision (預設)"
 ANIMATEDIFF_CHECKPOINT_CHOICES = [ANIMATEDIFF_CHECKPOINT_DEFAULT] + sorted(
-    k for k in client.ANIMATEDIFF_CHECKPOINTS if k != "sd15_base"
+    k for k in client.ANIMATEDIFF_CHECKPOINTS if k != "realistic_vision"
 )
+UPSCALE_OFF = "不放大（維持採樣尺寸）"
+UPSCALE_CHOICES = [UPSCALE_OFF] + [f"長邊 {n}px" for n in client.ANIMATEDIFF_UPSCALE_CHOICES if n]
+TALK_ENHANCER_NONE = "(無)"
 
 MOTION_LORA_NONE = "(無 - 純 prompt 描述動作)"
 MOTION_LORA_CHOICES = [MOTION_LORA_NONE] + sorted(client.ANIMATEDIFF_MOTION_LORAS)
@@ -197,7 +201,8 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
 
 def generate_video_animatediff(character, face_ref, prompt, tier, negative_prompt, seed, ip_adapter_weight,
                                 facedetailer_denoise, frames, fps, width, height, style_positive, style_negative,
-                                checkpoint_choice, motion_lora_choice, motion_lora_strength):
+                                checkpoint_choice, motion_lora_choice, motion_lora_strength,
+                                hires, upscale_choice, interp, use_facedetailer, lcm):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
     if not face_ref:
@@ -206,15 +211,45 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
     trigger = None if character == NO_CHARACTER else character
     checkpoint = None if checkpoint_choice == ANIMATEDIFF_CHECKPOINT_DEFAULT else checkpoint_choice
     motion_lora = None if motion_lora_choice == MOTION_LORA_NONE else motion_lora_choice
+    upscale_to = 0 if upscale_choice == UPSCALE_OFF else int(upscale_choice.split()[1].rstrip("px"))
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", "videos")
-    gc.gen_video_animatediff(prompt, negative_prompt, tier, trigger, face_ref, out_dir, int(seed),
-                              ip_adapter_weight=ip_adapter_weight,
-                              facedetailer_denoise=facedetailer_denoise,
-                              frames=int(frames), fps=int(fps), width=int(width), height=int(height),
-                              style_positive=style_positive, style_negative=style_negative,
-                              checkpoint=checkpoint,
-                              motion_lora=motion_lora, motion_lora_strength=motion_lora_strength)
-    return os.path.join(out_dir, f"animatediff_seed{int(seed)}.webm")
+    try:
+        return gc.gen_video_animatediff(prompt, negative_prompt, tier, trigger, face_ref, out_dir, int(seed),
+                                        ip_adapter_weight=ip_adapter_weight,
+                                        facedetailer_denoise=facedetailer_denoise,
+                                        frames=int(frames), fps=int(fps) or None,
+                                        width=int(width), height=int(height),
+                                        style_positive=style_positive, style_negative=style_negative,
+                                        checkpoint=checkpoint,
+                                        motion_lora=motion_lora, motion_lora_strength=motion_lora_strength,
+                                        hires=hires, upscale_to=upscale_to, interp=int(interp),
+                                        use_facedetailer=use_facedetailer, lcm=lcm)
+    except SystemExit as exc:  # gen_video_animatediff's validation errors
+        raise gr.Error(str(exc)) from exc
+
+
+def generate_talking_head_ui(image, audio, size, preprocess, still, expression_scale, enhancer, pose_style):
+    if not image:
+        raise gr.Error("請上傳來源人像（僅限虛構/AI生成的臉，禁止上傳真人照片）")
+    if not audio:
+        raise gr.Error("請上傳語音檔")
+    ok, reason = talking_head.is_available()
+    if not ok:
+        raise gr.Error(f"SadTalker 無法使用：{reason}（安裝見 README「會講話的嘴型影片」章節）")
+    # SadTalker is a separate process on the same 8GB card - make a warm ComfyUI drop its models
+    # first. Deliberately NOT _ensure_comfyui(): this route doesn't need ComfyUI at all.
+    if client.is_server_running():
+        client.free_vram()
+    out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", "videos")
+    try:
+        return talking_head.generate_talking_head(
+            image, audio, out_dir, size=int(size), preprocess=preprocess, still=still,
+            expression_scale=expression_scale,
+            enhancer=None if enhancer == TALK_ENHANCER_NONE else enhancer,
+            pose_style=int(pose_style))
+    except RuntimeError as exc:
+        print(exc, flush=True)
+        raise gr.Error(f"SadTalker 生成失敗（完整 log 見終端機）：{str(exc)[-800:]}") from exc
 
 
 def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_id):
@@ -343,11 +378,12 @@ with gr.Blocks(title="AI Image Lab") as demo:
     translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
     btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
 
-    gr.Markdown("---\n## AnimateDiff 動態影片（SD1.5 + FaceID 鎖臉 + 逐幀臉部精修）")
+    gr.Markdown("---\n## AnimateDiff 動態影片（SD1.5 + FaceID 鎖臉 + 影片臉部精修，輸出 mp4）")
     gr.Markdown(
         "跟上面的靜態圖是分開的 workflow，用 SD1.5 + AnimateDiff motion module 生成短動態影片，"
-        "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分、每一幀再跑一次 FaceDetailer 修臉——"
+        "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分，再把所有影格的臉部一起重新採樣精修（不會一幀一個樣）——"
         "解決純 SVD img2vid（見 README「幫已有的圖片配上動作」）常見的臉部變形/融化問題。"
+        "預設流程：採樣 512² → 二段式高清 768² → 臉部精修 → ESRGAN 放大到長邊 1024 → mp4。"
         "第一次執行會比較久（SD1.5 checkpoint、motion module、FaceID SD1.5 模型是分開載入的新模型組合）。"
     )
     with gr.Row():
@@ -365,12 +401,23 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 video_seed = gr.Number(value=6001, label="Seed", precision=0)
                 video_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重")
             with gr.Row():
-                video_frames = gr.Slider(8, 16, value=client.ANIMATEDIFF_FRAMES, step=1, label="影格數（motion module 訓練上限 16）")
-                video_fps = gr.Slider(4, 16, value=client.ANIMATEDIFF_FPS, step=1, label="FPS")
+                video_frames = gr.Slider(8, 16, value=client.ANIMATEDIFF_FRAMES, step=1, label="採樣影格數（motion module 訓練上限 16）")
+                video_fps = gr.Slider(0, 32, value=0, step=1, label="輸出 FPS（0 = 自動：8 × 補幀倍數，片長不變只變順；調低可拉長成慢動作）")
             with gr.Row():
                 video_width = gr.Number(value=client.ANIMATEDIFF_WIDTH, label="寬", precision=0)
                 video_height = gr.Number(value=client.ANIMATEDIFF_HEIGHT, label="高")
-            video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_DENOISE, step=0.05, label="逐幀臉部精修強度")
+            with gr.Group():
+                gr.Markdown("**畫質 / 流暢度 / 速度**")
+                with gr.Row():
+                    video_hires = gr.Checkbox(value=True, label="二段式高清（1.5x，上限 768²；VRAM 不足會自動退回）")
+                    video_upscale = gr.Dropdown(UPSCALE_CHOICES, value=f"長邊 {client.ANIMATEDIFF_UPSCALE_TO}px",
+                                                label="最終放大（ESRGAN 4x-UltraSharp，逐幀）")
+                with gr.Row():
+                    video_interp = gr.Radio(list(client.ANIMATEDIFF_INTERP_CHOICES), value=1,
+                                            label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
+                    video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
+                video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README）")
+            video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
             video_checkpoint_choice = gr.Dropdown(
                 ANIMATEDIFF_CHECKPOINT_CHOICES, value=ANIMATEDIFF_CHECKPOINT_DEFAULT,
                 label="Checkpoint 模型（必須是 SD1.5，跟上面圖片區塊的選項是分開的清單）",
@@ -398,8 +445,42 @@ with gr.Blocks(title="AI Image Lab") as demo:
         inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed,
                 video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
                 video_style_positive, video_style_negative, video_checkpoint_choice,
-                video_motion_lora, video_motion_lora_strength],
+                video_motion_lora, video_motion_lora_strength,
+                video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm],
         outputs=video_output,
+    )
+
+    gr.Markdown("---\n## 會講話的嘴型影片（SadTalker 對嘴，不需要 ComfyUI）")
+    gr.Markdown(
+        "上傳一張人像 + 一段語音，產生嘴型跟著語音動的說話影片（mp4，含聲音）。"
+        "**來源人像僅限虛構/AI生成的臉（例如上面生成的 anchor），禁止上傳真人照片。**"
+        "跑在 SadTalker 自己的 Python 環境，不用開 ComfyUI；如果 ComfyUI 正開著，會先請它釋放顯存。"
+        "256 比較快（約 2-3GB VRAM），512 比較清楚（約 4-6GB）。半身/全身圖建議選 full + 勾 still。"
+    )
+    with gr.Row():
+        with gr.Column():
+            talk_image = gr.Image(label="來源人像（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath")
+            talk_audio = gr.Audio(label="語音檔（wav/mp3 等，會自動轉成 16kHz wav）", type="filepath")
+            with gr.Row():
+                talk_size = gr.Radio(list(talking_head.SIZES), value=512, label="臉部渲染尺寸")
+                talk_preprocess = gr.Dropdown(list(talking_head.PREPROCESS_MODES), value="crop",
+                                              label="範圍（crop 只有臉；full/extfull 貼回整張圖）")
+            with gr.Row():
+                talk_still = gr.Checkbox(value=False, label="still（頭部幾乎不動，搭配 full 使用）")
+                talk_enhancer = gr.Dropdown([TALK_ENHANCER_NONE] + list(talking_head.ENHANCERS), value=TALK_ENHANCER_NONE,
+                                            label="臉部修復（gfpgan 第一次使用會下載 ~348MB）")
+            with gr.Row():
+                talk_expression = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="表情/嘴型幅度")
+                talk_pose_style = gr.Slider(0, 45, value=0, step=1, label="頭部動作風格")
+            talk_btn = gr.Button("生成說話影片", variant="primary")
+        with gr.Column():
+            talk_output = gr.Video(label="結果")
+
+    talk_btn.click(
+        generate_talking_head_ui,
+        inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
+                talk_enhancer, talk_pose_style],
+        outputs=talk_output,
     )
 
     gr.Markdown("---\n## SVD 圖生影片（幫已有的圖片配上動作）")

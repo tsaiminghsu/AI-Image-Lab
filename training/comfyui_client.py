@@ -189,11 +189,14 @@ VIDEO_CRF = 40           # vp9 crf - higher = lower quality/smaller file
 # model, so the crops are denoised together as a short temporal sequence
 # (not independently per frame) - that's what keeps the touched-up face
 # consistent frame to frame instead of flickering.
-ANIMATEDIFF_CHECKPOINT = "v1-5-pruned-emaonly.safetensors"  # official SD1.5 base - AnimateDiff's
-# mature/well-supported motion modules are SD1.5-only (the SDXL ones are beta and much heavier
-# on VRAM); realism comes from prompt/negative tuning same as the SDXL path, not the checkpoint
+# AnimateDiff's mature/well-supported motion modules are SD1.5-only (the SDXL ones are beta and
+# much heavier on VRAM). Default used to be the plain official SD1.5 base on the theory that realism
+# could come from prompt/negative tuning alone - in practice the base model's skin/face rendering is
+# the weakest link of the whole video pipeline, and Realistic Vision (already installed for the SD1.5
+# still path) is a photo fine-tune of the exact same UNet shape, so it's a free quality win.
+ANIMATEDIFF_CHECKPOINT = CHECKPOINTS["realistic_vision"]
 ANIMATEDIFF_CHECKPOINTS = {
-    "sd15_base": ANIMATEDIFF_CHECKPOINT,
+    "sd15_base": "v1-5-pruned-emaonly.safetensors",
     "realistic_vision": CHECKPOINTS["realistic_vision"],
     "cyberrealistic": CHECKPOINTS["cyberrealistic"],
 }  # any SD1.5 checkpoint works here (same UNet shape the motion module patches into) - deliberately
@@ -228,17 +231,60 @@ ANIMATEDIFF_FRAMES = 16   # mm_sd_v15_v2's trained context length. Tried going o
 # to visibly progress - both context_overlap=4 and =8 produced worse artifacts than staying at 16
 # (overlap=4: a visible clothing/appearance jump at the window boundary around frame 16-17;
 # overlap=8: much worse - progressive zoom/composition drift and background ghosting across the
-# clip). Reverted; if more perceived motion is needed, retime the finished 16-frame clip to a
-# lower fps instead (e.g. `ffmpeg -filter:v "setpts=2.0*PTS" -r 4` for a free 4s clip from the
-# same 16 frames) rather than generating more frames.
-ANIMATEDIFF_FPS = 8
+# clip). Reverted; for a smoother/longer clip use RIFE frame interpolation instead
+# (interp_multiplier below: 16 sampled frames -> 31/61 output frames (RIFE inserts between each pair: 15*m+1), then pick the output fps -
+# e.g. x4 at 16fps is a smooth ~3.8s clip) rather than sampling more frames. This replaces the old
+# manual `ffmpeg -filter:v "setpts=2.0*PTS"` retiming, which only made the clip longer, not smoother.
+ANIMATEDIFF_FPS = 8  # fps of the 16 SAMPLED frames; with interpolation the default output fps is
+# ANIMATEDIFF_FPS * interp_multiplier (same duration, smoother)
 ANIMATEDIFF_STEPS = 20
 ANIMATEDIFF_CFG = 7.5      # SD1.5's usual cfg range, higher than SDXL's 6.0
 ANIMATEDIFF_SAMPLER = "dpmpp_2m"
 ANIMATEDIFF_SCHEDULER = "karras"
-ANIMATEDIFF_CRF = 32
-POLL_TIMEOUT_SECONDS_ANIMATEDIFF = 1800  # 16 frames x (base KSampler + the batched video-detailer
-# pass) on an 8GB card is slower than a single still image; first run also lazy-loads a new
+ANIMATEDIFF_VIDEO_CRF = 20  # h264 crf (0-51, lower = better/larger). Output is mp4/h264 via core
+# CreateVideo + SaveVideo (plays in any browser/player, unlike the old vp9 .webm at crf 32)
+
+# Hires for video - same ESRGAN-seeded two-pass idea as the HQ still path (UPSCALE_MODEL/
+# HIRES_* above): 4x ESRGAN -> lanczos down to base*scale -> VAEEncode -> second KSampler at low
+# denoise THROUGH THE SAME AnimateDiff+FaceID model (node 12), so the motion module keeps the
+# re-sampled frames temporally coherent. Capped by area because 16 frames of latents are sampled
+# as one batch - 768x768 is the practical ceiling for SD1.5 + motion module + FaceID on 8GB.
+ANIMATEDIFF_HIRES_SCALE = 1.5
+ANIMATEDIFF_HIRES_DENOISE = 0.4
+ANIMATEDIFF_HIRES_STEPS = 10  # measured on the 2070: 20 -> 10 steps cut the default clip from 693s to 526s
+# with no visible difference at denoise 0.4 (the HQ still path keeps 20; video pays it 16x)
+ANIMATEDIFF_HIRES_MAX_PIXELS = 768 * 768
+# Final size comes from a deterministic per-frame ESRGAN upscale (no new temporal artifacts,
+# ImageUpscaleWithModel tiles itself on OOM) - long edge in px, 0 = keep the sampled size.
+ANIMATEDIFF_UPSCALE_TO = 1024
+ANIMATEDIFF_UPSCALE_CHOICES = (0, 768, 1024)
+
+# RIFE frame interpolation (optional custom node Fannovel16/ComfyUI-Frame-Interpolation, see
+# README). Runs after the final upscale so ESRGAN only processes the 16 sampled frames.
+RIFE_NODE = "RIFE VFI"
+RIFE_CKPT = "rife47.pth"
+ANIMATEDIFF_INTERP_CHOICES = (1, 2, 4)
+
+# LCM fast mode - consistency-distilled sampling at ~8 steps instead of 20. "animatelcm" (default)
+# swaps in AnimateLCM's own motion module + its UNet LoRA, which were distilled together (less
+# flicker than bolting a generic LCM LoRA onto mm_sd_v15_v2); "lcm_lora" keeps mm_sd_v15_v2 + the
+# generic lcm-lora-sdv1-5 as a fallback, and is the one where the v2 camera motion LoRAs are known
+# to still apply. Every KSampler in the graph (base, hires, video detailer) must switch together -
+# the detailer re-samples through the same LCM-patched model and produces mush at karras/20 steps.
+ANIMATEDIFF_LCM_PRESETS = {
+    "animatelcm": dict(motion_module="AnimateLCM_sd15_t2v.ckpt", lora="AnimateLCM_sd15_t2v_lora.safetensors",
+                       beta_schedule="lcm", steps=8, hires_steps=10, cfg=2.0, sampler="lcm",
+                       scheduler="sgm_uniform", motion_lora_verified=False),
+    "lcm_lora": dict(motion_module="mm_sd_v15_v2.ckpt", lora="lcm-lora-sdv1-5.safetensors",
+                     beta_schedule="lcm", steps=8, hires_steps=10, cfg=2.0, sampler="lcm",
+                     scheduler="sgm_uniform", motion_lora_verified=True),
+}
+# Content-safety floor: at cfg == 1.0 ComfyUI skips the negative conditioning entirely, which
+# would silently disable the mandatory age-safety/explicit-content negative terms. Never go below.
+LCM_MIN_CFG = 1.5
+
+POLL_TIMEOUT_SECONDS_ANIMATEDIFF = 2400  # 16 frames x (base KSampler + hires pass + batched
+# video-detailer + ESRGAN + optional RIFE) on an 8GB card; first run also lazy-loads a new
 # checkpoint/motion-module/FaceID-SD1.5 stack ComfyUI hasn't cached yet
 
 POLL_INTERVAL_SECONDS = 2
@@ -272,6 +318,26 @@ def is_server_running(timeout: float = 2) -> bool:
         return True
     except requests.exceptions.RequestException:
         return False
+
+
+def has_node(class_name: str) -> bool:
+    """True if the running ComfyUI server knows this node class - used to fail fast with an
+    install hint when an optional custom node pack (e.g. RIFE frame interpolation) is missing,
+    instead of a raw workflow-validation error."""
+    try:
+        r = requests.get(f"{COMFYUI_URL}/object_info/{requests.utils.quote(class_name)}", timeout=10)
+        return r.status_code == 200 and bool(r.json())
+    except requests.exceptions.RequestException:
+        return False
+
+
+def free_vram() -> None:
+    """Ask ComfyUI to unload its cached models - used before running a non-ComfyUI GPU tool
+    (SadTalker) so the two processes don't fight over the 8GB card. No-op if ComfyUI is down."""
+    try:
+        requests.post(f"{COMFYUI_URL}/free", json={"unload_models": True, "free_memory": True}, timeout=30)
+    except requests.exceptions.RequestException:
+        pass
 
 
 def start_server(startup_timeout: float = 120) -> subprocess.Popen:
@@ -573,7 +639,7 @@ def submit_generation_animatediff(
     width: int = ANIMATEDIFF_WIDTH,
     height: int = ANIMATEDIFF_HEIGHT,
     frames: int = ANIMATEDIFF_FRAMES,
-    fps: int = ANIMATEDIFF_FPS,
+    fps: int = None,
     steps: int = ANIMATEDIFF_STEPS,
     cfg: float = ANIMATEDIFF_CFG,
     ip_adapter_weight: float = IP_ADAPTER_WEIGHT,
@@ -581,32 +647,66 @@ def submit_generation_animatediff(
     checkpoint: str = ANIMATEDIFF_CHECKPOINT,
     motion_lora_name: str = None,
     motion_lora_strength: float = 1.0,
+    hires: bool = True,
+    hires_scale: float = ANIMATEDIFF_HIRES_SCALE,
+    hires_denoise: float = ANIMATEDIFF_HIRES_DENOISE,
+    upscale_to: int = ANIMATEDIFF_UPSCALE_TO,
+    interp_multiplier: int = 1,
+    use_facedetailer: bool = True,
+    lcm_preset: str = None,
+    video_crf: float = ANIMATEDIFF_VIDEO_CRF,
 ) -> str:
-    """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking and
-    a video-native FaceDetailer face-fix pass (Impact Pack's "Detailer For
-    Video" - detects the face across all frames at once via
-    ImpactSimpleDetectorSEGS_for_AD, then re-samples that whole face-crop
-    batch together through the same AnimateDiff-patched model, node 12). This
-    keeps the face-fix pass temporally coherent (no per-frame flicker) - the
-    earlier version ran a plain per-frame FaceDetailer on a *separate*
-    non-AnimateDiff FaceID branch (worked around a batch=1-into-motion-module
-    corruption bug, see git history) but each frame's face was redrawn
-    independently, causing visible flicker between frames. face_ref_image_filename
-    must already be uploaded (see upload_reference_image) - same anchor image
-    used for still-image FaceID generation works here. Returns the local path
-    of the saved .webm.
+    """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking. Returns the local
+    path of the saved .mp4 (h264). face_ref_image_filename must already be uploaded (see
+    upload_reference_image) - the same anchor image used for still-image FaceID works here.
 
-    motion_lora_name (optional) is a filename from ANIMATEDIFF_MOTION_LORAS
-    (e.g. "v2_lora_ZoomIn.ckpt") - conditions the motion module for a specific
-    CAMERA movement, not a body-part physical effect. The loader node
-    (ADE_AnimateDiffLoRALoader) is only added to the workflow when this is
-    given - the template has no baked-in placeholder for it, since it's an
-    optional input on node "2" (ADE_AnimateDiffLoaderGen1), not a required
-    one. motion_lora_strength scales its effect (node default/typical range
-    is 0-2, values much above 1 tend to distort the frame)."""
+    Graph (optional stages are removed with _rewire/_drop_nodes when switched off):
+      3 base KSampler -> 8 VAEDecode
+      -> [31-35 hires: ESRGAN 4x, lanczos to base*hires_scale (area-capped at
+          ANIMATEDIFF_HIRES_MAX_PIXELS), VAEEncode, KSampler through the SAME AnimateDiff+FaceID
+          model at hires_denoise, VAEDecodeTiled]                              (hires)
+      -> [50/52 video face detailer: face detected across all frames at once, the whole crop
+          batch re-sampled together through the AnimateDiff model, so the fix doesn't flicker
+          frame to frame]                                                     (use_facedetailer)
+      -> [36/37 per-frame ESRGAN + lanczos to long edge upscale_to]           (upscale_to > 0)
+      -> [70 RIFE frame interpolation x interp_multiplier]                    (interp_multiplier > 1)
+      -> 90 CreateVideo(fps) -> 9 SaveVideo mp4/h264
+
+    fps is the OUTPUT fps; None = ANIMATEDIFF_FPS * interp_multiplier (same duration, smoother).
+    Interpolation needs the optional RIFE custom node (check has_node(RIFE_NODE) first).
+
+    lcm_preset (optional) is a key of ANIMATEDIFF_LCM_PRESETS - swaps the motion module, adds the
+    matching LCM LoRA (node 61, model-only), and switches every sampler in the graph to the
+    preset's low-step lcm settings. cfg is floored at LCM_MIN_CFG so the safety negatives apply.
+
+    motion_lora_name (optional) is a filename from ANIMATEDIFF_MOTION_LORAS (e.g.
+    "v2_lora_ZoomIn.ckpt") - conditions the motion module for a specific CAMERA movement, not a
+    body-part physical effect. The loader node (ADE_AnimateDiffLoRALoader) is only added when
+    given, since it's an optional input on node "2". motion_lora_strength scales its effect
+    (typical range 0-2, values much above 1 tend to distort the frame)."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH))
+
+    sampler, scheduler = ANIMATEDIFF_SAMPLER, ANIMATEDIFF_SCHEDULER
+    hires_steps = ANIMATEDIFF_HIRES_STEPS
+    motion_module = ANIMATEDIFF_MOTION_MODULE
+    if lcm_preset:
+        preset = ANIMATEDIFF_LCM_PRESETS[lcm_preset]
+        motion_module = preset["motion_module"]
+        wf["2"]["inputs"]["beta_schedule"] = preset["beta_schedule"]
+        steps, hires_steps = preset["steps"], preset["hires_steps"]
+        cfg = preset["cfg"]
+        sampler, scheduler = preset["sampler"], preset["scheduler"]
+        # Rewire first, THEN add node 61 - otherwise 61's own model input would point at itself.
+        _rewire(wf, ["1", 0], ["61", 0])
+        wf["61"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": ["1", 0], "lora_name": preset["lora"], "strength_model": 1.0},
+        }
+    # Never let cfg drop to where ComfyUI skips the negative (safety) conditioning.
+    cfg = max(cfg, LCM_MIN_CFG)
+
     wf["1"]["inputs"]["ckpt_name"] = checkpoint
-    wf["2"]["inputs"]["model_name"] = ANIMATEDIFF_MOTION_MODULE
+    wf["2"]["inputs"]["model_name"] = motion_module
     if motion_lora_name:
         wf["60"] = {
             "class_type": "ADE_AnimateDiffLoRALoader",
@@ -621,18 +721,66 @@ def submit_generation_animatediff(
     wf["5"]["inputs"]["width"] = width
     wf["5"]["inputs"]["height"] = height
     wf["5"]["inputs"]["batch_size"] = frames
-    wf["3"]["inputs"]["seed"] = seed
-    wf["3"]["inputs"]["steps"] = steps
-    wf["3"]["inputs"]["cfg"] = cfg
-    wf["3"]["inputs"]["sampler_name"] = ANIMATEDIFF_SAMPLER
-    wf["3"]["inputs"]["scheduler"] = ANIMATEDIFF_SCHEDULER
-    wf["52"]["inputs"]["seed"] = seed
-    wf["52"]["inputs"]["cfg"] = cfg
-    wf["52"]["inputs"]["sampler_name"] = ANIMATEDIFF_SAMPLER
-    wf["52"]["inputs"]["scheduler"] = ANIMATEDIFF_SCHEDULER
+    for node_id, node_steps in (("3", steps), ("34", hires_steps), ("52", steps)):
+        wf[node_id]["inputs"]["seed"] = seed
+        wf[node_id]["inputs"]["steps"] = node_steps
+        wf[node_id]["inputs"]["cfg"] = cfg
+        wf[node_id]["inputs"]["sampler_name"] = sampler
+        wf[node_id]["inputs"]["scheduler"] = scheduler
     wf["52"]["inputs"]["denoise"] = facedetailer_denoise
+
+    # Video face detailer (50/52; 40/51 only feed it).
+    if not use_facedetailer:
+        _rewire(wf, ["52", 0], ["35", 0])
+        _drop_nodes(wf, ["40", "50", "51", "52"])
+
+    # Hires second pass (31-35). Frame size after this stage = cur_w x cur_h.
+    cur_w, cur_h = width, height
+    if hires:
+        eff_scale = min(hires_scale, (ANIMATEDIFF_HIRES_MAX_PIXELS / float(width * height)) ** 0.5)
+        eff_scale = max(eff_scale, 1.0)
+        cur_w, cur_h = _round8(width * eff_scale), _round8(height * eff_scale)
+        wf["32"]["inputs"]["scale_by"] = eff_scale / UPSCALE_MODEL_SCALE
+        wf["34"]["inputs"]["denoise"] = hires_denoise
+    else:
+        _rewire(wf, ["35", 0], ["8", 0])
+        _drop_nodes(wf, ["31", "32", "33", "34", "35"])
+
+    # Final per-frame ESRGAN upscale (36/37) to long edge upscale_to.
+    if upscale_to and upscale_to > max(cur_w, cur_h):
+        k = upscale_to / float(max(cur_w, cur_h))
+        wf["37"]["inputs"]["width"] = _round_even(cur_w * k)
+        wf["37"]["inputs"]["height"] = _round_even(cur_h * k)
+    else:
+        _rewire(wf, ["37", 0], wf["36"]["inputs"]["image"])
+        _drop_nodes(wf, ["36", "37"])
+    if "31" not in wf and "36" not in wf:
+        _drop_nodes(wf, ["30"])
+
+    # RIFE frame interpolation (70), code-injected so the template still validates without the pack.
+    if interp_multiplier and interp_multiplier > 1:
+        wf["70"] = {
+            "class_type": RIFE_NODE,
+            "inputs": {
+                "ckpt_name": RIFE_CKPT,
+                "frames": wf["90"]["inputs"]["images"],
+                "clear_cache_after_n_frames": 10,
+                "multiplier": int(interp_multiplier),
+                "fast_mode": True,
+                "ensemble": True,
+                "scale_factor": 1.0,
+                "dtype": "float32",
+                "torch_compile": False,
+                "batch_size": 1,
+            },
+        }
+        wf["90"]["inputs"]["images"] = ["70", 0]
+
+    if fps is None:
+        fps = ANIMATEDIFF_FPS * max(1, int(interp_multiplier or 1))
+    wf["90"]["inputs"]["fps"] = float(fps)
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
-    wf["9"]["inputs"]["fps"] = fps
+    wf["9"]["inputs"]["codec.encoding.crf"] = float(video_crf)
 
     return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_ANIMATEDIFF)
 
@@ -745,6 +893,16 @@ def submit_img2vid_generation(
 def _round64(x: int) -> int:
     """Round to the nearest multiple of 64 (SDXL UNet + VAE both want /64)."""
     return max(64, int(round(x / 64.0)) * 64)
+
+
+def _round8(x: float) -> int:
+    """Round to the nearest multiple of 8 (SD1.5 VAE latent grid)."""
+    return max(8, int(round(x / 8.0)) * 8)
+
+
+def _round_even(x: float) -> int:
+    """h264/yuv420p needs even frame dimensions."""
+    return max(2, int(round(x / 2.0)) * 2)
 
 
 def _rewire(wf: dict, old_ref: list, new_ref: list) -> None:

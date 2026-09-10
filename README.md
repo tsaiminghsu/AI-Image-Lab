@@ -409,19 +409,22 @@ git clone https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved.git custom_
 ### 2. 下載模型
 
 AnimateDiff 成熟、社群支援完整的 motion module 是 SD1.5 系列（SDXL 版本還在
-beta、VRAM 需求也重很多），所以這條路線用官方 SD1.5 base checkpoint，不是
-目前生圖用的 Juggernaut SDXL：
+beta、VRAM 需求也重很多），所以這條路線用 SD1.5 checkpoint，不是目前生圖用的
+Juggernaut SDXL。**預設 checkpoint 是 Realistic Vision V6**（SD1.5 靜態圖路線
+本來就裝好的寫實 fine-tune，UNet 形狀跟官方 SD1.5 一模一樣，motion module 直接
+套得上）——之前預設用官方 `v1-5-pruned-emaonly`、想靠 prompt 補寫實感，實際上
+皮膚/臉部質感是整條影片 pipeline 最弱的一環，換 checkpoint 是零成本的畫質提升。
 
 | 模型 | 用途 | 大小 | 來源 | 存放位置 |
 |---|---|---|---|---|
-| `v1-5-pruned-emaonly.safetensors` | SD1.5 底模 | ~4.3 GB | [stable-diffusion-v1-5/stable-diffusion-v1-5](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5) | `ComfyUI/models/checkpoints/` |
+| `Realistic_Vision_V6.0_NV_B1_fp16.safetensors` | SD1.5 底模（**預設**） | ~2.1 GB | 已跟 SD1.5 靜態圖路線共用 | `ComfyUI/models/checkpoints/` |
+| `v1-5-pruned-emaonly.safetensors` | 官方 SD1.5 底模（選用，`--checkpoint sd15_base`） | ~4.3 GB | [stable-diffusion-v1-5/stable-diffusion-v1-5](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5) | `ComfyUI/models/checkpoints/` |
 | `mm_sd_v15_v2.ckpt` | AnimateDiff motion module | ~1.8 GB | [guoyww/animatediff](https://huggingface.co/guoyww/animatediff) | `ComfyUI/models/animatediff_models/` |
 | `ip-adapter-faceid-plusv2_sd15.bin` | FaceID（SD1.5 版） | ~150 MB | [h94/IP-Adapter-FaceID](https://huggingface.co/h94/IP-Adapter-FaceID) | `ComfyUI/models/ipadapter/` |
 | `ip-adapter-faceid-plusv2_sd15_lora.safetensors` | FaceID 隨附 LoRA | ~40 MB | 同上 | `ComfyUI/models/loras/` |
+| `4x-UltraSharp.pth` | 二段式高清 + 最終放大 | ~67 MB | 跟「HQ 兩段式生成」共用，見該章節 | `ComfyUI/models/upscale_models/` |
 
-寫實感靠 prompt/negative 調整（跟 SDXL 那條路線一樣，見「風格正/負面詞」），
-不是靠底模——`v1-5-pruned-emaonly` 是官方原始權重，不需要登入/授權就能下載，
-選它是為了穩定可重現，不是因為畫質最好。
+補幀（RIFE）跟 LCM 快速模式需要的檔案見下面 2c、2d，都是選用。
 
 ### 2b. AnimateDiff Motion LoRA（選用，鏡頭運動控制）
 
@@ -460,32 +463,214 @@ curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\animatediff_motion_lora\v2_lora_Z
 參數（`generate_character.py video-animatediff --help`）。沒下載就選的話，
 ComfyUI 會在 `ADE_AnimateDiffLoRALoader` 節點報找不到檔案，生成直接失敗。
 
+### 2c. RIFE 補幀節點（選用，讓影片更順/更長）
+
+motion module 只能穩定生成 16 張影格（超過就要接 sliding context window，實測會在
+第 16/17 幀出現服裝跳變、或整段構圖漂移，已放棄）。要更順或更長，改用
+[ComfyUI-Frame-Interpolation](https://github.com/Fannovel16/ComfyUI-Frame-Interpolation)
+的 RIFE 在影格之間**插補**出中間幀：16 幀 ×2 = 31 幀、×4 = 61 幀（插在每兩張之間，所以是 15 × 倍數 + 1），不用重新採樣。
+輸出 FPS 預設是 `8 × 倍數`（片長一樣約 2 秒、只是變順）；想拉長就把 FPS 調低，
+例如 ×4 配 16fps = 約 3.8 秒的慢動作。這取代了以前手動用 ffmpeg `setpts` 放慢的做法
+（那只會變長、不會變順）。
+
+```powershell
+cd D:\AI-Image-Lab\ComfyUI
+git clone --depth 1 https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git custom_nodes\ComfyUI-Frame-Interpolation
+```
+
+> 用 `--depth 1`（只抓最新版本）：這個 repo 的完整歷史很大，實測完整 clone 在這台
+> 機器上十分鐘還抓不完；ComfyUI 只需要目前的檔案，不需要歷史。
+
+> **只 clone，不要跑它的 `install.py`**。`install.py` 會嘗試安裝 `cupy`，那只有
+> GMFSS/STMFNet 這幾個模型用得到（而且是用到時才 import），RIFE 是純 PyTorch；
+> 它 `requirements-no-cupy.txt` 列的套件（kornia、einops、opencv-contrib、scipy
+> 等）在 ComfyUI 的 `.venv` 裡已經全部有了。cupy 要系統裝 CUDA toolkit 才載得起來，
+> 硬裝還可能重新解析 torch 版本，弄壞整個環境。
+
+`rife47.pth`（~20 MB）第一次使用時會自動下載到
+`custom_nodes\ComfyUI-Frame-Interpolation\ckpts\rife\`。如果自動下載失敗，手動下載：
+
+```powershell
+New-Item -ItemType Directory -Force -Path "D:\AI-Image-Lab\ComfyUI\custom_nodes\ComfyUI-Frame-Interpolation\ckpts\rife"
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\custom_nodes\ComfyUI-Frame-Interpolation\ckpts\rife\rife47.pth" https://github.com/Fannovel16/ComfyUI-Frame-Interpolation/releases/download/models/rife47.pth
+```
+
+沒裝這個節點就選補幀 ×2/×4 的話，CLI/GUI 會在送出前直接擋下並提示回來看這一節。
+
+### 2d. AnimateLCM 快速模式（選用，8 步取代 20 步）
+
+LCM（Latent Consistency Model）是蒸餾過的取樣方式，8 步就能出圖。預設 preset
+`animatelcm` 用 [AnimateLCM](https://huggingface.co/wangfuyun/AnimateLCM) 自己的
+motion module + UNet LoRA（兩者是一起蒸餾的，比拿通用 LCM LoRA 硬套 v2 motion module
+閃爍少）；備援 preset `lcm_lora` 維持原本的 `mm_sd_v15_v2` + 通用 `lcm-lora-sdv1-5`。
+
+```powershell
+# animatelcm（預設 preset，1.81 GB + 135 MB）
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\animatediff_models\AnimateLCM_sd15_t2v.ckpt" https://huggingface.co/wangfuyun/AnimateLCM/resolve/main/AnimateLCM_sd15_t2v.ckpt
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\loras\AnimateLCM_sd15_t2v_lora.safetensors" https://huggingface.co/wangfuyun/AnimateLCM/resolve/main/AnimateLCM_sd15_t2v_lora.safetensors
+
+# lcm_lora（備援 preset，135 MB，下載後改名）
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\loras\lcm-lora-sdv1-5.safetensors" https://huggingface.co/latent-consistency/lcm-lora-sdv1-5/resolve/main/pytorch_lora_weights.safetensors
+```
+
+| 設定 | 一般模式 | LCM 模式 |
+|---|---|---|
+| 步數（基礎 / 高清第二段 / 臉部精修） | 20 / 10 / 20 | 8 / 10 / 8 |
+| CFG | 7.5 | 2.0 |
+| sampler / scheduler | `dpmpp_2m` / `karras` | `lcm` / `sgm_uniform` |
+| motion module beta_schedule | `autoselect` | `lcm` |
+
+- 整張圖裡**三個 KSampler 會一起切換**——臉部精修節點也是透過同一個 LCM 化的模型
+  重新採樣，留在 karras/20 步會把臉修成一團糊。
+- **CFG 最低鎖在 1.5**（`LCM_MIN_CFG`）：CFG = 1.0 時 ComfyUI 會直接跳過 negative
+  prompt，年齡保護/露骨內容封鎖這些強制負面詞就會失效。這條不能調低。
+- 鏡頭 Motion LoRA 是對 `mm_sd_v15_v2` 訓練的，套在 AnimateLCM 的 motion module
+  上不會報錯，但效果**還沒實測**，CLI 會印警告；要確保鏡頭運動有效，改用
+  `--lcm-preset lcm_lora`。
+- LCM 在 CFG 2 下 FaceID 的身分鎖可能變弱一點，覺得不像可以把 IP-Adapter 權重
+  從 1.0 調到 1.2 左右。
+- **實測**（預設流程全開，RTX 2070）：LCM 只從 526 秒降到 480 秒。省下的是步數：
+  基礎採樣 8 步只要 22 秒，臉部精修從 20 步約 3.8 分鐘降到 8 步約 1.6 分鐘；但高清
+  第二段本來就是 10 步（每步約 11 秒），VAE 編解碼跟 ESRGAN 放大的時間也不受 LCM
+  影響，所以整體省得不多。同一個 seed 在 LCM 模式下構圖會跟一般模式不一樣（換了
+  motion module），畫質跟臉部一致性肉眼看起來沒有變差。
+- ComfyUI 載入時把 AnimateLCM 標成 v2 motion module，所以鏡頭 Motion LoRA 有機會
+  照樣生效，但還沒實測。
+
 ### 3. 重啟 ComfyUI
 
 ```powershell
 D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py --listen 127.0.0.1 --port 8188
 ```
 
-用法見下面「幫已有的圖片配上動作」章節旁邊的 `video-animatediff` CLI 指令，
-或網頁 GUI 最下面的「AnimateDiff 動態影片」區塊。**跟靜態圖那些選項是分開的
-獨立 workflow**（不同 checkpoint、不同 IP-Adapter 模型檔），第一次執行會比較
-慢（新的模型組合，ComfyUI 還沒快取過）。
+用法見下面「動態影片、臉部不變形」CLI 指令，或網頁 GUI 的「AnimateDiff 動態影片」
+區塊。**跟靜態圖那些選項是分開的獨立 workflow**（不同 checkpoint、不同 IP-Adapter
+模型檔），第一次執行會比較慢（新的模型組合，ComfyUI 還沒快取過）。
 
-> 只做了臉部 FaceDetailer 這一道精修（沒有另外接手部），影片本身的採樣＋
-> 16 張影格的逐幀臉部重繪在 8GB 卡上已經是不小的負擔，先把最主要的臉部變形
-> 問題解決，手部精修有需要再加。
->
-> **一個排坑細節**：workflow 裡的 FaceDetailer（節點 `41`）刻意接的是另一組
-> **沒有**掛 AnimateDiff motion module 的 FaceID 分支（節點 `11b`/`12b`），
-> 不是主生成用的那個 AnimateDiff+FaceID 模型（節點 `11`/`12`）。原因：
-> FaceDetailer 是逐張處理（一次只裁一幀的臉，batch=1），如果餵給還掛著
-> motion module 的模型，等於硬逼 AnimateDiff 用一張圖的「批次」跑時序運算
-> ——motion module 需要真正的多幀序列才能正常運作，餵單張圖會直接生成
-> 雜訊/馬賽克碎片，不是變形而是完全損毀（ComfyUI 自己也會印出警告：
-> `FaceDetailer is not a node designed for video detailing`，並建議改用
-> Impact Pack 另外提供的 `Detailer For AnimateDiff` 節點——這裡選擇維持用
-> 一般的 `FaceDetailer` 但改接無 motion module 的模型，做法更簡單、跟現有
-> 靜態圖那套 FaceDetailer workflow 完全一致，不需要再學一個新節點）。
+### 影片 pipeline 節點鏈（`workflow_template_animatediff_facedetailer.json`）
+
+```
+1 checkpoint ─(61 LCM LoRA)─ 2 AnimateDiff motion module ─(60 鏡頭 Motion LoRA)
+  └─ 11/12 FaceID 鎖臉 ─ 3 KSampler（16 張影格一起採樣，512²）─ 8 VAEDecode
+  ─ [30-35 二段式高清：ESRGAN 4x → 縮到 1.5x → VAEEncode → 34 KSampler denoise 0.4 → VAEDecodeTiled]
+  ─ [40/50/51/52 影片臉部精修]
+  ─ [36/37 逐幀 ESRGAN 放大到長邊 1024]
+  ─ [70 RIFE 補幀 ×2/×4]
+  ─ 90 CreateVideo(fps) ─ 9 SaveVideo（mp4 / h264, crf 20）
+```
+
+中括號裡的都是可以關掉的階段，關掉時程式會把節點從 graph 拿掉、把下游接回上游
+（跟 HQ 靜態圖路線同一套 `_rewire`/`_drop_nodes` 做法）；`60`/`61`/`70` 三個節點
+依賴選用下載/安裝，所以不寫在模板裡，只在用到時由程式注入，沒裝的環境模板照樣能跑。
+
+- **二段式高清**：第二段 KSampler 仍然經過 motion module（節點 12），所以重新採樣的
+  影格之間還是有時序關聯，不會變成逐張獨立重畫。16 張影格是一次一起採樣的，面積
+  上限鎖在 768×768（`ANIMATEDIFF_HIRES_MAX_PIXELS`）——直式 512×768 的底圖會自動
+  縮成約 1.22x。ComfyUI 回報 VRAM 不足（`out of memory` / `Allocation on device`）
+  時，會先釋放模型快取、**自動關掉高清再重跑一次**，最終 ESRGAN 放大照樣套用。
+- **最終放大**：逐幀 ESRGAN 是確定性的放大，不會引入新的閃爍；
+  `ImageUpscaleWithModel` 遇到 VRAM 不足會自己切小塊處理。放在補幀之前，所以
+  ESRGAN 只處理 16 張，不是 31/61 張。
+- **臉部精修放在高清之後、放大之前**：精修是生成式的，要在 motion module 能處理的
+  尺寸跑（guide 384 / max 768 剛好對應 768 的影格）；放大後再精修只是多花時間。
+- **輸出 mp4/h264**：以前是 vp9 `.webm`（crf 32），改用 ComfyUI 核心的
+  `CreateVideo` + `SaveVideo`，任何瀏覽器/播放器/手機都能直接播，編碼也比 vp9 快。
+
+**實測時間（RTX 2070 8GB，16 幀，同一個 seed/prompt）**：
+
+| 設定 | 輸出 | 耗時 | VRAM 峰值 |
+|---|---|---|---|
+| 不高清、不精修、不放大 | 512²，16 幀 @8fps | 69 s | — |
+| 不高清、有精修、不放大 | 512² | 224 s | — |
+| 預設（高清第二段 20 步 + 精修 + 放大 1024） | 1024² | 693 s | — |
+| **預設（高清第二段 10 步 + 精修 + 放大 1024）** | 1024² | **526 s** | 6.5 GB |
+| 預設 + LCM（AnimateLCM；含第一次載入 1.8 GB motion module） | 1024² | 480 s | 6.7 GB |
+| 預設 + RIFE ×4、16fps（含 ComfyUI 重啟後第一次載入模型） | 1024²，61 幀、3.8 秒 | 683 s | 6.8 GB |
+| 預設 + LCM + RIFE ×2、16fps | 1024²，31 幀、1.9 秒 | 391 s | 6.9 GB |
+
+高清第二段從 20 步降到 10 步，畫面肉眼看不出差異，所以預設是 10 步。時間大宗是
+兩個 768² 的整批採樣：高清第二段（10 步約 1.5 分鐘）跟臉部精修（20 步約 4 分鐘——
+這個取景下臉部裁切區塊加上 `crop_factor` 3.0 已經涵蓋整張 768² 影格）。只是要
+快速看動作對不對的話，用 `--no-hires --no-facedetailer --upscale-to 0`（約 1 分鐘）。
+
+> **臉部精修是怎麼接的**（之前版本的 README 這段寫錯了，描述的是更早已經拿掉的
+> 做法）：節點 `50`（`ImpactSimpleDetectorSEGS_for_AD`）一次在**所有影格**上偵測
+> 臉部區域，節點 `52`（Impact Pack 的 `DetailerForEachPipeForAnimateDiff`）再把
+> 整批臉部裁切**當成一小段連續影片**，透過同一個 AnimateDiff + FaceID 模型（節點
+> `12`，經 `51 ToBasicPipe` 傳入）一起重新採樣。更早的版本用一般的 `FaceDetailer`
+> 接在另一組沒掛 motion module 的 FaceID 分支上（當時的節點 `41`/`11b`/`12b`），
+> 雖然避開了「單張圖餵進 motion module 會產生雜訊碎片」的問題，但每一幀的臉都是
+> 各自獨立重畫，影格之間明顯閃爍，所以改成現在這個影片專用的 detailer。
+> 只做臉部，沒有另外接手部精修。
+
+## 會講話的嘴型影片（SadTalker，選用安裝）
+
+> **內容規則**：來源人像**僅限虛構/AI 生成的臉**（例如這個專案生成的 anchor），
+> **禁止使用真人照片**——跟 FaceID 臉部參考圖的規則完全一樣。
+
+上傳一張人像 + 一段語音，用 [SadTalker](https://github.com/OpenTalker/SadTalker)
+產生嘴型跟著語音動的說話影片（mp4，含聲音）。這條路線**完全不經過 ComfyUI**：
+SadTalker 有自己的 Python 3.10 / torch 2.5.1 環境，跟 ComfyUI 的 venv 版本衝突，
+所以 `training/talking_head.py` 只是用 subprocess 呼叫 SadTalker 自己的
+`inference.py`，不會 import 它。GUI 如果發現 ComfyUI 正開著，會先請它釋放顯存，
+避免兩個 process 搶同一張 8GB 卡。
+
+### 安裝
+
+```powershell
+cd D:\AI-Image-Lab
+git clone https://github.com/OpenTalker/SadTalker.git
+cd SadTalker
+git checkout cd4c046                       # 本專案實測過的版本
+uv venv .venv --python 3.10
+uv pip install --python .venv\Scripts\python.exe torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+```
+
+模型放到 `SadTalker\checkpoints\`（從 SadTalker 的 GitHub Releases 下載）：
+`SadTalker_V0.0.2_256.safetensors`、`SadTalker_V0.0.2_512.safetensors`、
+`mapping_00109-model.pth.tar`、`mapping_00229-model.pth.tar`；臉部偵測用的
+`alignment_WFLW_4HG.pth`、`detection_Resnet50_Final.pth` 放到 `SadTalker\gfpgan\weights\`。
+
+**ffmpeg**：這台機器的 PATH 上沒有 ffmpeg，所以把 `ffmpeg.exe`（gyan.dev 或 BtbN
+的 Windows build）直接放在 `SadTalker\ffmpeg.exe`，或用環境變數 `SADTALKER_FFMPEG`
+指到別的位置。`talking_head.py` 會把 SadTalker 資料夾加到子程序的 PATH 最前面，
+所以原版 SadTalker 寫死呼叫 `ffmpeg` 也找得到。本機另外對
+`SadTalker/src/utils/videoio.py` 做了一個小修補，讓它讀 `SADTALKER_FFMPEG`（SadTalker
+資料夾不進 repo，重新 clone 的話這個修補會消失，但有上面的 PATH 處理，不重套也能跑）：
+
+```diff
++FFMPEG_BIN = os.environ.get("SADTALKER_FFMPEG", "ffmpeg")
++
+ def save_video_with_watermark(video, audio, save_path, watermark=False):
+     temp_file = str(uuid.uuid4())+'.mp4'
+-    cmd = r'ffmpeg -y -hide_banner -loglevel error -i "%s" -i "%s" -vcodec copy "%s"' % (video, audio, temp_file)
++    cmd = r'%s -y -hide_banner -loglevel error -i "%s" -i "%s" -vcodec copy "%s"' % (FFMPEG_BIN, video, audio, temp_file)
+```
+
+選用：臉部修復 `GFPGANv1.4.pth`（~348 MB），不先下載的話第一次選 gfpgan 時會自動抓：
+
+```powershell
+curl.exe -L -o "D:\AI-Image-Lab\SadTalker\gfpgan\weights\GFPGANv1.4.pth" https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth
+```
+
+### 參數怎麼選
+
+| 參數 | 建議 |
+|---|---|
+| 尺寸 `--size` | 256 比較快、VRAM 約 2-3 GB；512 比較清楚、約 4-6 GB |
+| 範圍 `--preprocess` | `crop`（預設）只輸出臉部裁切；`full`/`extfull` 把動起來的臉貼回整張原圖，半身/全身圖用這個 |
+| `--still` | 頭部幾乎不動，搭配 `full` 使用，避免貼回原圖時頭部浮動錯位 |
+| `--expression-scale` | 嘴型/表情幅度，1.0 預設，0.5-2.0 |
+| `--enhancer` | `gfpgan` / `RestoreFormer` 每一幀做臉部修復，比較清楚但比較慢 |
+
+SadTalker 用 `os.system` 組 ffmpeg 指令，中文路徑在 cp950 主控台下會壞掉，所以
+`talking_head.py` 會先把圖跟音檔複製到純英文路徑的暫存資料夾
+（`outputs\sadtalker\_raw\<隨機名>`）再跑；非 wav 的音檔會先轉成 16kHz 單聲道 wav。
+
+> 另一個對嘴工具 [MuseTalk](https://github.com/TMElyralab/MuseTalk) 也 clone 在
+> repo 根目錄、模型也下載了，但它的 `.venv` 目前沒有裝 torch、跑不起來，所以還
+> 沒有接進 CLI/GUI。
 
 ## 網頁 GUI（本地生圖介面）
 
@@ -646,15 +831,31 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
 - 頁面最下方獨立區塊，跟上面的靜態圖生成完全分開（不同 checkpoint：SD1.5，
   不是 SDXL），需要先完成「AnimateDiff 動態影片」安裝章節的模型下載
 - 上傳一張臉部參考圖（FaceID 用，僅限虛構/AI生成，禁止上傳真人照片），輸入
-  prompt，按「生成影片」——輸出是一小段 `.webm` 動態影片，會鎖住整段影片的
-  臉部身分，並對每一幀跑一次臉部精修，修正純 SVD img2vid 常見的臉部變形問題
-- 影格數預設 16（motion module 訓練時的上限，不建議調更高，需要另外接
-  sliding-context-window 節點才能超過）、FPS 預設 8（約 2 秒的影片）
+  prompt，按「生成影片」——輸出是一段 **`.mp4`**（h264），會鎖住整段影片的
+  臉部身分，並把所有影格的臉部一起重新採樣精修，修正純 SVD img2vid 常見的
+  臉部變形問題
+- 「採樣影格數」預設 16（motion module 訓練時的上限，不建議調更高）
+- **「畫質 / 流暢度 / 速度」**：
+  - 二段式高清（預設開）：512² → 768²，VRAM 不足會自動退回不做高清
+  - 最終放大（預設長邊 1024）：逐幀 ESRGAN，不會增加閃爍
+  - RIFE 補幀倍數 1/2/4：2/4 要先完成「2c. RIFE 補幀節點」安裝
+  - 臉部精修（預設開）：關掉比較快，但臉可能變糊/漂移
+  - LCM 快速模式（預設關）：8 步取代 20 步，要先完成「2d. AnimateLCM」下載
+- 「輸出 FPS」0 = 自動（8 × 補幀倍數，片長一樣約 2 秒、只是變順）；手動調低就
+  變成更長的慢動作，例如補幀 ×4 + 16fps = 61 幀、約 3.8 秒
 - 第一次執行會比較久：SD1.5 checkpoint、motion module、FaceID SD1.5 模型都是
   全新的模型組合，ComfyUI 還沒快取過
 - 「Motion LoRA」摺疊區塊（選用）：控制整個畫面的鏡頭運動（縮放/平移/傾斜/
   旋轉），**不是身體部位的物理晃動效果**——選了要先完成「AnimateDiff Motion
   LoRA」安裝章節的模型下載，沒下載會直接生成失敗
+
+#### 會講話的嘴型影片
+
+- AnimateDiff 區塊下面，上傳人像（**僅限虛構/AI 生成**）+ 語音檔（wav/mp3），
+  按「生成說話影片」——輸出含聲音的 `.mp4`
+- **不需要 ComfyUI**，跑在 SadTalker 自己的環境；ComfyUI 如果開著會先釋放顯存
+- 需要先完成「會講話的嘴型影片（SadTalker）」安裝章節；缺檔案時按下去會直接
+  提示缺什麼
 
 #### 批次生成 GIF
 
@@ -839,7 +1040,7 @@ python generate_character.py video --character mei --init-image "datasets\mei\va
 **這條路線沒辦法接 FaceID，動態幅度大時臉容易變形/融化**——需要穩住臉部身分
 的話用下面的 `video-animatediff`。
 
-### 動態影片、臉部不變形（AnimateDiff + FaceID + FaceDetailer）
+### 動態影片、臉部不變形（AnimateDiff + FaceID + 影片臉部精修）
 
 ```powershell
 python generate_character.py video-animatediff --character mei --face-ref "reference_candidates\mei\anchor_0001.png" --prompt "sitting by a window, gentle breeze, turning head slightly"
@@ -849,7 +1050,41 @@ python generate_character.py video-animatediff --character mei --face-ref "refer
 img2vid）：`--face-ref` 只用來鎖臉部身分（IP-Adapter FaceID），畫面內容完全
 由 `--prompt` 決定。加 `--style-positive`/`--style-negative` 可以覆蓋預設的
 寫實化用詞，用法跟 `custom` 指令一樣；`--tier`/`--negative-prompt` 的安全詞
-保證（年齡保護、露骨內容封鎖）也完全一致，不受這兩個參數影響。
+保證（年齡保護、露骨內容封鎖）也完全一致，不受這兩個參數影響。輸出是
+`animatediff_seed<seed>.mp4`。
+
+畫質/流暢度/速度相關參數：
+
+| 參數 | 預設 | 作用 |
+|---|---|---|
+| `--no-hires` | （高清開） | 關掉二段式高清 |
+| `--hires-scale` / `--hires-denoise` | 1.5 / 0.4 | 高清倍率（面積上限 768²）/ 第二段重繪強度 |
+| `--upscale-to {0,768,1024}` | 1024 | 最終逐幀 ESRGAN 放大的長邊，0 = 不放大 |
+| `--interp {1,2,4}` | 1 | RIFE 補幀倍數（需要 2c 的節點） |
+| `--fps` | 8 × `--interp` | **輸出** fps；調低就變長 |
+| `--no-facedetailer` | （精修開） | 跳過影片臉部精修 |
+| `--lcm` / `--lcm-preset` | 關 / `animatelcm` | LCM 8 步快速模式（需要 2d 的模型） |
+| `--checkpoint` | `realistic_vision` | 換 SD1.5 checkpoint（`sd15_base`、`cyberrealistic`） |
+
+```powershell
+# 最順：補幀 ×2（31 幀 @16fps），1024 輸出
+python generate_character.py video-animatediff --face-ref "reference_candidates\mei\anchor_0001.png" --prompt "..." --interp 2
+# 約 3.8 秒慢動作：補幀 ×4、16fps（61 幀）
+python generate_character.py video-animatediff --face-ref "reference_candidates\mei\anchor_0001.png" --prompt "..." --interp 4 --fps 16
+# 最快的預覽：LCM、不高清、不精修、不放大
+python generate_character.py video-animatediff --face-ref "reference_candidates\mei\anchor_0001.png" --prompt "..." --lcm --no-hires --no-facedetailer --upscale-to 0
+```
+
+### 會講話的嘴型影片（SadTalker）
+
+```powershell
+python generate_character.py talk --image "reference_candidates\mei\anchor_seed3001.png" --audio "D:\voice\hello.wav"
+```
+
+來源人像**僅限虛構/AI 生成的臉**，禁止真人照片。輸出
+`reference_candidates\videos\talk_<圖檔名>_<音檔名>.mp4`（含聲音）。不需要
+ComfyUI。常用參數：`--size 256|512`、`--preprocess crop|full|extfull`、`--still`、
+`--expression-scale`、`--enhancer gfpgan`，說明見上面「會講話的嘴型影片」安裝章節。
 
 ### 加入新角色
 
@@ -1158,11 +1393,17 @@ ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓�
 | FACEDETAILER_FACE / HAND_DENOISE | 0.4 / 0.35 |
 | CHARACTER_LORA_STRENGTH | 0.8（角色 LoRA，node 14，與 FaceID 並用） |
 | INSIGHTFACE_PROVIDER | `CPU`（避開 onnxruntime 佔用 torch 帳外 VRAM 造成的換入換出，可用環境變數覆蓋） |
-| ANIMATEDIFF_CHECKPOINT | `v1-5-pruned-emaonly.safetensors`（SD1.5，跟上面 SDXL 的 CHECKPOINT 分開） |
+| ANIMATEDIFF_CHECKPOINT | `Realistic_Vision_V6.0_NV_B1_fp16.safetensors`（SD1.5，跟上面 SDXL 的 CHECKPOINT 分開） |
 | ANIMATEDIFF_MOTION_MODULE | `mm_sd_v15_v2.ckpt` |
-| ANIMATEDIFF_WIDTH × HEIGHT | 512 × 512（SD1.5 原生解析度） |
-| ANIMATEDIFF_FRAMES / FPS | 16（motion module 訓練上限）/ 8 |
+| ANIMATEDIFF_WIDTH × HEIGHT | 512 × 512（SD1.5 原生解析度，第一段採樣尺寸） |
+| ANIMATEDIFF_FRAMES / FPS | 16（motion module 訓練上限）/ 8（採樣影格的 fps；補幀時輸出 fps 預設 8 × 倍數） |
 | ANIMATEDIFF_STEPS / CFG | 20 / 7.5（SD1.5 慣用範圍，比 SDXL 的 30 步/6.0 少/高） |
+| ANIMATEDIFF_HIRES_SCALE / DENOISE / STEPS | 1.5 / 0.4 / 10（面積上限 `ANIMATEDIFF_HIRES_MAX_PIXELS` = 768²） |
+| ANIMATEDIFF_UPSCALE_TO | 1024（最終逐幀 ESRGAN 的長邊，0 = 不放大） |
+| RIFE_NODE / RIFE_CKPT | `RIFE VFI` / `rife47.pth`（補幀倍數 1/2/4） |
+| ANIMATEDIFF_VIDEO_CRF | 20（mp4/h264，數字越小畫質越好、檔案越大） |
+| ANIMATEDIFF_LCM_PRESETS | `animatelcm`（預設）/ `lcm_lora`：8 步、CFG 2.0、`lcm`/`sgm_uniform` |
+| LCM_MIN_CFG | 1.5（CFG = 1 時 ComfyUI 會跳過 negative，安全負面詞會失效，不能再低） |
 
 > - `FACEID PLUS V2`：用 `IPAdapterUnifiedLoaderFaceID` + `IPAdapterFaceID` 這組
 >   節點（不是舊版的 `IPAdapterUnifiedLoader` + `IPAdapterAdvanced`），身分條件化
@@ -1226,6 +1467,8 @@ RunPod、怎麼接上現有的 `comfyui_client.py`，見 [CLOUD_GPU.md](CLOUD_GP
 ```
 AI-Image-Lab/
 ├── ComfyUI/                  # 第三方安裝，不進 repo（見安裝章節）
+├── SadTalker/                # 第三方安裝（對嘴影片），不進 repo（見「會講話的嘴型影片」章節）
+├── MuseTalk/                 # 第三方安裝（對嘴，尚未接進 CLI/GUI），不進 repo
 ├── models/                   # SDXL/IP-Adapter/CLIP 權重，不進 repo（見模型章節）
 ├── training/
 │   ├── generate_character.py # CLI 入口：角色定義 + prompt 組裝
@@ -1243,10 +1486,12 @@ AI-Image-Lab/
 │   ├── workflow_template_facedetailer.json # IP-Adapter + ADetailer 臉部/手部精修 workflow（YOLO）
 │   ├── workflow_template_mediapipe_facedetailer.json # 同上，臉部偵測改用 MediaPipe 網格
 │   ├── workflow_template_img2vid.json     # SVD img2vid workflow（video 指令用）
-│   ├── workflow_template_animatediff_facedetailer.json # SD1.5 AnimateDiff + FaceID + 逐幀臉部精修（video-animatediff 用）
+│   ├── workflow_template_animatediff_facedetailer.json # SD1.5 AnimateDiff + FaceID + 影片臉部精修 + 高清/放大/補幀/mp4（video-animatediff 用）
+│   ├── talking_head.py       # SadTalker 對嘴影片包裝（subprocess 呼叫 SadTalker 自己的 venv，talk 指令/GUI 用）
 │   └── reference_candidates/ # anchor 候選圖，不進 repo
 ├── datasets/<character>/     # 生成的訓練圖 + caption，不進 repo
 ├── outputs/_comfyui_raw/     # ComfyUI 原始輸出暫存，不進 repo
+├── outputs/sadtalker/_raw/   # SadTalker 每次執行的暫存資料夾（跑完自動刪除），不進 repo
 ├── captions/ evaluation/ samples/  # 保留給未來 kohya_ss LoRA 訓練階段用，目前空
 ├── comfyui-requirements.lock.txt   # ComfyUI 本體套件凍結版本清單
 ├── comfyui-requirements-extra.lock.txt   # 網頁 GUI + 所有選用功能（ControlNet/ADetailer/mediapipe）套件凍結版本清單
@@ -1361,6 +1606,26 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 從哪裡繼續），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
 繼續，不會重跑已完成的部分。長時間批次生成前，建議先關閉不必要的背景程式騰出
 系統 RAM。
+
+### 影片生成：高清階段 VRAM 不足
+
+終端機出現 `[warn] hires pass ran out of VRAM - ... retrying once without hires`
+代表 768² 的第二段採樣在這張卡上塞不下（通常是別的程式也在用顯存，或底圖不是
+正方形），程式已經自動改成不做高清、只做最終 ESRGAN 放大。想保留高清的話用
+`--hires-scale 1.25`（約 640²），或先關掉其他佔顯存的程式。
+
+### 影片生成：找不到 `RIFE VFI` 節點
+
+選了補幀 ×2/×4 但 ComfyUI 沒有這個節點：照「2c. RIFE 補幀節點」clone 之後**要
+重啟 ComfyUI** 才會載入。如果節點有了但生成時卡在下載 `rife47.pth`，用 2c 裡的
+curl 指令手動下載。
+
+### 對嘴影片：SadTalker 失敗
+
+- `找不到 ffmpeg`：把 `ffmpeg.exe` 放到 `SadTalker\ffmpeg.exe`，或設定 `SADTALKER_FFMPEG`
+- 選 gfpgan 後卡住很久：第一次會下載 `GFPGANv1.4.pth`（~348 MB），可以先照安裝
+  章節手動下載
+- 完整錯誤訊息會印在啟動 GUI/CLI 的終端機裡（GUI 只顯示最後一段）
 
 ## Roadmap（尚未完成）
 

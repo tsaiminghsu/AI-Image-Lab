@@ -20,6 +20,7 @@ the character recognizable across the dataset.
 import argparse
 import os
 import random
+import shutil
 
 import comfyui_client as client
 import pose_skeletons
@@ -993,7 +994,7 @@ def gen_video(trigger, init_image_path, out_dir, seed, video_frames, fps, motion
         motion_bucket_id=motion_bucket_id,
     )
     out_path = os.path.join(out_dir, f"{stem}.webm")
-    os.replace(raw_path, out_path)
+    shutil.move(raw_path, out_path)  # not os.replace: out_dir may be on another drive
     print(f"saved {out_path}", flush=True)
 
 
@@ -1001,9 +1002,11 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
                            ip_adapter_weight=client.IP_ADAPTER_WEIGHT, facedetailer_denoise=None,
                            frames=None, fps=None, width=None, height=None,
                            style_positive=None, style_negative=None, checkpoint=None,
-                           motion_lora=None, motion_lora_strength=1.0):
+                           motion_lora=None, motion_lora_strength=1.0,
+                           hires=True, hires_scale=None, hires_denoise=None, upscale_to=None,
+                           interp=None, use_facedetailer=True, lcm=False, lcm_preset="animatelcm"):
     """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking and
-    a per-frame FaceDetailer face-fix pass - fixes the face warping that
+    a video-native face-fix pass - fixes the face warping that
     gen_video's plain SVD img2vid produces (SVD's temporal U-Net can't be
     IPAdapter-patched, so it has no way to hold identity/geometry steady
     across frames; AnimateDiff runs the motion module inside a normal SD1.5
@@ -1026,11 +1029,33 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     movement (zoom/pan/tilt/roll of the whole frame). This is NOT a control for
     body-part-specific physical effects (no "bounce"/"jiggle" knob exists -
     the motion module has no dedicated mechanism for that). motion_lora_strength
-    scales its effect, typical useful range is 0-2."""
+    scales its effect, typical useful range is 0-2.
+
+    Quality/speed toggles (see comfyui_client.submit_generation_animatediff for the graph):
+    hires (two-pass 1.5x, area-capped at 768^2; retried once without it if ComfyUI reports a
+    VRAM OOM), upscale_to (per-frame ESRGAN to this long edge, 0 = off), interp (RIFE frame
+    interpolation x2/x4 - needs the optional ComfyUI-Frame-Interpolation node; fps then
+    defaults to 8 x interp), use_facedetailer, lcm + lcm_preset (8-step LCM sampling).
+
+    Returns the path of the saved .mp4."""
     if checkpoint and checkpoint not in client.ANIMATEDIFF_CHECKPOINTS:
         raise SystemExit(f"unknown animatediff checkpoint {checkpoint!r} - choices: {sorted(client.ANIMATEDIFF_CHECKPOINTS)}")
     if motion_lora and motion_lora not in client.ANIMATEDIFF_MOTION_LORAS:
         raise SystemExit(f"unknown motion lora {motion_lora!r} - choices: {sorted(client.ANIMATEDIFF_MOTION_LORAS)}")
+    if lcm and lcm_preset not in client.ANIMATEDIFF_LCM_PRESETS:
+        raise SystemExit(f"unknown lcm preset {lcm_preset!r} - choices: {sorted(client.ANIMATEDIFF_LCM_PRESETS)}")
+    interp = int(interp or 1)
+    if interp not in client.ANIMATEDIFF_INTERP_CHOICES:
+        raise SystemExit(f"interp must be one of {client.ANIMATEDIFF_INTERP_CHOICES}")
+    if interp > 1 and not client.has_node(client.RIFE_NODE):
+        raise SystemExit(
+            f"frame interpolation needs the '{client.RIFE_NODE}' node, which the running ComfyUI server "
+            "doesn't have - install ComfyUI-Frame-Interpolation and restart ComfyUI (README: "
+            "'2c. RIFE 補幀節點'), or drop --interp")
+    if lcm and motion_lora and not client.ANIMATEDIFF_LCM_PRESETS[lcm_preset]["motion_lora_verified"]:
+        print(f"[warn] camera motion LoRAs were trained for mm_sd_v15_v2 - their effect on the "
+              f"{lcm_preset!r} motion module is unverified (use --lcm-preset lcm_lora if it does nothing)",
+              flush=True)
     style_positive = REALISTIC_STYLE if style_positive is None else style_positive
     style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
 
@@ -1066,22 +1091,45 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     if motion_lora:
         kwargs["motion_lora_name"] = client.ANIMATEDIFF_MOTION_LORAS[motion_lora]
         kwargs["motion_lora_strength"] = motion_lora_strength
+    kwargs["hires"] = hires
+    if hires_scale is not None:
+        kwargs["hires_scale"] = hires_scale
+    if hires_denoise is not None:
+        kwargs["hires_denoise"] = hires_denoise
+    if upscale_to is not None:
+        kwargs["upscale_to"] = upscale_to
+    kwargs["interp_multiplier"] = interp
+    kwargs["use_facedetailer"] = use_facedetailer
+    if lcm:
+        kwargs["lcm_preset"] = lcm_preset
+
+    def _submit(**override):
+        return client.submit_generation_animatediff(
+            prompt=full_prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            face_ref_image_filename=ref_filename,
+            filename_prefix=stem,
+            ip_adapter_weight=ip_adapter_weight,
+            **{**kwargs, **override},
+        )
 
     client.log_gpu_memory("before_animatediff")
-    raw_path = client.submit_generation_animatediff(
-        prompt=full_prompt,
-        negative_prompt=negative_prompt,
-        seed=seed,
-        face_ref_image_filename=ref_filename,
-        filename_prefix=stem,
-        ip_adapter_weight=ip_adapter_weight,
-        **kwargs,
-    )
-    out_path = os.path.join(out_dir, f"{stem}.webm")
-    os.replace(raw_path, out_path)
+    try:
+        raw_path = _submit()
+    except RuntimeError as exc:
+        msg = str(exc).lower()
+        if not (hires and ("out of memory" in msg or "allocation on device" in msg)):
+            raise
+        print("[warn] hires pass ran out of VRAM - freeing ComfyUI's model cache and retrying once "
+              "without hires (the final ESRGAN upscale still applies)", flush=True)
+        client.free_vram()
+        raw_path = _submit(hires=False)
+    out_path = os.path.join(out_dir, f"{stem}.mp4")
+    shutil.move(raw_path, out_path)  # not os.replace: out_dir may be on another drive
     print(f"saved {out_path}", flush=True)
     client.log_gpu_memory("after_animatediff")
-    client.log_gpu_memory("after_video")
+    return out_path
 
 
 if __name__ == "__main__":
@@ -1186,15 +1234,34 @@ if __name__ == "__main__":
     p_video_ad.add_argument("--seed", type=int, default=6001)
     p_video_ad.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
     p_video_ad.add_argument("--facedetailer-denoise", type=float, default=None, help="0=no change, 1=fully re-generate the detected face region; defaults to comfyui_client.FACEDETAILER_DENOISE (0.5) if omitted")
+    p_video_ad.add_argument("--no-facedetailer", action="store_true", help="skip the video face-detailer pass (faster, but the face may drift/soften)")
     p_video_ad.add_argument("--frames", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_FRAMES (16, the motion module's trained context length)")
-    p_video_ad.add_argument("--fps", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_FPS (8) if omitted")
+    p_video_ad.add_argument("--fps", type=int, default=None, help="OUTPUT fps; defaults to 8 x --interp (same ~2s duration, smoother). Lower it for a longer slow-motion clip, e.g. --interp 4 --fps 16 = 61 frames, ~3.8s")
     p_video_ad.add_argument("--width", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_WIDTH (512) if omitted")
     p_video_ad.add_argument("--height", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_HEIGHT (512) if omitted")
     p_video_ad.add_argument("--style-positive", default=None, help="overrides REALISTIC_STYLE for this call only; omit to use the default")
     p_video_ad.add_argument("--style-negative", default=None, help="overrides REALISTIC_NEGATIVE for this call only; omit to use the default. Never touches the age-safety/explicit-content negative terms, those aren't overridable")
-    p_video_ad.add_argument("--checkpoint", default=None, choices=sorted(client.ANIMATEDIFF_CHECKPOINTS), help="swap the SD1.5 checkpoint AnimateDiff patches its motion module into; omit for the pipeline default (plain SD1.5 base)")
+    p_video_ad.add_argument("--checkpoint", default=None, choices=sorted(client.ANIMATEDIFF_CHECKPOINTS), help="swap the SD1.5 checkpoint AnimateDiff patches its motion module into; omit for the pipeline default (realistic_vision)")
     p_video_ad.add_argument("--motion-lora", default=None, choices=sorted(client.ANIMATEDIFF_MOTION_LORAS), help="camera-motion LoRA (zoom/pan/tilt/roll of the whole frame) - NOT a body-part physics control, no bounce/jiggle option exists. Requires the .ckpt downloaded to ComfyUI/models/animatediff_motion_lora/, see README")
     p_video_ad.add_argument("--motion-lora-strength", type=float, default=1.0, help="scales the motion LoRA's effect; typical useful range is 0-2, values much above 1 tend to distort the frame")
+    p_video_ad.add_argument("--no-hires", action="store_true", help="skip the two-pass hires stage (sampled size stays at --width x --height)")
+    p_video_ad.add_argument("--hires-scale", type=float, default=None, help=f"hires size / base size, default {client.ANIMATEDIFF_HIRES_SCALE}; always capped at {client.ANIMATEDIFF_HIRES_MAX_PIXELS} px area (768x768) for 8GB VRAM")
+    p_video_ad.add_argument("--hires-denoise", type=float, default=None, help=f"hires second-pass denoise, default {client.ANIMATEDIFF_HIRES_DENOISE}")
+    p_video_ad.add_argument("--upscale-to", type=int, default=None, choices=client.ANIMATEDIFF_UPSCALE_CHOICES, help=f"final long edge via per-frame ESRGAN, 0 = off; default {client.ANIMATEDIFF_UPSCALE_TO}")
+    p_video_ad.add_argument("--interp", type=int, default=1, choices=client.ANIMATEDIFF_INTERP_CHOICES, help="RIFE frame interpolation multiplier (needs ComfyUI-Frame-Interpolation, see README)")
+    p_video_ad.add_argument("--lcm", action="store_true", help="LCM fast mode: 8 steps instead of 20 (needs the preset's motion module + LoRA downloaded, see README)")
+    p_video_ad.add_argument("--lcm-preset", default="animatelcm", choices=sorted(client.ANIMATEDIFF_LCM_PRESETS), help="animatelcm (default, AnimateLCM motion module + LoRA) or lcm_lora (mm_sd_v15_v2 + lcm-lora-sdv1-5; camera motion LoRAs still apply)")
+
+    p_talk = sub.add_parser("talk", help="talking-head lip-sync video from one portrait + a voice clip (SadTalker, runs in its own venv - ComfyUI not needed)")
+    p_talk.add_argument("--image", required=True, help="source portrait - must be a fictional/AI-generated face (e.g. an anchor), never a real person's photo")
+    p_talk.add_argument("--audio", required=True, help="voice clip (.wav, or anything ffmpeg reads - converted to 16kHz mono wav)")
+    p_talk.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates\videos")
+    p_talk.add_argument("--size", type=int, default=512, choices=[256, 512], help="face render size: 256 faster/~2-3GB VRAM, 512 sharper/~4-6GB")
+    p_talk.add_argument("--preprocess", default="crop", choices=["crop", "extcrop", "resize", "full", "extfull"], help="crop = animate the face crop only; full/extfull = paste back into the whole image (pair with --still)")
+    p_talk.add_argument("--still", action="store_true", help="minimal head motion - recommended with --preprocess full for half/full-body images")
+    p_talk.add_argument("--expression-scale", type=float, default=1.0, help="mouth/expression intensity, ~0.5-2.0")
+    p_talk.add_argument("--enhancer", default="none", choices=["none", "gfpgan", "RestoreFormer"], help="face restoration on every frame (GFPGAN weights ~348MB download on first use)")
+    p_talk.add_argument("--pose-style", type=int, default=0, help="head-pose style id, 0-45")
 
     args = parser.parse_args()
     if args.mode == "list-characters":
@@ -1218,7 +1285,22 @@ if __name__ == "__main__":
                                frames=args.frames, fps=args.fps, width=args.width, height=args.height,
                                style_positive=args.style_positive, style_negative=args.style_negative,
                                checkpoint=args.checkpoint,
-                               motion_lora=args.motion_lora, motion_lora_strength=args.motion_lora_strength)
+                               motion_lora=args.motion_lora, motion_lora_strength=args.motion_lora_strength,
+                               hires=not args.no_hires, hires_scale=args.hires_scale, hires_denoise=args.hires_denoise,
+                               upscale_to=args.upscale_to, interp=args.interp,
+                               use_facedetailer=not args.no_facedetailer,
+                               lcm=args.lcm, lcm_preset=args.lcm_preset)
+    elif args.mode == "talk":
+        import talking_head  # only this branch needs it; keeps the other modes' imports unchanged
+        try:
+            path = talking_head.generate_talking_head(
+                args.image, args.audio, args.out, size=args.size, preprocess=args.preprocess,
+                still=args.still, expression_scale=args.expression_scale,
+                enhancer=None if args.enhancer == "none" else args.enhancer,
+                pose_style=args.pose_style, echo=True)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc))
+        print(f"saved {path}", flush=True)
     elif args.mode == "custom":
         # use_facedetailer sentinel: None = auto (on for HQ, off for legacy);
         # explicit flags override. --use-facedetailer forces on, --no-facedetailer off.

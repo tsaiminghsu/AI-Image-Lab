@@ -8,7 +8,10 @@
   "2": {
     "class_type": "ADE_AnimateDiffLoaderGen1",
     "inputs": {
-      "model": ["1", 0],
+      "model": [
+        "1",
+        0
+      ],
       "model_name": "mm_sd_v15_v2.ckpt",
       "beta_schedule": "autoselect"
     }
@@ -22,7 +25,10 @@
   "11": {
     "class_type": "IPAdapterUnifiedLoaderFaceID",
     "inputs": {
-      "model": ["2", 0],
+      "model": [
+        "2",
+        0
+      ],
       "preset": "FACEID PLUS V2",
       "lora_strength": 0.6,
       "provider": "CUDA"
@@ -31,9 +37,18 @@
   "12": {
     "class_type": "IPAdapterFaceID",
     "inputs": {
-      "model": ["11", 0],
-      "ipadapter": ["11", 1],
-      "image": ["10", 0],
+      "model": [
+        "11",
+        0
+      ],
+      "ipadapter": [
+        "11",
+        1
+      ],
+      "image": [
+        "10",
+        0
+      ],
       "weight": 1.0,
       "weight_faceidv2": 1.0,
       "weight_type": "linear",
@@ -47,14 +62,20 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "REPLACE_POSITIVE_PROMPT",
-      "clip": ["1", 1]
+      "clip": [
+        "1",
+        1
+      ]
     }
   },
   "7": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "REPLACE_NEGATIVE_PROMPT",
-      "clip": ["1", 1]
+      "clip": [
+        "1",
+        1
+      ]
     }
   },
   "5": {
@@ -68,10 +89,22 @@
   "3": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["12", 0],
-      "positive": ["6", 0],
-      "negative": ["7", 0],
-      "latent_image": ["5", 0],
+      "model": [
+        "12",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ],
       "seed": 0,
       "steps": 20,
       "cfg": 7.5,
@@ -83,8 +116,101 @@
   "8": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["3", 0],
-      "vae": ["1", 2]
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "30": {
+    "class_type": "UpscaleModelLoader",
+    "inputs": {
+      "model_name": "4x-UltraSharp.pth"
+    }
+  },
+  "31": {
+    "class_type": "ImageUpscaleWithModel",
+    "inputs": {
+      "upscale_model": [
+        "30",
+        0
+      ],
+      "image": [
+        "8",
+        0
+      ]
+    }
+  },
+  "32": {
+    "class_type": "ImageScaleBy",
+    "inputs": {
+      "image": [
+        "31",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "scale_by": 0.375
+    }
+  },
+  "33": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "32",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "34": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "12",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "33",
+        0
+      ],
+      "seed": 0,
+      "steps": 20,
+      "cfg": 7.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.4
+    }
+  },
+  "35": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "34",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ],
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8
     }
   },
   "40": {
@@ -96,8 +222,14 @@
   "50": {
     "class_type": "ImpactSimpleDetectorSEGS_for_AD",
     "inputs": {
-      "bbox_detector": ["40", 0],
-      "image_frames": ["8", 0],
+      "bbox_detector": [
+        "40",
+        0
+      ],
+      "image_frames": [
+        "35",
+        0
+      ],
       "bbox_threshold": 0.5,
       "bbox_dilation": 10,
       "crop_factor": 3.0,
@@ -113,18 +245,39 @@
   "51": {
     "class_type": "ToBasicPipe",
     "inputs": {
-      "model": ["12", 0],
-      "clip": ["1", 1],
-      "vae": ["1", 2],
-      "positive": ["6", 0],
-      "negative": ["7", 0]
+      "model": [
+        "12",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "vae": [
+        "1",
+        2
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ]
     }
   },
   "52": {
     "class_type": "DetailerForEachPipeForAnimateDiff",
     "inputs": {
-      "image_frames": ["8", 0],
-      "segs": ["50", 0],
+      "image_frames": [
+        "35",
+        0
+      ],
+      "segs": [
+        "50",
+        0
+      ],
       "guide_size": 384,
       "guide_size_for": true,
       "max_size": 768,
@@ -135,18 +288,61 @@
       "scheduler": "karras",
       "denoise": 0.5,
       "feather": 5,
-      "basic_pipe": ["51", 0],
+      "basic_pipe": [
+        "51",
+        0
+      ],
       "refiner_ratio": 0.2
     }
   },
-  "9": {
-    "class_type": "SaveWEBM",
+  "36": {
+    "class_type": "ImageUpscaleWithModel",
     "inputs": {
-      "images": ["52", 0],
+      "upscale_model": [
+        "30",
+        0
+      ],
+      "image": [
+        "52",
+        0
+      ]
+    }
+  },
+  "37": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "36",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "disabled"
+    }
+  },
+  "90": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "37",
+        0
+      ],
+      "fps": 8.0
+    }
+  },
+  "9": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "90",
+        0
+      ],
       "filename_prefix": "REPLACE_FILENAME_PREFIX",
-      "codec": "vp9",
-      "fps": 8,
-      "crf": 32
+      "format": "mp4",
+      "codec": "h264",
+      "codec.encoding": "re-encode",
+      "codec.encoding.crf": 20.0
     }
   }
 }
