@@ -360,6 +360,65 @@ def free_vram() -> None:
         pass
 
 
+# LCM <-> non-LCM mode switching. Measured on this setup (ComfyUI 62b3c94, AnimateDiff-Evolved
+# 1.6.0, IPAdapter_plus, SD1.5 Realistic Vision): whichever mode runs FIRST after ComfyUI starts
+# (or after a /free reset) works, and every later run in the OTHER mode comes out as pure colour
+# noise - LCM first then v2 = v2 is noise; v2 first then LCM = LCM is noise; a /free reset fixes
+# the next run, which then becomes the new "first" mode. The state lives in something ComfyUI's
+# executor cache holds (the reset is PromptExecutor.reset(), which drops every cached node output,
+# including the shared CheckpointLoaderSimple MODEL both modes load). Rather than depend on which
+# node mutates it, reset the server whenever the mode differs from the last executed prompt.
+LCM_LORA_FILES = {p["lora"] for p in ANIMATEDIFF_LCM_PRESETS.values()}
+MODE_SWITCH_RESET_WAIT_SECONDS = 3  # /free sets a queue flag and wakes the idle worker, which
+# runs e.reset() on its next loop pass; give it that pass before our prompt lands in the queue.
+
+
+def _is_lcm_workflow(wf: dict) -> bool:
+    """True if the workflow samples in LCM mode. Checks the LCM beta schedule, the LCM LoRA and
+    the lcm sampler - not the motion module name, since the lcm_lora preset reuses mm_sd_v15_v2."""
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct, inp = node.get("class_type"), node.get("inputs", {})
+        if ct == "ADE_AnimateDiffLoaderGen1" and str(inp.get("beta_schedule", "")).startswith("lcm"):
+            return True
+        if ct in ("LoraLoaderModelOnly", "LoraLoader") and inp.get("lora_name") in LCM_LORA_FILES:
+            return True
+        if ct == "KSampler" and inp.get("sampler_name") == "lcm":
+            return True
+    return False
+
+
+def _last_executed_workflow():
+    """The most recently finished prompt on the server (any client), or None on a fresh server."""
+    try:
+        hist = requests.get(f"{COMFYUI_URL}/history", params={"max_items": 1}, timeout=10).json()
+    except (requests.exceptions.RequestException, ValueError):
+        return None
+    for entry in hist.values():
+        prompt = entry.get("prompt")
+        if isinstance(prompt, (list, tuple)) and len(prompt) > 2 and isinstance(prompt[2], dict):
+            return prompt[2]
+    return None
+
+
+def _reset_if_mode_switch(wf: dict) -> bool:
+    """Reset ComfyUI's model/cache state before a prompt whose LCM mode differs from the last one
+    the server ran (see the comment above LCM_LORA_FILES). Returns True if it reset."""
+    last = _last_executed_workflow()
+    if last is None or _is_lcm_workflow(last) == _is_lcm_workflow(wf):
+        return False
+    new_mode = "LCM" if _is_lcm_workflow(wf) else "non-LCM"
+    print(f"[comfyui] switching to {new_mode} sampling - resetting ComfyUI's model cache first "
+          f"(mixing LCM and non-LCM in one session otherwise produces noise)", flush=True)
+    try:
+        requests.post(f"{COMFYUI_URL}/free", json={"unload_models": True, "free_memory": True}, timeout=30)
+    except requests.exceptions.RequestException:
+        return False
+    time.sleep(MODE_SWITCH_RESET_WAIT_SECONDS)
+    return True
+
+
 def start_server(startup_timeout: float = 120) -> subprocess.Popen:
     """Launch the ComfyUI server as a background process and block until it
     responds. Assumes this repo's local layout (COMFYUI_DIR) - not used by
@@ -1120,6 +1179,7 @@ def submit_generation_hq(
 
 def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
                      client_id: str = None) -> str:
+    _reset_if_mode_switch(wf)
     payload = {"prompt": wf}
     if client_id:
         payload["client_id"] = client_id

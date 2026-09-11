@@ -536,6 +536,13 @@ curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\loras\lcm-lora-sdv1-5.safetensors
   motion module），畫質跟臉部一致性肉眼看起來沒有變差。
 - ComfyUI 載入時把 AnimateLCM 標成 v2 motion module，所以鏡頭 Motion LoRA 有機會
   照樣生效，但還沒實測。
+- **同一個 ComfyUI session 裡混用 LCM 跟一般模式會產生雜訊（已自動處理）**：ComfyUI
+  開機（或重置）後先跑的那個模式正常，之後另一個模式的輸出會變成純色雜訊，連 SD1.5
+  靜態圖也會受影響。狀態殘留在 ComfyUI 快取住的節點輸出裡（兩種模式共用同一個
+  checkpoint 模型物件），`POST /free` 清空快取就會恢復。`comfyui_client` 現在每次送出
+  前都會比對 ComfyUI 上一個執行的工作，LCM 與否不同就先清快取再送，log 會印出
+  `[comfyui] switching to ... sampling`；代價是切換那一次要多花幾秒重新載入模型，同
+  模式連續生成不受影響。實測 LCM → 一般 → LCM → SD1.5 靜態圖 → 一般，全部正常。
 
 ### 3. 重啟 ComfyUI
 
@@ -586,7 +593,6 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py
 | **預設（高清第二段 10 步 + 精修 + 放大 1024）** | 1024² | **526 s** | 6.5 GB |
 | 預設 + LCM（AnimateLCM；含第一次載入 1.8 GB motion module） | 1024² | 480 s | 6.7 GB |
 | 預設 + RIFE ×4、16fps（含 ComfyUI 重啟後第一次載入模型） | 1024²，61 幀、3.8 秒 | 683 s | 6.8 GB |
-| 預設 + LCM + RIFE ×2、16fps | 1024²，31 幀、1.9 秒 | 391 s | 6.9 GB |
 
 高清第二段從 20 步降到 10 步，畫面肉眼看不出差異，所以預設是 10 步。時間大宗是
 兩個 768² 的整批採樣：高清第二段（10 步約 1.5 分鐘）跟臉部精修（修正前是 20 步約 4 分鐘，
