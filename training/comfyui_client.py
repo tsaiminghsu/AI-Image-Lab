@@ -34,6 +34,7 @@ WORKFLOW_TEMPLATE_FACEDETAILER_PATH = os.path.join(os.path.dirname(__file__), "w
 WORKFLOW_TEMPLATE_MEDIAPIPE_FACEDETAILER_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_mediapipe_facedetailer.json")
 WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_animatediff_facedetailer.json")
 WORKFLOW_TEMPLATE_IMG2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2img.json")
+WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img_zimage.json")
 
 CHECKPOINTS = {
     "juggernaut": "juggernaut_xl_v9_photo.safetensors",
@@ -74,6 +75,32 @@ PONY_CHECKPOINTS = {"pony", "cyberrealistic_pony", "pony_realism"}  # keys into 
 # so every caller (GUI/API/CLI) can keep writing plain natural-language prompts no matter which
 # checkpoint is selected, instead of needing to know/type the Pony-specific tag convention themselves.
 SD15_WIDTH, SD15_HEIGHT = 512, 768
+
+# Z-Image Turbo (Tongyi-MAI, 6B single-stream DiT, Apache 2.0) - plain txt2img only. Kept OUT of
+# CHECKPOINTS on purpose: it loads as three separate files (diffusion model / Qwen3-4B text encoder /
+# Flux VAE) rather than one CheckpointLoaderSimple file, and pose_pack.py / model_prompt_test.py / the
+# GIF path treat every CHECKPOINTS value as such a file. No IP-Adapter/FaceID, ControlNet or
+# FaceDetailer wiring exists for it. int8 + fp8 builds because the bf16 ones (11.5 + 7.5 GB) do not
+# fit 8 GB; on the RTX 2070 ComfyUI computes it in fp16 (no native bf16) and the int8 layers go through
+# comfy_kitchen's eager backend (no triton on Windows). Measured there: ~9 s/step, ~75 s per 1024^2
+# image at cfg 1 once loaded; the first image after startup took 5-7 min and every prompt change adds
+# a text-encoder swap, because encoder (5.4 GB) and diffusion model (5.9 GB) do not fit together.
+ZIMAGE_MODELS = {
+    "z_image_turbo": dict(unet="z_image_turbo_int8_convrot.safetensors",
+                          text_encoder="qwen_3_4b_fp8_mixed.safetensors",
+                          vae="ae.safetensors"),
+}
+ZIMAGE_WIDTH, ZIMAGE_HEIGHT = 1024, 1024
+ZIMAGE_STEPS = 8                  # official Comfy-Org template: 8 steps, res_multistep / simple, shift 3
+ZIMAGE_SAMPLER = "res_multistep"
+ZIMAGE_SCHEDULER = "simple"
+ZIMAGE_SHIFT = 3.0
+# The official template runs cfg 1.0, and at cfg 1.0 ComfyUI skips the negative conditioning entirely -
+# the mandatory age-safety / explicit-content negatives would silently stop applying. cfg 2.0 looked
+# almost identical in the side-by-side test, at twice the time per step. Never go below the floor.
+ZIMAGE_CFG = 2.0
+ZIMAGE_MIN_CFG = 1.5
+POLL_TIMEOUT_SECONDS_ZIMAGE = 1200  # first image after startup took up to ~7 min on the 2070
 WIDTH, HEIGHT = 1024, 1024   # switch to 768/832/896 as needed - not hardcoded elsewhere
 BATCH_SIZE = 1                # RTX 2070 8GB - always 1, no multi-image batches
 STEPS = 30
@@ -948,6 +975,72 @@ def submit_txt2img_generation_sd15(
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
 
     return _submit_and_wait(wf)
+
+
+def zimage_missing_files(model: str = "z_image_turbo") -> list:
+    """Files of a ZIMAGE_MODELS entry that the running ComfyUI server does not list (empty = all
+    present). Lets callers fail with a download hint instead of a raw workflow-validation error."""
+    files = ZIMAGE_MODELS[model]
+    need = [("UNETLoader", "unet_name", files["unet"]),
+            ("CLIPLoader", "clip_name", files["text_encoder"]),
+            ("VAELoader", "vae_name", files["vae"])]
+    missing = []
+    for node, field, fname in need:
+        try:
+            spec = requests.get(f"{COMFYUI_URL}/object_info/{node}", timeout=10).json()[node]["input"]["required"][field]
+        except (requests.exceptions.RequestException, ValueError, KeyError, TypeError):
+            continue  # can't tell - leave it to the prompt's own validation
+        if isinstance(spec[0], list):
+            options = spec[0]
+        elif spec[0] == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
+            options = spec[1].get("options", [])
+        else:
+            continue
+        if fname not in options:
+            missing.append(fname)
+    return missing
+
+
+def _round16(x: int) -> int:
+    """EmptySD3LatentImage wants multiples of 16."""
+    return max(256, int(round(x / 16.0)) * 16)
+
+
+def submit_txt2img_generation_zimage(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    model: str = "z_image_turbo",
+    width: int = ZIMAGE_WIDTH,
+    height: int = ZIMAGE_HEIGHT,
+    steps: int = ZIMAGE_STEPS,
+    cfg: float = ZIMAGE_CFG,
+) -> str:
+    """Plain txt2img with Z-Image Turbo (see ZIMAGE_MODELS). cfg is floored at ZIMAGE_MIN_CFG so the
+    negative prompt - and with it the mandatory safety negatives - is never skipped."""
+    missing = zimage_missing_files(model)
+    if missing:
+        raise RuntimeError(f"Z-Image model files not found by ComfyUI: {', '.join(missing)} - see README "
+                           "'Z-Image Turbo' for the download commands")
+    files = ZIMAGE_MODELS[model]
+    wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH))
+    wf["10"]["inputs"]["unet_name"] = files["unet"]
+    wf["11"]["inputs"]["clip_name"] = files["text_encoder"]
+    wf["12"]["inputs"]["vae_name"] = files["vae"]
+    wf["13"]["inputs"]["shift"] = ZIMAGE_SHIFT
+    wf["6"]["inputs"]["text"] = prompt
+    wf["7"]["inputs"]["text"] = negative_prompt
+    wf["5"]["inputs"]["width"] = _round16(width)
+    wf["5"]["inputs"]["height"] = _round16(height)
+    wf["5"]["inputs"]["batch_size"] = BATCH_SIZE
+    wf["3"]["inputs"]["seed"] = seed
+    wf["3"]["inputs"]["steps"] = steps
+    wf["3"]["inputs"]["cfg"] = max(cfg, ZIMAGE_MIN_CFG)
+    wf["3"]["inputs"]["sampler_name"] = ZIMAGE_SAMPLER
+    wf["3"]["inputs"]["scheduler"] = ZIMAGE_SCHEDULER
+    wf["9"]["inputs"]["filename_prefix"] = filename_prefix
+    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_ZIMAGE)
 
 
 def submit_img2vid_generation(

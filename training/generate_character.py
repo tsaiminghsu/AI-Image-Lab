@@ -707,15 +707,30 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     comfyui_client.SD15_WIDTH/SD15_HEIGHT (512x768) instead of the SDXL 1024x1024
     default when omitted.
 
+    checkpoints in comfyui_client.ZIMAGE_MODELS ("z_image_turbo") are Z-Image Turbo,
+    a separate 6B DiT architecture loaded as three files (diffusion model, Qwen3-4B
+    text encoder, VAE) - plain txt2img only, like SD1.5: no anchor_path/IP-Adapter,
+    pose, HQ or FaceDetailer; trigger still adds the character's text description.
+    It runs at comfyui_client.ZIMAGE_CFG (2.0, floor ZIMAGE_MIN_CFG) instead of the
+    official cfg 1.0, because at cfg 1.0 ComfyUI skips the negative prompt and the
+    mandatory safety negatives would silently stop applying. width/height default to
+    ZIMAGE_WIDTH/ZIMAGE_HEIGHT (1024x1024).
+
     width/height default to a portrait canvas (FULL_BODY_RESOLUTION) when
     pose_reference_path is given, since a square 1024x1024 canvas has no
     vertical room for a full body and just gets cropped back to upper-body -
     same issue that build_variation_prompt's pick_angle() works around for
     the batch generators. Explicit width/height always wins over that
     default. Plain 1024x1024 stays the default with no pose reference."""
-    if checkpoint and checkpoint not in client.CHECKPOINTS:
-        raise SystemExit(f"unknown checkpoint {checkpoint!r} - choices: {sorted(client.CHECKPOINTS)}")
+    if checkpoint and checkpoint not in client.CHECKPOINTS and checkpoint not in client.ZIMAGE_MODELS:
+        raise SystemExit(f"unknown checkpoint {checkpoint!r} - choices: "
+                         f"{sorted(client.CHECKPOINTS) + sorted(client.ZIMAGE_MODELS)}")
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
+    is_zimage = checkpoint in client.ZIMAGE_MODELS
+    if is_zimage and (anchor_path or pose_reference_path or pose_name or use_facedetailer):
+        raise SystemExit(f"checkpoint {checkpoint!r} is Z-Image - only plain txt2img is wired up (anchor/FaceID, "
+                         "pose reference / skeleton ControlNet and FaceDetailer all need SDXL- or SD1.5-specific "
+                         "adapter files; --character still works as a text description)")
 
     # pose_name selects a pre-built skeleton from the training/poses/ library
     # (fed to ControlNet directly, no preprocessor) - distinct from
@@ -740,7 +755,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     # ControlNet and FaceDetailer chains into one workflow, so the old "can't
     # combine" restrictions only apply to the legacy (hq=False) path. SD1.5
     # has no HQ path (no SDXL-family adapter/upscale wiring), so it falls back.
-    use_hq = hq and not is_sd15
+    use_hq = hq and not is_sd15 and not is_zimage
 
     if pose_is_skeleton and not use_hq:
         raise SystemExit("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
@@ -771,6 +786,8 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     if width is None or height is None:
         if is_sd15:
             width, height = client.SD15_WIDTH, client.SD15_HEIGHT
+        elif is_zimage:
+            width, height = client.ZIMAGE_WIDTH, client.ZIMAGE_HEIGHT
         elif pose_is_skeleton:
             # match the skeleton's own canvas so ControlNet has nothing to crop
             width, height = pose_skeletons.canvas_for(pose_name)
@@ -786,7 +803,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
             raise SystemExit(str(exc))
 
     ckpt_kwargs = {}
-    if checkpoint:
+    if checkpoint and not is_zimage:
         ckpt_kwargs["checkpoint"] = client.CHECKPOINTS[checkpoint]
     if lora_strength is not None:
         ckpt_kwargs["lora_strength"] = lora_strength
@@ -856,6 +873,16 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
             width=width,
             height=height,
             **ckpt_kwargs,
+        )
+    elif is_zimage:
+        raw_path = client.submit_txt2img_generation_zimage(
+            prompt=full_prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            filename_prefix=stem,
+            model=checkpoint,
+            width=width,
+            height=height,
         )
     elif is_sd15:
         raw_path = client.submit_txt2img_generation_sd15(
@@ -944,6 +971,9 @@ def gen_gif(prompt, extra_negative, tier, trigger, anchor_path, out_dir, base_se
     if checkpoint in client.SD15_CHECKPOINTS:
         raise SystemExit(f"checkpoint {checkpoint!r} is SD1.5 - gen_gif's img2img wiggle frames need "
                           "IP-Adapter, which needs the SDXL-family model files SD1.5 doesn't have")
+    if checkpoint in client.ZIMAGE_MODELS:
+        raise SystemExit(f"checkpoint {checkpoint!r} is Z-Image - gen_gif's img2img wiggle frames need "
+                         "IP-Adapter, which has no Z-Image version; pick an SDXL-family checkpoint")
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -1232,7 +1262,7 @@ if __name__ == "__main__":
     p_custom.add_argument("--facedetailer-backend", choices=["yolo", "mediapipe"], default="yolo", help="face detector for --use-facedetailer's face pass: yolo (bbox, default) or mediapipe (face-mesh contour, needs the mediapipe package)")
     p_custom.add_argument("--style-positive", default=None, help="overrides REALISTIC_STYLE for this call only; omit to use the default")
     p_custom.add_argument("--style-negative", default=None, help="overrides REALISTIC_NEGATIVE for this call only; omit to use the default. Never touches the age-safety/explicit-content negative terms, those aren't overridable")
-    p_custom.add_argument("--checkpoint", default=None, choices=sorted(client.CHECKPOINTS), help="swap the SDXL checkpoint for this call only; omit for the pipeline default (juggernaut)")
+    p_custom.add_argument("--checkpoint", default=None, choices=sorted(client.CHECKPOINTS) + sorted(client.ZIMAGE_MODELS), help="swap the checkpoint for this call only; omit for the pipeline default. z_image_turbo = Z-Image Turbo, plain txt2img only (no --anchor/--pose/--pose-reference/--use-facedetailer), needs the files from README 'Z-Image Turbo'")
     p_custom.add_argument("--lora-strength", type=float, default=None, help="overrides the sdxl_photorealistic_slider LoRA strength (baked into every template at 2.5); pass 0.0 when using --checkpoint pony, since that LoRA was tuned for juggernaut's photoreal style")
     p_custom.add_argument("--no-hq", action="store_true", help="disable the default HQ two-pass path (base -> ESRGAN hires -> face/hand FaceDetailer) and use the legacy single-pass workflow instead")
     p_custom.add_argument("--no-facedetailer", action="store_true", help="turn OFF the HQ path's face/hand FaceDetailer passes (on by default in HQ mode)")

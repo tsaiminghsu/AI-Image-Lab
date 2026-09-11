@@ -109,7 +109,8 @@ FACEDETAILER_BACKEND_CHOICES = [FACEDETAILER_BACKEND_YOLO, FACEDETAILER_BACKEND_
 
 
 CHECKPOINT_DEFAULT = "cyberrealistic_pony (預設 - Pony 系寫實)"
-CHECKPOINT_CHOICES = [CHECKPOINT_DEFAULT] + sorted(k for k in client.CHECKPOINTS if k != "cyberrealistic_pony")
+CHECKPOINT_CHOICES = ([CHECKPOINT_DEFAULT] + sorted(k for k in client.CHECKPOINTS if k != "cyberrealistic_pony")
+                      + sorted(client.ZIMAGE_MODELS))
 
 ANIMATEDIFF_CHECKPOINT_DEFAULT = "realistic_vision (預設)"
 ANIMATEDIFF_CHECKPOINT_CHOICES = [ANIMATEDIFF_CHECKPOINT_DEFAULT] + sorted(
@@ -131,8 +132,22 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
         raise gr.Error("請輸入 prompt")
     _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
+    is_zimage = checkpoint_choice in client.ZIMAGE_MODELS
+    if is_zimage:
+        # Z-Image is plain txt2img here (no FaceID/ControlNet/FaceDetailer files exist for it): explicit
+        # identity/pose inputs are refused, a picked character still works as a text description.
+        if custom_anchor or pose_reference or (pose_library and pose_library != POSE_NONE):
+            raise gr.Error("Z-Image 目前只支援純文字生圖——自行上傳的 anchor（FaceID 鎖臉）、骨架姿勢參考圖、"
+                           "骨架庫都沒有 Z-Image 版的模型檔，請先清掉這些欄位")
+        missing = client.zimage_missing_files(checkpoint_choice)
+        if missing:
+            raise gr.Error(f"找不到 Z-Image 模型檔：{', '.join(missing)}——下載指令見 README「Z-Image Turbo（選用安裝）」")
+        if trigger and anchor:
+            gr.Info("Z-Image 沒有 FaceID：角色只會用文字描述，不會套用 anchor 圖")
+        gr.Info("Z-Image：ComfyUI 啟動後的第一張要先載入約 11 GB 模型，會等比較久；之後每張約 1-3 分鐘")
+        anchor, use_hq, use_facedetailer = None, False, False
     anchor_path = custom_anchor or anchor
-    if trigger and not anchor_path:
+    if trigger and not anchor_path and not is_zimage:
         raise gr.Error("選了角色就要選一張 anchor 圖，或自行上傳一張")
     # An uploaded photo (pose_reference) wins over a library pick; a library
     # skeleton goes through pose_name (fed to ControlNet directly, no preprocessor).
@@ -274,6 +289,8 @@ def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_c
     checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
     if checkpoint in client.SD15_CHECKPOINTS:
         raise gr.Error("這個 checkpoint 是 SD1.5——批次 GIF 的每一張都要靠 IP-Adapter 鎖同一張臉，SD1.5 沒接這個功能，換一個 SDXL 系列的 checkpoint")
+    if checkpoint in client.ZIMAGE_MODELS:
+        raise gr.Error("Z-Image 只接了單張純文字生圖——批次 GIF 的每一張都要靠 IP-Adapter 鎖同一張臉，Z-Image 沒有這個功能，換一個 SDXL 系列的 checkpoint")
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
     return gc.gen_gif(prompt, negative_prompt, tier, trigger, anchor, out_dir, int(seed), int(frame_count),
                        ip_adapter_weight, duration_ms=int(duration_ms), denoise=denoise,
@@ -358,6 +375,9 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 "- pony / cyberrealistic_pony / pony_realism 需要的 `score_9, score_8_up, score_7_up` 品質 tag 前綴"
                 "會自動加上，Prompt 欄位一樣打自然語言就好，不用自己記得加。"
                 "下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
+                "\n- `z_image_turbo`（Z-Image Turbo）→ 純文字生圖，寫實度、手指跟畫面裡的文字（包括中文字）都比 SDXL 好，"
+                "Prompt 可以直接打中文不用翻譯；但沒有 anchor 鎖臉、姿勢控制、精修（選了角色只會用文字描述），"
+                "要先依 README 下載模型，第一張要載入約 11 GB 模型，會比較久。"
             )
             checkpoint_choice = gr.Dropdown(
                 CHECKPOINT_CHOICES, value="cyberrealistic_pony", label="Checkpoint 模型",

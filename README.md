@@ -1098,6 +1098,60 @@ python generate_character.py custom --prompt "a cup of coffee on a wooden table"
 風格/寫實感相關的用詞，不是內容分級的開關。網頁 GUI 的「風格正/負面詞」摺疊
 區塊做的就是同一件事，省去每次都要打 CLI 參數或改程式碼的麻煩。
 
+### Z-Image Turbo（選用安裝，純文字生圖）
+
+[Z-Image Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo)（通義 Tongyi-MAI，6B，Apache 2.0）
+是另一種架構的文字生圖模型：寫實度、手指跟畫面裡的文字都比這個專案的 SDXL 好，看得懂
+中文 prompt，也寫得出中文字。這個專案**只接了純文字生圖**——它沒有 IP-Adapter / FaceID
+版本，所以不能用 anchor 鎖臉，也沒有骨架姿勢控制、HQ 兩段式、臉部/手部精修跟批次 GIF，
+選了這些會直接跳錯誤。`--character` 可以用，但只會加上角色的文字描述。
+
+安裝：三個檔案共約 11.3 GB，都在官方 [Comfy-Org/z_image_turbo](https://huggingface.co/Comfy-Org/z_image_turbo)。
+
+| 檔案 | 大小 | 放到 |
+|---|---|---|
+| `z_image_turbo_int8_convrot.safetensors` | 5.78 GB | `ComfyUI/models/diffusion_models/` |
+| `qwen_3_4b_fp8_mixed.safetensors` | 5.24 GB | `ComfyUI/models/text_encoders/` |
+| `ae.safetensors` | 0.31 GB | `ComfyUI/models/vae/` |
+
+```powershell
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\diffusion_models\z_image_turbo_int8_convrot.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\text_encoders\qwen_3_4b_fp8_mixed.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\vae\ae.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
+```
+
+選 int8 / fp8 而不是 bf16 完整版（11.46 GB + 7.49 GB）是因為 8 GB 卡放不下 bf16。RTX 2070
+沒有原生 bf16，ComfyUI 會自動改用 fp16 運算，不會退回很慢的 fp32；int8 權重在 Windows 上
+走 comfy_kitchen 的 eager（純 PyTorch）路徑，比理想值慢，但可以用。
+
+使用：
+
+```powershell
+python generate_character.py custom --checkpoint z_image_turbo --character ruoxi --prompt "sitting by a window in a cafe, soft natural smile, natural daylight" --tier safe
+python generate_character.py custom --checkpoint z_image_turbo --prompt "一位25歲的台灣成年女性坐在咖啡店窗邊，手捧寫著「早安」的白色馬克杯，寫實攝影" --tier safe
+```
+
+GUI：「Checkpoint 模型」選 `z_image_turbo`。可以選角色（只用文字描述，自動選到的 anchor 圖
+會被忽略），但不能自行上傳 anchor、不能選姿勢；四種畫布比例都能用，預設 1024×1024。
+
+取樣照官方範本（8 步、`res_multistep`、`simple`、shift 3），**但 CFG 固定 2**（`ZIMAGE_CFG`，
+下限 `ZIMAGE_MIN_CFG` 1.5）：官方範本是 CFG 1，而 CFG 1 時 ComfyUI 會直接略過負面 prompt，
+這個專案一律要套的年齡保護負面詞就會失效。並排實測 CFG 2 的畫面跟 CFG 1 幾乎一樣，代價是
+每步時間變兩倍。
+
+實測（RTX 2070 8 GB，1024×1024）：
+
+| 情況 | 耗時 | VRAM 峰值 |
+|---|---|---|
+| ComfyUI 啟動後第一張（載入約 11 GB 模型） | 約 5-7 分鐘 | 7.9 GB |
+| 同一個 prompt 再生一張，CFG 1 | 約 75 秒（每步約 9 秒） | 7.7 GB |
+| 同一個 prompt 再生一張，CFG 2（預設） | 約 155-195 秒 | 7.7 GB |
+| 換 prompt（文字編碼器要重新載入） | 再多 2-4 分鐘 | — |
+
+文字編碼器（5.4 GB）跟主模型（5.9 GB）一起放不進 8 GB，換 prompt 時要來回搬，時間大多花在
+搬模型而不是取樣。同一個 prompt 換 seed 時構圖跟長相變化很小，要多樣性請改 prompt，不要只換
+seed。同一個測試裡男性角色 taeoh 的 4 張都是男生，沒有 SD1.5 那種男變女的問題。
+
 ### 批次生成 GIF（快速預覽，CLI 版）
 
 ```powershell
