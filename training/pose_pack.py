@@ -307,7 +307,8 @@ def write_index(results, args, sheets, out_dir):
     regen_flag = " --controlnet" if args.controlnet else (" --facedetailer" if args.facedetailer else "")
     with open(path, "w", encoding="utf-8") as f:
         f.write("# Pose / angle tag reference pack\n\n")
-        f.write(f"- Character: `{args.character}` | Checkpoint: `{args.checkpoint}` | "
+        loaded = client.effective_checkpoint(client.CHECKPOINTS[args.checkpoint], uses_pose=bool(args.controlnet))
+        f.write(f"- Character: `{args.character}` | Checkpoint: `{args.checkpoint}` (file `{loaded}`) | "
                 f"Seed: `{args.seed}` (fixed across every tag)\n")
         f.write(f"- Path: {path_label}\n")
         f.write(f"- Same for every tag: `{FIXED_OUTFIT}` / `{FIXED_LIGHTING}` / `{FIXED_BACKGROUND}`; "

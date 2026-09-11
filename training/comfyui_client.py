@@ -65,6 +65,34 @@ CHECKPOINTS = {
     # baked in. Same score_9/score_8_up prompt convention applies (auto-prepended, see PONY_CHECKPOINTS).
 }
 CHECKPOINT = CHECKPOINTS["juggernaut"]
+CHECKPOINTS_DIR = os.path.join(COMFYUI_DIR, "models", "checkpoints")
+
+# Full vs quantized (fp8) variants of the four SDXL/Pony checkpoints - see training/quantize_models.py
+# and README "3c". The quantized files use ComfyUI's per-layer format (<layer>.comfy_quant +
+# <layer>.weight_scale on the transformer Linear layers), which ComfyUI keeps in fp8 even on this
+# RTX 2070 (no fp8 compute -> "emulated ops": stored fp8, dequantized to fp16 per layer). A plain
+# cast-to-fp8 file would not help here: CheckpointLoaderSimple upcasts it to fp16 when the GPU has no
+# fp8 compute and the model fits. Callers keep passing the FULL filename everywhere;
+# apply_model_variants() (called from _submit_and_wait) swaps in the chosen file per workflow.
+QUANT_SUFFIX = ".fp8q.safetensors"
+QUANT_MODEL_KEYS = ("juggernaut", "pony", "cyberrealistic_pony", "pony_realism")
+VARIANT_CHOICES = ("full", "quant")
+
+
+def quant_filename(full: str) -> str:
+    return full[: -len(".safetensors")] + QUANT_SUFFIX
+
+
+MODEL_VARIANTS = {k: {"full": CHECKPOINTS[k], "quant": quant_filename(CHECKPOINTS[k])} for k in QUANT_MODEL_KEYS}
+_VARIANT_KEY_BY_FULL = {v["full"]: k for k, v in MODEL_VARIANTS.items()}
+QUANT_UNSUPPORTED = {}  # key -> reason; filled if a model turns out not to work quantized
+MODEL_VARIANTS_FILE = os.environ.get(
+    "MODEL_VARIANTS_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings", "model_variants.json"),
+)
+_variant_override = None      # set by the CLI's --variant; wins over env and the settings file
+_variant_notices_shown = set()
+LAST_VARIANT_NOTICES = []     # notices from the most recent apply_model_variants() call
 SD15_CHECKPOINTS = {"realistic_vision", "cyberrealistic"}  # keys into CHECKPOINTS that are SD1.5,
 # not SDXL/Pony - callers use this to route to submit_txt2img_generation_sd15 and pick SD15-appropriate
 # resolution instead of the SDXL-family submit_* functions (which all assume an SDXL-shaped checkpoint)
@@ -986,19 +1014,26 @@ def zimage_missing_files(model: str = "z_image_turbo") -> list:
             ("VAELoader", "vae_name", files["vae"])]
     missing = []
     for node, field, fname in need:
-        try:
-            spec = requests.get(f"{COMFYUI_URL}/object_info/{node}", timeout=10).json()[node]["input"]["required"][field]
-        except (requests.exceptions.RequestException, ValueError, KeyError, TypeError):
+        options = _loader_options(node, field)
+        if options is None:
             continue  # can't tell - leave it to the prompt's own validation
-        if isinstance(spec[0], list):
-            options = spec[0]
-        elif spec[0] == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
-            options = spec[1].get("options", [])
-        else:
-            continue
         if fname not in options:
             missing.append(fname)
     return missing
+
+
+def _loader_options(node: str, field: str):
+    """The file list ComfyUI offers for a loader node's combo input, or None if the server can't say.
+    Handles both the classic [[files...]] and the newer ["COMBO", {"options": [...]}] shapes."""
+    try:
+        spec = requests.get(f"{COMFYUI_URL}/object_info/{node}", timeout=10).json()[node]["input"]["required"][field]
+    except (requests.exceptions.RequestException, ValueError, KeyError, TypeError):
+        return None
+    if isinstance(spec, list) and spec and isinstance(spec[0], list):
+        return spec[0]
+    if isinstance(spec, list) and len(spec) > 1 and spec[0] == "COMBO" and isinstance(spec[1], dict):
+        return spec[1].get("options", [])
+    return None
 
 
 def _round16(x: int) -> int:
@@ -1270,8 +1305,173 @@ def submit_generation_hq(
     return _submit_and_wait(wf, client_id=client_id)
 
 
+def set_variant_override(variant):
+    """Process-wide full/quant choice (the CLI's --variant); None clears it."""
+    global _variant_override
+    if variant is not None and variant not in VARIANT_CHOICES:
+        raise ValueError(f"variant must be one of {VARIANT_CHOICES}, got {variant!r}")
+    _variant_override = variant
+
+
+def _notice_once(msg: str) -> None:
+    LAST_VARIANT_NOTICES.append(msg)
+    if msg not in _variant_notices_shown:
+        _variant_notices_shown.add(msg)
+        print(f"[variant] {msg}", flush=True)
+
+
+def load_variant_settings() -> dict:
+    """Settings file contents, validated; missing file = all full. Read on every submit, so a GUI save
+    applies to the next image without restarting anything."""
+    empty = {"version": 1, "default": "full", "models": {}}
+    try:
+        with open(MODEL_VARIANTS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+    except FileNotFoundError:
+        return empty
+    except (OSError, ValueError) as exc:
+        _notice_once(f"設定檔 {MODEL_VARIANTS_FILE} 讀不懂（{exc}），全部改用完整版")
+        return empty
+    models = {k: v for k, v in (data.get("models") or {}).items() if k in MODEL_VARIANTS and v in VARIANT_CHOICES}
+    default = data.get("default") if data.get("default") in VARIANT_CHOICES else "full"
+    return {"version": 1, "default": default, "models": models}
+
+
+def save_variant_settings(models: dict = None, default: str = None) -> str:
+    """Merge per-model choices (and optionally the default) into the settings file; atomic write."""
+    cur = load_variant_settings()
+    for k, v in (models or {}).items():
+        if k not in MODEL_VARIANTS or v not in VARIANT_CHOICES:
+            raise ValueError(f"bad variant setting {k}={v}")
+        cur["models"][k] = v
+    if default is not None:
+        if default not in VARIANT_CHOICES:
+            raise ValueError(f"bad default variant {default!r}")
+        cur["default"] = default
+    os.makedirs(os.path.dirname(MODEL_VARIANTS_FILE), exist_ok=True)
+    tmp = MODEL_VARIANTS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, MODEL_VARIANTS_FILE)
+    return MODEL_VARIANTS_FILE
+
+
+def chosen_variant(key: str, settings: dict = None) -> str:
+    """full/quant for a MODEL_VARIANTS key. Precedence: CLI override > env MODEL_VARIANT > settings
+    file per-model > settings file default > full. Unknown or unsupported models are always full."""
+    if key not in MODEL_VARIANTS or key in QUANT_UNSUPPORTED:
+        return "full"
+    if _variant_override:
+        return _variant_override
+    env = os.environ.get("MODEL_VARIANT")
+    if env in VARIANT_CHOICES:
+        return env
+    s = settings or load_variant_settings()
+    return s["models"].get(key, s["default"])
+
+
+def convert_command(key: str) -> str:
+    return f"ComfyUI\\.venv\\Scripts\\python.exe training\\quantize_models.py convert --model {key}"
+
+
+def _uses_control_lora(wf: dict) -> bool:
+    for node in wf.values():
+        if (isinstance(node, dict) and node.get("class_type") in ("ControlNetLoader", "DiffControlNetLoader")
+                and "control-lora" in str(node.get("inputs", {}).get("control_net_name", "")).lower()):
+            return True
+    return False
+
+
+def _control_lora_forces_full() -> bool:
+    # ControlLora.pre_run copies the base UNet state_dict into the control model; for a per-layer
+    # quantized Linear that is the raw fp8 data without its scale (comfy/controlnet.py pre_run +
+    # ControlLoraOps.Linear), so pose conditioning would come out wrong. Env switch exists for testing.
+    return os.environ.get("MODEL_VARIANT_ALLOW_CONTROLLORA") != "1"
+
+
+def _quant_present(fname: str, options) -> bool:
+    if options is not None:
+        return fname in options
+    return os.path.isfile(os.path.join(CHECKPOINTS_DIR, fname))  # server can't say - check the folder
+
+
+def apply_model_variants(wf: dict) -> list:
+    """Swap each CheckpointLoaderSimple ckpt_name that is one of the four SDXL/Pony full files for its
+    quantized file when that model is set to quant and the file exists; otherwise keep the full file
+    and add a notice (missing file, or a ControlNet control-lora in the workflow). Mutates wf."""
+    notices, settings, options = [], None, "unset"
+    for node in wf.values():
+        if not isinstance(node, dict) or node.get("class_type") != "CheckpointLoaderSimple":
+            continue
+        inputs = node.get("inputs", {})
+        key = _VARIANT_KEY_BY_FULL.get(inputs.get("ckpt_name"))
+        if key is None:
+            continue
+        settings = settings or load_variant_settings()
+        if chosen_variant(key, settings) != "quant":
+            continue
+        quant = MODEL_VARIANTS[key]["quant"]
+        if _uses_control_lora(wf) and _control_lora_forces_full():
+            notices.append(f"{key}：骨架姿勢（ControlNet control-lora）需要完整版權重，本次改用完整版")
+            continue
+        if options == "unset":
+            options = _loader_options("CheckpointLoaderSimple", "ckpt_name")
+        if not _quant_present(quant, options):
+            notices.append(f"{key}：找不到量化版 {quant}，本次改用完整版。建立量化檔：{convert_command(key)}")
+            continue
+        inputs["ckpt_name"] = quant
+        notices.append(f"{key}：使用量化版 {quant}")
+    LAST_VARIANT_NOTICES[:] = []
+    for n in notices:
+        _notice_once(n)
+    return notices
+
+
+def effective_checkpoint(full_name: str, uses_pose: bool = False) -> str:
+    """The file apply_model_variants would load for this full filename (filesystem check, no server)."""
+    key = _VARIANT_KEY_BY_FULL.get(full_name)
+    if key is None or chosen_variant(key) != "quant":
+        return full_name
+    if uses_pose and _control_lora_forces_full():
+        return full_name
+    quant = MODEL_VARIANTS[key]["quant"]
+    return quant if os.path.isfile(os.path.join(CHECKPOINTS_DIR, quant)) else full_name
+
+
+def variant_preflight(key: str, uses_pose: bool = False) -> list:
+    """What would happen for this model, as user-facing notices, without touching a workflow."""
+    if key not in MODEL_VARIANTS or chosen_variant(key) != "quant":
+        return []
+    quant = MODEL_VARIANTS[key]["quant"]
+    if uses_pose and _control_lora_forces_full():
+        return [f"{key}：骨架姿勢（ControlNet）需要完整版權重，這張改用完整版"]
+    if not os.path.isfile(os.path.join(CHECKPOINTS_DIR, quant)):
+        return [f"{key}：還沒有量化版 {quant}，這張改用完整版。建立量化檔：{convert_command(key)}"]
+    return [f"{key}：使用量化版（fp8）"]
+
+
+def variant_status() -> list:
+    """Per-model file presence, sizes and current choice, straight from the checkpoints folder."""
+    rows, settings = [], load_variant_settings()
+    for key in QUANT_MODEL_KEYS:
+        full, quant = MODEL_VARIANTS[key]["full"], MODEL_VARIANTS[key]["quant"]
+        fp, qp = os.path.join(CHECKPOINTS_DIR, full), os.path.join(CHECKPOINTS_DIR, quant)
+        rows.append({
+            "key": key, "full": full, "quant": quant,
+            "full_present": os.path.isfile(fp), "quant_present": os.path.isfile(qp),
+            "full_gb": round(os.path.getsize(fp) / 1e9, 2) if os.path.isfile(fp) else None,
+            "quant_gb": round(os.path.getsize(qp) / 1e9, 2) if os.path.isfile(qp) else None,
+            "chosen": chosen_variant(key, settings), "unsupported": QUANT_UNSUPPORTED.get(key),
+        })
+    return rows
+
+
 def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
                      client_id: str = None) -> str:
+    apply_model_variants(wf)
     _reset_if_mode_switch(wf)
     payload = {"prompt": wf}
     if client_id:

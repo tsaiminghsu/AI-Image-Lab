@@ -16,10 +16,13 @@ ARG CONTROLNET_AUX_REF=main
 ARG IMPACT_PACK_REF=Main
 ARG IMPACT_SUBPACK_REF=main
 
+# MODEL_VARIANT=full: the fp8 SDXL/Pony variants (training/quantize_models.py) exist for the 8 GB
+# local card; RunPod GPUs don't need them and the network volume has no *.fp8q.safetensors files.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     COMFYUI_URL=http://127.0.0.1:8188 \
+    MODEL_VARIANT=full \
     PYTHONPATH=/app/training
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

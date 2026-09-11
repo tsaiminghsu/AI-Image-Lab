@@ -1207,6 +1207,10 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--variant", choices=list(client.VARIANT_CHOICES), default=None,
+                        help="full or quant (fp8) for the SDXL/Pony checkpoints in this run; goes BEFORE the "
+                             "subcommand (generate_character.py --variant quant custom ...). Overrides the "
+                             "per-model choices in training/settings/model_variants.json and MODEL_VARIANT")
     sub = parser.add_subparsers(dest="mode", required=True)
 
     sub.add_parser("list-characters")
@@ -1342,6 +1346,8 @@ if __name__ == "__main__":
     p_talk.add_argument("--pose-style", type=int, default=0, help="head-pose style id, 0-45")
 
     args = parser.parse_args()
+    if args.variant:
+        client.set_variant_override(args.variant)
     if args.mode == "list-characters":
         for name, profile in sorted(CHARACTERS.items()):
             print(f"{name}: age {profile['age']}, {profile['appearance']}, {profile['style']}")

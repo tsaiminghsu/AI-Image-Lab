@@ -177,6 +177,77 @@ uv pip install --python .venv\Scripts\python.exe insightface onnx --no-deps
 第一次執行時會自動下載（約 280MB）到 `ComfyUI/models/insightface/`，下載完
 會快取，之後不用重新下載。
 
+### 3c. 量化版模型（選用，fp8，只限 juggernaut / pony / cyberrealistic_pony / pony_realism）
+
+這四個 SDXL / Pony checkpoint 可以各自選「完整版」或「量化版 fp8」。量化版用
+`training/quantize_models.py` 在本機從原始檔轉出，不用另外下載；原始檔（有些是
+NTFS hardlink）只會被讀，不會被改。
+
+**為什麼要用 ComfyUI 自己的每層量化格式，不是單純轉成 fp8**：RTX 2070 沒有 fp8 運算，
+`CheckpointLoaderSimple` 載入單純 cast 成 fp8 的檔案時，只要模型放得下，就會把權重轉回 fp16
+放進 VRAM，等於白做。每層量化格式（每個被量化的 Linear 層帶 `.comfy_quant` 標記和
+`.weight_scale`）會被 ComfyUI 認成「mixed precision」，量化層在這張卡上以模擬方式保持 fp8
+（存 fp8、每層前向時轉成 fp16 再算）。只有 transformer block 裡的 Linear 層和 proj_in/out
+會被量化（約 86% 的 UNet 參數），卷積、norm、文字編碼器、VAE 原樣保留。
+
+```powershell
+ComfyUI\.venv\Scripts\python.exe training\quantize_models.py convert --model cyberrealistic_pony
+ComfyUI\.venv\Scripts\python.exe training\quantize_models.py convert --all
+ComfyUI\.venv\Scripts\python.exe training\quantize_models.py verify --model cyberrealistic_pony
+ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
+ComfyUI\.venv\Scripts\python.exe training\quantize_models.py set cyberrealistic_pony=quant juggernaut=full
+```
+
+每個量化檔寫在原始檔旁邊，檔名是 `<原檔名>.fp8q.safetensors`（例如
+`CyberRealisticPony_V18.0_F16.fp8q.safetensors`），約 4.7-4.9 GB（原檔 6.9-7.1 GB），
+四個全轉約多佔 19 GB。`convert` 轉完會自動跑 `verify`：用 ComfyUI 自己的函式重新讀檔，確認
+偵測得到量化格式、架構仍是 SDXL，並抽樣比對反量化後的權重（cosine 應 > 0.999）。ComfyUI
+更新之後建議重跑一次 `verify`。一個模型在這台機器上轉加驗證約 1.5-2 分鐘。
+
+選哪一版存在 `training/settings/model_variants.json`（已加進 `.gitignore`；GUI 的「模型
+版本」區塊或上面的 `set` 指令都會寫它）。優先順序：CLI 的 `--variant` > 環境變數
+`MODEL_VARIANT=full|quant` > 設定檔裡該模型的選擇 > 設定檔的 `default` > 完整版。每次
+送出都會重讀設定檔，改完下一張就生效，不用重啟 ComfyUI。
+
+- **量化檔還沒轉出來**：自動改用完整版，CLI 印一行 `[variant]` 提示、GUI 跳提示，都附上
+  轉換指令。
+- **骨架姿勢（ControlNet control-lora）一律用完整版**：control-lora 會直接複製主模型的
+  權重，量化層複製到的是沒乘 scale 的 fp8 原始值，姿勢會壞掉；工作流程裡有 ControlNet
+  時會自動改用完整版並提示。
+- **RunPod worker 一律用完整版**（`worker/Dockerfile` 設了 `MODEL_VARIANT=full`）。
+- SD1.5 / AnimateDiff、SVD、Z-Image 不在這個機制裡。
+
+**實測（RTX 2070 8 GB、PCIe x1、32 GB RAM；cyberrealistic_pony，同 seed 完整版 vs 量化版）**：
+
+| 項目 | 完整版 | 量化版 fp8 |
+|---|---|---|
+| 主模型搬上 GPU 的大小（log 的 Staged） | 4896 MB | 2791 MB |
+| 純文字生圖 1024² 每張（3 個 seed） | 36-40 秒 | 40-42 秒 |
+| GUI 預設高清（FaceID + hires + 臉/手精修）每張 | 167 / 272 / 530 秒 | 145 / 127 / 125 秒 |
+| 高清時 ComfyUI 記憶體峰值 | 15.5-15.8 GB | 12.3-13.2 GB |
+| 身分相似度（InsightFace，對參考臉） | 0.498 / 0.560 / 0.553 | 0.487 / 0.557 / 0.560 |
+
+- **速度**：純文字生圖單看取樣，量化版每步慢一點（每層多一次 fp8→fp16 轉換；這張卡沒有
+  fp8 運算），而且量化版那幾張跑的時候 GPU 比較熱（74-78°C vs 53-70°C），數字不能直接比。
+  高清流程完整版那幾張變慢，是因為記憶體吃緊（系統只剩約 4 GB 可用、開始用分頁檔），
+  模型要反覆經過 x1 通道搬移；量化版少搬約 2 GB，所以反而快很多。
+- **畫質**：同一個 seed 構圖、臉、場景一樣，放大看沒有雜點或色帶；但細節會小幅漂移
+  （純文字生圖 SSIM 0.76-0.81，沒達到原本預設的 0.85），高清流程經過 hires 和精修會把差異
+  放大，3 個 seed 裡有 2 個構圖和服裝不一樣（其中一張量化版的外套敞開、露出比較多皮膚）。
+  身分相似度沒有變差。**同一個 seed 在兩個版本出來的圖不會一樣**，要重現舊圖請用原本的版本。
+- **骨架姿勢**：強制讓量化版跑 control-lora，出來是全黑的圖，所以才一律改用完整版。
+
+其他三個模型各跑一張純文字生圖（1024²，seed 7101，同 prompt）：
+
+| 模型 | 完整版 | 量化版 | 取樣每步 完整 / 量化 | ComfyUI 記憶體 完整 / 量化 | SSIM |
+|---|---|---|---|---|---|
+| juggernaut | 36.4 秒 | 36.4 秒 | 0.60 / 0.69 秒 | 9.2 / 7.0 GB | 0.949 |
+| pony | 40.3 秒 | 42.5 秒 | 0.7-0.8 / 1.05 秒 | 9.6 / 6.8 GB | 0.844 |
+| pony_realism | 42.6 秒 | 46.5 秒 | 0.9 / 1.2 秒 | 9.2 / 7.0 GB | 0.827 |
+
+三個都正常、肉眼看不出瑕疵。juggernaut 那組兩張跑的時候溫度差不多（57-67°C），最能看出
+量化本身的代價：每步慢約 15%，整張時間一樣。
+
 ### 4. 啟動 ComfyUI server
 
 ```powershell
@@ -917,6 +988,16 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
 - **目前不能跟「骨架姿勢控制」同時勾選**，兩者是各自獨立的 workflow，還沒有
   合併版本
 
+#### 模型版本（完整版 / 量化版）
+
+- 在「Checkpoint 模型」上方的摺疊區塊，四個 SDXL / Pony 模型各有一組「完整版 / 量化版
+  fp8」選項，標籤會顯示兩個檔案的大小、量化檔轉出來了沒有；按「儲存模型版本設定」寫進
+  設定檔，下一張開始生效，「重新檢查檔案」會重讀檔案狀態
+- 這是全域設定：單張生圖、批次 GIF 跟 CLI 都套用
+- 量化檔還沒轉出時儲存會跳警告並附上轉換指令；生成時如果會改用完整版（沒有量化檔、
+  或用了骨架姿勢），也會跳提示
+- 這裡不提供「立即轉換」按鈕：轉一個模型要讀約 7 GB、跑一分多鐘，請用 3c 的 CLI 指令
+
 #### AnimateDiff 動態影片
 
 - 頁面最下方獨立區塊，跟上面的靜態圖生成完全分開（不同 checkpoint：SD1.5，
@@ -1097,6 +1178,17 @@ python generate_character.py custom --prompt "a cup of coffee on a wooden table"
 `SUGGESTIVE_NEGATIVE`）不受這兩個參數影響，永遠固定套用——這兩個參數只調整
 風格/寫實感相關的用詞，不是內容分級的開關。網頁 GUI 的「風格正/負面詞」摺疊
 區塊做的就是同一件事，省去每次都要打 CLI 參數或改程式碼的麻煩。
+
+### 量化版模型（CLI）
+
+`--variant` 要放在子指令**前面**，只影響這一次執行：
+
+```powershell
+python generate_character.py --variant quant custom --checkpoint cyberrealistic_pony --prompt "portrait photo" --seed 9000
+```
+
+長期設定用 `quantize_models.py set`（見「3c. 量化版模型」），或設環境變數
+`MODEL_VARIANT=full|quant`。實際載入哪個檔案會印在 `[variant]` 那一行。
 
 ### Z-Image Turbo（選用安裝，純文字生圖）
 
@@ -1559,6 +1651,7 @@ ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓�
 | ANIMATEDIFF_FACEID_V2_WEIGHT / FACEID_LORA_STRENGTH | 1.0 / 0.6（調高會讓動作明顯變少，見「臉部變形排查」） |
 | ANIMATEDIFF_MOTION_SCALE | 1.0（motion module 時序注意力強度；不是 1.0 時才注入節點 `62`） |
 | SD15_GENDER_WEIGHT | 1.3（`generate_character.py`；SD1.5 路線的角色性別字寫成 `(man:1.3)`，見「男性角色被畫成女生」） |
+| QUANT_MODEL_KEYS / QUANT_SUFFIX | juggernaut、pony、cyberrealistic_pony、pony_realism / `.fp8q.safetensors`（`comfyui_client.py`；設定檔 `training/settings/model_variants.json`，環境變數 `MODEL_VARIANT`，見「3c. 量化版模型」） |
 | ANIMATEDIFF_FACE_CROP_FACTOR / FACE_GUIDE_SIZE | 1.5 / 512（影片臉部精修的裁切倍數 / 臉部重繪尺寸） |
 | ANIMATEDIFF_FACEDETAILER_STEPS / DENOISE | 12 / 0.45（影片專用；靜態圖仍用 FACEDETAILER_DENOISE 0.5） |
 

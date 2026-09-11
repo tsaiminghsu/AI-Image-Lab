@@ -124,6 +124,36 @@ MOTION_LORA_NONE = "(無 - 純 prompt 描述動作)"
 MOTION_LORA_CHOICES = [MOTION_LORA_NONE] + sorted(client.ANIMATEDIFF_MOTION_LORAS)
 
 
+def _variant_label(row):
+    full = f"完整版 {row['full_gb']} GB" if row["full_present"] else "完整版（找不到檔案）"
+    quant = f"量化版 {row['quant_gb']} GB" if row["quant_present"] else "量化版（還沒轉出）"
+    extra = f"｜不支援量化：{row['unsupported']}" if row["unsupported"] else ""
+    return f"{row['key']}：{full}｜{quant}{extra}"
+
+
+def _variant_table():
+    lines = ["| 模型 | 目前選擇 | 完整版 | 量化版 fp8 |", "|---|---|---|---|"]
+    for r in client.variant_status():
+        full = f"{r['full_gb']} GB" if r["full_present"] else "找不到"
+        quant = f"{r['quant_gb']} GB" if r["quant_present"] else "還沒轉出"
+        lines.append(f"| {r['key']} | {'量化版' if r['chosen'] == 'quant' else '完整版'} | {full} | {quant} |")
+    return "\n".join(lines)
+
+
+def save_variant_choices(*choices):
+    client.save_variant_settings(models=dict(zip(client.QUANT_MODEL_KEYS, choices)))
+    gr.Info("已儲存模型版本設定，下一張開始生效")
+    for r in client.variant_status():
+        if r["chosen"] == "quant" and not r["quant_present"]:
+            gr.Warning(f"{r['key']} 還沒有量化檔，會先用完整版。建立量化檔：{client.convert_command(r['key'])}")
+    return _variant_table()
+
+
+def refresh_variant_status():
+    rows = client.variant_status()
+    return [gr.update(label=_variant_label(r), value=r["chosen"]) for r in rows] + [_variant_table()]
+
+
 def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
              pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
              character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
@@ -167,6 +197,9 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
 
     checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
+    variant_key = checkpoint or (gc.DEFAULT_CUSTOM_CHECKPOINT if use_hq else "juggernaut")
+    for note in client.variant_preflight(variant_key, uses_pose=bool(pose_reference or pose_name)):
+        gr.Info(note)
     if is_sd15 and (anchor_path or pose_reference):
         raise gr.Error("這個 checkpoint 是 SD1.5，目前只支援純文字生圖——anchor（IP-Adapter）、"
                         "骨架姿勢控制都還沒接（那些用的是 SDXL 專用的模型檔，跟 SD1.5 對不上）")
@@ -291,6 +324,8 @@ def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_c
         raise gr.Error("這個 checkpoint 是 SD1.5——批次 GIF 的每一張都要靠 IP-Adapter 鎖同一張臉，SD1.5 沒接這個功能，換一個 SDXL 系列的 checkpoint")
     if checkpoint in client.ZIMAGE_MODELS:
         raise gr.Error("Z-Image 只接了單張純文字生圖——批次 GIF 的每一張都要靠 IP-Adapter 鎖同一張臉，Z-Image 沒有這個功能，換一個 SDXL 系列的 checkpoint")
+    for note in client.variant_preflight(checkpoint or gc.DEFAULT_CUSTOM_CHECKPOINT):
+        gr.Info(note)
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
     return gc.gen_gif(prompt, negative_prompt, tier, trigger, anchor, out_dir, int(seed), int(frame_count),
                        ip_adapter_weight, duration_ms=int(duration_ms), denoise=denoise,
@@ -379,6 +414,22 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 "Prompt 可以直接打中文不用翻譯；但沒有 anchor 鎖臉、姿勢控制、精修（選了角色只會用文字描述），"
                 "要先依 README 下載模型，第一張要載入約 11 GB 模型，會比較久。"
             )
+            with gr.Accordion("模型版本（完整版 / 量化版）", open=False):
+                gr.Markdown(
+                    "SDXL / Pony 四個模型可以各自選「完整版」或「量化版 fp8」。量化版把主模型權重存成 fp8，"
+                    "VRAM、記憶體和硬碟用量比較少，換模型時搬得比較快；在這張 RTX 2070 上運算仍是 fp16，不會算得比較快。"
+                    "這是全域設定：這裡、批次 GIF 和 CLI 都會套用，按「儲存」後下一張就生效。"
+                    "選了量化版但還沒轉出量化檔時，會自動改用完整版並提示轉換指令；骨架姿勢（ControlNet）一律用完整版。"
+                )
+                variant_radios = [
+                    gr.Radio([("完整版", "full"), ("量化版 fp8", "quant")], value=_row["chosen"],
+                             label=_variant_label(_row), interactive=not _row["unsupported"])
+                    for _row in client.variant_status()
+                ]
+                variant_table = gr.Markdown(_variant_table())
+                with gr.Row():
+                    variant_save_btn = gr.Button("儲存模型版本設定")
+                    variant_refresh_btn = gr.Button("重新檢查檔案")
             checkpoint_choice = gr.Dropdown(
                 CHECKPOINT_CHOICES, value="cyberrealistic_pony", label="Checkpoint 模型",
             )
@@ -396,6 +447,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
     character.change(refresh_anchors, inputs=character, outputs=[anchor, anchor_preview])
     anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
     checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution)
+    variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
+    variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
     caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
     translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
     btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
