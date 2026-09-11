@@ -213,9 +213,24 @@ def get_character(trigger):
         )
 
 
-def character_base_prompt(trigger, profile):
+# SD1.5 photo checkpoints (Realistic Vision) often render male characters as women when the
+# appearance text is soft ("soft face", "soft permed hair, refined face"): one plain "man" token
+# loses to it. Measured 2026-09-11, SD1.5 txt2img without FaceID, 5 male characters x 4 seeds:
+# plain prompt 10/20 male, "male, man, masculine" added 14/20, "(man:1.3)" 19/20; the 5 female
+# characters stayed 20/20 female under every variant. Adding "woman, female" to the NEGATIVE did
+# nothing (10/20) - the negative is already ~98 tokens, so the terms land at the end of the second
+# CLIP chunk. Applied only where SD1.5 gets a character prompt (AnimateDiff, SD1.5 gen_custom); the
+# SDXL anchor/variation/dataset prompts are untouched so existing seeds reproduce. It does NOT
+# rescue AnimateLCM (cfg 2): jungi still came out female there, with or without the weight.
+SD15_GENDER_WEIGHT = 1.3
+
+
+def character_base_prompt(trigger, profile, gender_weight=None):
+    gender = profile["gender"]
+    if gender_weight:
+        gender = f"({gender}:{gender_weight})"
     return (
-        f"{trigger}, {profile['age']} year old adult {profile['gender']}, east asian, "
+        f"{trigger}, {profile['age']} year old adult {gender}, east asian, "
         f"{profile['appearance']}, {profile['style']}"
     )
 
@@ -245,7 +260,7 @@ def gen_anchors(trigger, out_dir, seeds):
             filename_prefix=f"{trigger}_anchor_seed{seed}",
         )
         path = os.path.join(out_dir, f"anchor_seed{seed}.png")
-        os.replace(raw_path, path)
+        shutil.move(raw_path, path)
         print(f"saved {path}", flush=True)
     client.log_gpu_memory("after_anchor_batch")
 
@@ -401,7 +416,7 @@ def gen_variations(trigger, anchor_path, out_dir, count, ip_adapter_weight, base
         )
         img_path = os.path.join(out_dir, f"{stem}.png")
         txt_path = os.path.join(out_dir, f"{stem}.txt")
-        os.replace(raw_path, img_path)
+        shutil.move(raw_path, img_path)
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(caption)
         print(f"saved {img_path}", flush=True)
@@ -435,7 +450,7 @@ def gen_test_suggestive(trigger, anchor_path, out_dir, seed, ip_adapter_weight):
     )
     img_path = os.path.join(out_dir, f"{stem}.png")
     txt_path = os.path.join(out_dir, f"{stem}.txt")
-    os.replace(raw_path, img_path)
+    shutil.move(raw_path, img_path)
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(caption)
     print(f"saved {img_path}", flush=True)
@@ -502,7 +517,7 @@ def gen_suggestive_variations(trigger, anchor_path, out_dir, count, ip_adapter_w
         )
         img_path = os.path.join(out_dir, f"{stem}.png")
         txt_path = os.path.join(out_dir, f"{stem}.txt")
-        os.replace(raw_path, img_path)
+        shutil.move(raw_path, img_path)
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(caption)
         print(f"saved {img_path}", flush=True)
@@ -528,7 +543,8 @@ def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_posi
 
     if trigger:
         profile = get_character(trigger)
-        full_prompt = f"{character_base_prompt(trigger, profile)}, {prompt}"
+        weight = SD15_GENDER_WEIGHT if checkpoint in client.SD15_CHECKPOINTS else None
+        full_prompt = f"{character_base_prompt(trigger, profile, gender_weight=weight)}, {prompt}"
     else:
         full_prompt = prompt
     if style_positive:
@@ -863,7 +879,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
         )
 
     img_path = os.path.join(out_dir, f"{stem}.png")
-    os.replace(raw_path, img_path)
+    shutil.move(raw_path, img_path)
     print(f"saved {img_path}", flush=True)
 
 
@@ -968,7 +984,7 @@ def gen_gif(prompt, extra_negative, tier, trigger, anchor_path, out_dir, base_se
             **ckpt_kwargs,
         )
         frame_path = os.path.join(out_dir, f"{stem}.png")
-        os.replace(raw_path, frame_path)
+        shutil.move(raw_path, frame_path)
         print(f"saved {frame_path}", flush=True)
         frame_paths.append(frame_path)
 
@@ -1079,7 +1095,7 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
 
     if trigger:
         profile = get_character(trigger)
-        full_prompt = f"{character_base_prompt(trigger, profile)}, {prompt}"
+        full_prompt = f"{character_base_prompt(trigger, profile, gender_weight=SD15_GENDER_WEIGHT)}, {prompt}"
     else:
         full_prompt = prompt
     if style_positive:

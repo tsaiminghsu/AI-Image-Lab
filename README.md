@@ -657,6 +657,33 @@ InsightFace 量的是「是不是同一個人」，對這種形變不敏感，�
 > 所以上表不列時間。第一輪還沒過熱：512 基底 + 精修 181 秒，修正前是 224 秒；精修從
 > 20 步重畫整張 768² 改成 12 步只重畫臉部，是變快的主因。
 
+#### 男性角色被畫成女生（SD1.5）
+
+SD1.5 寫實模型（Realistic Vision）在角色外貌描述比較柔和時（例如 minjun 的「soft face」、
+taeoh 的「soft permed hair, refined face」），常常把男性角色畫成女生——prompt 裡只有一個
+「man」，壓不過這些在訓練資料裡多半跟女性一起出現的詞。實測（SD1.5 靜態圖、不接 FaceID、
+5 個男性角色 × 4 個 seed，性別用 InsightFace 判定，這個判定器對全部 23 張參考照都判對）：
+
+| 寫法 | 男性角色畫成男生 | 女性角色畫成女生 |
+|---|---|---|
+| 原本的 prompt | 10 / 20 | 20 / 20 |
+| 負面詞加「woman, female」 | 10 / 20 | — |
+| 正向加「male, man, masculine」 | 14 / 20 | 20 / 20 |
+| **性別字加權重 `(man:1.3)`** | **19 / 20** | 20 / 20 |
+
+所以 SD1.5 的路線（AnimateDiff 影片、`custom` 選 SD1.5 checkpoint）現在會把角色 prompt 裡
+的性別寫成 `(man:1.3)` / `(woman:1.3)`（`SD15_GENDER_WEIGHT`）。負面詞那條路沒用：負面詞
+本來就有 98 個 token，加上去的詞落在第二段 CLIP 的最後面，幾乎沒有作用。SDXL 的 anchor /
+variations / 資料集 prompt 刻意不動，既有的 seed 產出不會改變。
+
+影片也一起驗證過（AnimateDiff 一般模式、seed 6001，加權重前 → 後）：jungi 男性影格 7/16 →
+16/16、跟參考臉的相似度 0.58 → 0.69；taeoh 16/16 → 16/16、0.62 → 0.63；女性的 yuqing 維持
+女生、0.68 → 0.70。`custom` 選 SD1.5 產 minjun、taeoh 的靜態圖也都是男生。
+
+> **AnimateLCM 救不回來**：LCM 的 CFG 只有 2，文字條件本來就很弱，jungi 的 LCM 影片不管
+> 有沒有加權重都還是女生（16 格裡最多 2 格判成男生）。男性角色建議不要用 `--lcm`；jungi
+> 的參考照頭轉了約 47 度，FaceID 也抓不太到，換一張正面的參考照會更穩。
+
 **客觀檢查臉有沒有跑掉**：`training/face_similarity.py` 用跟 FaceID 同一個
 InsightFace 模型（`buffalo_l`），逐幀算影片裡的臉跟參考臉的相似度（cosine，同一
 個人通常 0.5 以上），並輸出一張標了分數的逐幀臉部拼圖。生成時加 `--face-report`
@@ -1477,6 +1504,7 @@ ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓�
 | LCM_MIN_CFG | 1.5（CFG = 1 時 ComfyUI 會跳過 negative，安全負面詞會失效，不能再低） |
 | ANIMATEDIFF_FACEID_V2_WEIGHT / FACEID_LORA_STRENGTH | 1.0 / 0.6（調高會讓動作明顯變少，見「臉部變形排查」） |
 | ANIMATEDIFF_MOTION_SCALE | 1.0（motion module 時序注意力強度；不是 1.0 時才注入節點 `62`） |
+| SD15_GENDER_WEIGHT | 1.3（`generate_character.py`；SD1.5 路線的角色性別字寫成 `(man:1.3)`，見「男性角色被畫成女生」） |
 | ANIMATEDIFF_FACE_CROP_FACTOR / FACE_GUIDE_SIZE | 1.5 / 512（影片臉部精修的裁切倍數 / 臉部重繪尺寸） |
 | ANIMATEDIFF_FACEDETAILER_STEPS / DENOISE | 12 / 0.45（影片專用；靜態圖仍用 FACEDETAILER_DENOISE 0.5） |
 
