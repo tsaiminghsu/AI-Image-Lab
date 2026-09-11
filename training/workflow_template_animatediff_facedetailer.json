@@ -231,8 +231,8 @@
         0
       ],
       "bbox_threshold": 0.5,
-      "bbox_dilation": 10,
-      "crop_factor": 3.0,
+      "bbox_dilation": 16,
+      "crop_factor": 1.5,
       "drop_size": 10,
       "sub_threshold": 0.5,
       "sub_dilation": 0,
@@ -278,21 +278,22 @@
         "50",
         0
       ],
-      "guide_size": 384,
+      "guide_size": 512,
       "guide_size_for": true,
       "max_size": 768,
       "seed": 0,
-      "steps": 20,
+      "steps": 12,
       "cfg": 7.5,
       "sampler_name": "dpmpp_2m",
       "scheduler": "karras",
-      "denoise": 0.5,
-      "feather": 5,
+      "denoise": 0.45,
+      "feather": 12,
       "basic_pipe": [
         "51",
         0
       ],
-      "refiner_ratio": 0.2
+      "refiner_ratio": 0.2,
+      "noise_mask_feather": 16
     }
   },
   "36": {

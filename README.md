@@ -572,7 +572,7 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py
   `ImageUpscaleWithModel` 遇到 VRAM 不足會自己切小塊處理。放在補幀之前，所以
   ESRGAN 只處理 16 張，不是 31/61 張。
 - **臉部精修放在高清之後、放大之前**：精修是生成式的，要在 motion module 能處理的
-  尺寸跑（guide 384 / max 768 剛好對應 768 的影格）；放大後再精修只是多花時間。
+  尺寸跑（臉部裁切 1.5 倍、guide 512 / max 768，臉以約 512px 重繪）；放大後再精修只是多花時間。
 - **輸出 mp4/h264**：以前是 vp9 `.webm`（crf 32），改用 ComfyUI 核心的
   `CreateVideo` + `SaveVideo`，任何瀏覽器/播放器/手機都能直接播，編碼也比 vp9 快。
 
@@ -589,8 +589,8 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py
 | 預設 + LCM + RIFE ×2、16fps | 1024²，31 幀、1.9 秒 | 391 s | 6.9 GB |
 
 高清第二段從 20 步降到 10 步，畫面肉眼看不出差異，所以預設是 10 步。時間大宗是
-兩個 768² 的整批採樣：高清第二段（10 步約 1.5 分鐘）跟臉部精修（20 步約 4 分鐘——
-這個取景下臉部裁切區塊加上 `crop_factor` 3.0 已經涵蓋整張 768² 影格）。只是要
+兩個 768² 的整批採樣：高清第二段（10 步約 1.5 分鐘）跟臉部精修（修正前是 20 步約 4 分鐘，
+而且那時的裁切其實涵蓋整張影格，見下面「臉部變形排查」）。只是要
 快速看動作對不對的話，用 `--no-hires --no-facedetailer --upscale-to 0`（約 1 分鐘）。
 
 > **臉部精修是怎麼接的**（之前版本的 README 這段寫錯了，描述的是更早已經拿掉的
@@ -602,6 +602,64 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py
 > 雖然避開了「單張圖餵進 motion module 會產生雜訊碎片」的問題，但每一幀的臉都是
 > 各自獨立重畫，影格之間明顯閃爍，所以改成現在這個影片專用的 detailer。
 > 只做臉部，沒有另外接手部精修。
+
+### 臉部變形排查
+
+把測試影片逐幀拆開比對後，找到兩個讓臉變形的原因，都已經修正：
+
+1. **臉部精修從來沒有真的放大臉部。** 節點 `50` 的 `crop_factor` 原本是 3.0，裁切
+   區塊比整張影格還大，`max_size` 768 又把放大倍率壓回 1.0。ComfyUI log 寫的是
+   `crop region (768, 768) x 1.0006 -> (768, 768)`：等於拿整張影格用 denoise 0.5
+   再跑 20 步，臉沒有多任何解析度，反而多一次整幅漂移。現在裁切是臉框的 1.5 倍、
+   `guide_size` 512，臉以約 512px 重繪；精修改成 12 步、denoise 0.45，並補上原本
+   漏傳的 `noise_mask_feather`（沒傳時實際是 0，精修邊緣是硬邊）。
+2. **負面詞裡有 `symmetrical face`。** 共用的 `REALISTIC_NEGATIVE` 把「對稱的臉」
+   列為不要的東西，等於把模型推向雙眼不對稱、下巴歪斜。靜態圖有真正放大重繪的
+   ADetailer 可以蓋掉，影片裡臉只有約 180px 寬，就直接露出來。影片路線改用
+   `VIDEO_REALISTIC_NEGATIVE`（同一串，拿掉這個詞），靜態圖不變。
+
+**實測**（RTX 2070，seed 6001，512 基底 + 影片臉部精修，同一個 prompt。相似度是影片裡的
+臉跟參考臉的 InsightFace cosine，動作量是相鄰影格的平均像素差）：
+
+| 設定 | 平均相似度 | 最低影格 | 動作量 |
+|---|---|---|---|
+| 修正前（整幅精修） | 0.685 | 0.623 | 4.67 |
+| 精修裁切修正 | 0.626 | 0.597 | 4.60 |
+| **＋拿掉 `symmetrical face`（目前預設）** | **0.644** | **0.621** | **5.08** |
+| ＋FaceID LoRA 0.75 | 0.644 | 0.628 | 2.89 |
+| ＋FaceID LoRA 0.75、臉部結構權重 1.5 | 0.654 | 0.635 | 2.22 |
+| ＋FaceID LoRA 0.75、臉部結構權重 2.0 | 0.638 | 0.627 | 1.87 |
+| ＋上一列再加 motion scale 0.85 | 0.675 | 0.660 | 0.73 |
+| 預設再加 motion scale 0.85 | 0.591 | 0.579 | 0.86 |
+
+修正前的相似度反而最高，但逐幀拼圖看得出臉頰浮腫、油光很重、嘴唇被擠成嘟嘴。
+InsightFace 量的是「是不是同一個人」，對這種形變不敏感，所以修好了沒要看拼圖，
+分數只用來確認沒有換臉。兩項修正之後嘴型跟臉頰都正常，動作量也完全保留，所以這就
+是預設。
+
+完整流程（高清第二段 + 精修 + 放大到 1024）用預設跑一次：16 幀 1024²，相似度平均 0.639、
+最低 0.611，動作量 5.90（完整保留），逐幀拼圖沒有浮腫或嘟嘴。這次耗時 700 秒，但同樣是在
+過熱降頻下量的，不能跟上面「實測時間」表修正前的 526 秒直接比。
+
+加強 FaceID 或調低 motion scale 都會讓臉更「定住」，但主要是因為畫面不動了：LoRA
+0.75 就讓動作少了約 40%，相似度卻沒變；motion scale 0.85 單獨用就讓畫面幾乎靜止，
+相似度還下降。這幾個參數保留成選項（`--faceid-v2-weight`、`--faceid-lora-strength`、
+`--motion-scale`，GUI 也有滑桿），預設維持原值 1.0 / 0.6 / 1.0。motion scale 不是 1.0
+時才會注入節點 `62`（`ADE_MultivalDynamic`，接到節點 `2` 的 `scale_multival`）。
+
+> 實測時這張 2070 到了 84°C、觸發硬體過熱降頻，第二輪之後每一輪都比正常慢約一倍，
+> 所以上表不列時間。第一輪還沒過熱：512 基底 + 精修 181 秒，修正前是 224 秒；精修從
+> 20 步重畫整張 768² 改成 12 步只重畫臉部，是變快的主因。
+
+**客觀檢查臉有沒有跑掉**：`training/face_similarity.py` 用跟 FaceID 同一個
+InsightFace 模型（`buffalo_l`），逐幀算影片裡的臉跟參考臉的相似度（cosine，同一
+個人通常 0.5 以上），並輸出一張標了分數的逐幀臉部拼圖。生成時加 `--face-report`
+會自動跑，拼圖存成 `<檔名>_faces.png`；也可以對任何影片單獨跑（要用 ComfyUI 的
+venv，那裡才有 insightface）：
+
+```powershell
+D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe training\face_similarity.py --anchor <參考臉.png> --video <影片.mp4> --sheet faces.png
+```
 
 ## 會講話的嘴型影片（SadTalker，選用安裝）
 
@@ -841,6 +899,8 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
   - RIFE 補幀倍數 1/2/4：2/4 要先完成「2c. RIFE 補幀節點」安裝
   - 臉部精修（預設開）：關掉比較快，但臉可能變糊/漂移
   - LCM 快速模式（預設關）：8 步取代 20 步，要先完成「2d. AnimateLCM」下載
+- **「FaceID 臉部結構權重」**（預設 1.0）跟 **「動作幅度」**（預設 1.0）：調高權重或
+  調低動作幅度都會讓臉更固定，但動作明顯變少，實測見「臉部變形排查」
 - 「輸出 FPS」0 = 自動（8 × 補幀倍數，片長一樣約 2 秒、只是變順）；手動調低就
   變成更長的慢動作，例如補幀 ×4 + 16fps = 61 幀、約 3.8 秒
 - 第一次執行會比較久：SD1.5 checkpoint、motion module、FaceID SD1.5 模型都是
@@ -1049,7 +1109,8 @@ python generate_character.py video-animatediff --character mei --face-ref "refer
 見上面「AnimateDiff 動態影片」安裝章節。跟 `video` 不同，這是 txt2vid（不是
 img2vid）：`--face-ref` 只用來鎖臉部身分（IP-Adapter FaceID），畫面內容完全
 由 `--prompt` 決定。加 `--style-positive`/`--style-negative` 可以覆蓋預設的
-寫實化用詞，用法跟 `custom` 指令一樣；`--tier`/`--negative-prompt` 的安全詞
+寫實化用詞（影片預設的負面寫實詞不含 `symmetrical face`，見「臉部變形排查」），
+用法跟 `custom` 指令一樣；`--tier`/`--negative-prompt` 的安全詞
 保證（年齡保護、露骨內容封鎖）也完全一致，不受這兩個參數影響。輸出是
 `animatediff_seed<seed>.mp4`。
 
@@ -1063,6 +1124,10 @@ img2vid）：`--face-ref` 只用來鎖臉部身分（IP-Adapter FaceID），畫�
 | `--interp {1,2,4}` | 1 | RIFE 補幀倍數（需要 2c 的節點） |
 | `--fps` | 8 × `--interp` | **輸出** fps；調低就變長 |
 | `--no-facedetailer` | （精修開） | 跳過影片臉部精修 |
+| `--facedetailer-steps` / `--facedetailer-denoise` | 12 / 0.45 | 影片臉部精修的步數 / 重繪強度 |
+| `--faceid-v2-weight` / `--faceid-lora-strength` | 1.0 / 0.6 | FaceID 臉部結構權重 / FaceID LoRA 強度；調高臉更固定但動作變少 |
+| `--motion-scale` | 1.0 | motion module 強度，1.0 = 完整動作；0.85 就幾乎靜止 |
+| `--face-report` | 關 | 生成後逐幀算臉部相似度，並存 `<檔名>_faces.png` 臉部拼圖 |
 | `--lcm` / `--lcm-preset` | 關 / `animatelcm` | LCM 8 步快速模式（需要 2d 的模型） |
 | `--checkpoint` | `realistic_vision` | 換 SD1.5 checkpoint（`sd15_base`、`cyberrealistic`） |
 
@@ -1404,6 +1469,10 @@ ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓�
 | ANIMATEDIFF_VIDEO_CRF | 20（mp4/h264，數字越小畫質越好、檔案越大） |
 | ANIMATEDIFF_LCM_PRESETS | `animatelcm`（預設）/ `lcm_lora`：8 步、CFG 2.0、`lcm`/`sgm_uniform` |
 | LCM_MIN_CFG | 1.5（CFG = 1 時 ComfyUI 會跳過 negative，安全負面詞會失效，不能再低） |
+| ANIMATEDIFF_FACEID_V2_WEIGHT / FACEID_LORA_STRENGTH | 1.0 / 0.6（調高會讓動作明顯變少，見「臉部變形排查」） |
+| ANIMATEDIFF_MOTION_SCALE | 1.0（motion module 時序注意力強度；不是 1.0 時才注入節點 `62`） |
+| ANIMATEDIFF_FACE_CROP_FACTOR / FACE_GUIDE_SIZE | 1.5 / 512（影片臉部精修的裁切倍數 / 臉部重繪尺寸） |
+| ANIMATEDIFF_FACEDETAILER_STEPS / DENOISE | 12 / 0.45（影片專用；靜態圖仍用 FACEDETAILER_DENOISE 0.5） |
 
 > - `FACEID PLUS V2`：用 `IPAdapterUnifiedLoaderFaceID` + `IPAdapterFaceID` 這組
 >   節點（不是舊版的 `IPAdapterUnifiedLoader` + `IPAdapterAdvanced`），身分條件化
@@ -1417,7 +1486,8 @@ ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓�
 > - `IPAdapterUnifiedLoaderFaceID` 額外需要 `lora_strength`（固定 0.6，寫死在
 >   workflow JSON 裡，跟隨 LoRA 一起載入不需要另外用 `LoraLoader` 節點）跟
 >   `provider`（固定 `CUDA`）兩個欄位，`IPAdapterFaceID` 節點也多一個
->   `weight_faceidv2` 參數（固定 1.0）
+>   `weight_faceidv2` 參數（固定 1.0；AnimateDiff 影片路線可以用 `--faceid-v2-weight`、
+>   `--faceid-lora-strength` 調整，見「臉部變形排查」）
 > - 需要 `ip-adapter-faceid-plusv2_sdxl.bin` + 對應 LoRA + InsightFace 套件
 >   （見上面安裝章節）；`CLIP Vision (ViT-H)` 檔名規則沒變，還是同一份
 > - 風格 LoRA 強度從 2.0 調到 2.5，是為了讓輸出更往「相機拍出來的照片」的
@@ -1488,6 +1558,7 @@ AI-Image-Lab/
 │   ├── workflow_template_img2vid.json     # SVD img2vid workflow（video 指令用）
 │   ├── workflow_template_animatediff_facedetailer.json # SD1.5 AnimateDiff + FaceID + 影片臉部精修 + 高清/放大/補幀/mp4（video-animatediff 用）
 │   ├── talking_head.py       # SadTalker 對嘴影片包裝（subprocess 呼叫 SadTalker 自己的 venv，talk 指令/GUI 用）
+│   ├── face_similarity.py    # 影片逐幀臉部相似度 + 臉部拼圖（InsightFace，用 ComfyUI 的 venv 跑）
 │   └── reference_candidates/ # anchor 候選圖，不進 repo
 ├── datasets/<character>/     # 生成的訓練圖 + caption，不進 repo
 ├── outputs/_comfyui_raw/     # ComfyUI 原始輸出暫存，不進 repo

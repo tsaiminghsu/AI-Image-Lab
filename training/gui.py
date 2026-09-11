@@ -202,7 +202,8 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
 def generate_video_animatediff(character, face_ref, prompt, tier, negative_prompt, seed, ip_adapter_weight,
                                 facedetailer_denoise, frames, fps, width, height, style_positive, style_negative,
                                 checkpoint_choice, motion_lora_choice, motion_lora_strength,
-                                hires, upscale_choice, interp, use_facedetailer, lcm):
+                                hires, upscale_choice, interp, use_facedetailer, lcm,
+                                faceid_v2_weight, motion_scale):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
     if not face_ref:
@@ -223,7 +224,8 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
                                         checkpoint=checkpoint,
                                         motion_lora=motion_lora, motion_lora_strength=motion_lora_strength,
                                         hires=hires, upscale_to=upscale_to, interp=int(interp),
-                                        use_facedetailer=use_facedetailer, lcm=lcm)
+                                        use_facedetailer=use_facedetailer, lcm=lcm,
+                                        faceid_v2_weight=faceid_v2_weight, motion_scale=motion_scale)
     except SystemExit as exc:  # gen_video_animatediff's validation errors
         raise gr.Error(str(exc)) from exc
 
@@ -417,14 +419,20 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                             label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
                     video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
                 video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README）")
-            video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
+            video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.ANIMATEDIFF_FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
+            with gr.Row():
+                video_faceid_v2_weight = gr.Slider(0.0, 3.0, value=client.ANIMATEDIFF_FACEID_V2_WEIGHT, step=0.1,
+                                                   label="FaceID 臉部結構權重（越高臉越固定但動作越少；實測對相似度幾乎沒幫助）")
+                video_motion_scale = gr.Slider(0.5, 1.2, value=client.ANIMATEDIFF_MOTION_SCALE, step=0.05,
+                                               label="動作幅度（1.0 = 完整動作；0.85 就幾乎靜止）")
             video_checkpoint_choice = gr.Dropdown(
                 ANIMATEDIFF_CHECKPOINT_CHOICES, value=ANIMATEDIFF_CHECKPOINT_DEFAULT,
                 label="Checkpoint 模型（必須是 SD1.5，跟上面圖片區塊的選項是分開的清單）",
             )
             with gr.Accordion("風格正/負面詞（進階，跟上面圖片區塊獨立設定）", open=False):
                 video_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                video_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+                video_style_negative = gr.Textbox(label="風格負面詞（影片版不含 symmetrical face，避免臉被推向不對稱）",
+                                                  value=gc.VIDEO_REALISTIC_NEGATIVE, lines=2)
             with gr.Accordion("Motion LoRA（選用，鏡頭運動控制）", open=False):
                 gr.Markdown(
                     "官方 AnimateDiff Motion LoRA，控制的是**整個畫面的鏡頭運動**（縮放/平移/"
@@ -446,7 +454,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
                 video_style_positive, video_style_negative, video_checkpoint_choice,
                 video_motion_lora, video_motion_lora_strength,
-                video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm],
+                video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
+                video_faceid_v2_weight, video_motion_scale],
         outputs=video_output,
     )
 

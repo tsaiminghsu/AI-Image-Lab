@@ -40,6 +40,12 @@ REALISTIC_NEGATIVE = (
     "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, "
     "smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine"
 )
+# Video (AnimateDiff) variant: the same list minus "symmetrical face". Negating symmetry pushes
+# the model toward lopsided eyes and jaw. On stills the HQ path's face detailer re-draws the face
+# at full resolution and hides it, but an SD1.5 video face is ~180px across, and the push showed
+# up directly as asymmetric faces that warped from frame to frame.
+VIDEO_REALISTIC_NEGATIVE = REALISTIC_NEGATIVE.replace("symmetrical face, ", "")
+assert "symmetrical" not in VIDEO_REALISTIC_NEGATIVE
 
 # Pony-family checkpoints (client.PONY_CHECKPOINTS) were trained on a
 # "score_9, score_8_up, score_7_up"-style quality-tag prefix convention, not
@@ -1004,7 +1010,9 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
                            style_positive=None, style_negative=None, checkpoint=None,
                            motion_lora=None, motion_lora_strength=1.0,
                            hires=True, hires_scale=None, hires_denoise=None, upscale_to=None,
-                           interp=None, use_facedetailer=True, lcm=False, lcm_preset="animatelcm"):
+                           interp=None, use_facedetailer=True, lcm=False, lcm_preset="animatelcm",
+                           faceid_v2_weight=None, faceid_lora_strength=None, motion_scale=None,
+                           facedetailer_steps=None, face_report=False):
     """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking and
     a video-native face-fix pass - fixes the face warping that
     gen_video's plain SVD img2vid produces (SVD's temporal U-Net can't be
@@ -1037,6 +1045,12 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     interpolation x2/x4 - needs the optional ComfyUI-Frame-Interpolation node; fps then
     defaults to 8 x interp), use_facedetailer, lcm + lcm_preset (8-step LCM sampling).
 
+    Face stability (None = the comfyui_client ANIMATEDIFF_* defaults): faceid_v2_weight,
+    faceid_lora_strength, motion_scale (lower = less motion, less face drift; 1.0 = full motion),
+    facedetailer_steps. The default style negative is VIDEO_REALISTIC_NEGATIVE, which leaves out
+    "symmetrical face". face_report=True scores every frame against face_ref_path with InsightFace
+    and saves <stem>_faces.png next to the video (see face_similarity.py).
+
     Returns the path of the saved .mp4."""
     if checkpoint and checkpoint not in client.ANIMATEDIFF_CHECKPOINTS:
         raise SystemExit(f"unknown animatediff checkpoint {checkpoint!r} - choices: {sorted(client.ANIMATEDIFF_CHECKPOINTS)}")
@@ -1057,7 +1071,7 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
               f"{lcm_preset!r} motion module is unverified (use --lcm-preset lcm_lora if it does nothing)",
               flush=True)
     style_positive = REALISTIC_STYLE if style_positive is None else style_positive
-    style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
+    style_negative = VIDEO_REALISTIC_NEGATIVE if style_negative is None else style_negative
 
     safety_negative = SAFE_SAFETY_NEGATIVE if tier == "safe" else SUGGESTIVE_NEGATIVE
     base_negative = f"{safety_negative}, {style_negative}" if style_negative else safety_negative
@@ -1102,6 +1116,10 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     kwargs["use_facedetailer"] = use_facedetailer
     if lcm:
         kwargs["lcm_preset"] = lcm_preset
+    for name, value in (("faceid_v2_weight", faceid_v2_weight), ("faceid_lora_strength", faceid_lora_strength),
+                        ("motion_scale", motion_scale), ("facedetailer_steps", facedetailer_steps)):
+        if value is not None:
+            kwargs[name] = value
 
     def _submit(**override):
         return client.submit_generation_animatediff(
@@ -1128,6 +1146,15 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     out_path = os.path.join(out_dir, f"{stem}.mp4")
     shutil.move(raw_path, out_path)  # not os.replace: out_dir may be on another drive
     print(f"saved {out_path}", flush=True)
+    if face_report:
+        import face_similarity  # light import; the heavy work runs in ComfyUI's venv
+        sheet_path = os.path.join(out_dir, f"{stem}_faces.png")
+        try:
+            summary = face_similarity.run_report_subprocess(face_ref_path, out_path, sheet_path)
+            print(face_similarity.format_summary(summary), flush=True)
+            print(f"saved {sheet_path}", flush=True)
+        except (RuntimeError, OSError, ValueError) as exc:
+            print(f"[warn] face report skipped: {exc}", flush=True)
     client.log_gpu_memory("after_animatediff")
     return out_path
 
@@ -1233,14 +1260,19 @@ if __name__ == "__main__":
     p_video_ad.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates\videos")
     p_video_ad.add_argument("--seed", type=int, default=6001)
     p_video_ad.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
-    p_video_ad.add_argument("--facedetailer-denoise", type=float, default=None, help="0=no change, 1=fully re-generate the detected face region; defaults to comfyui_client.FACEDETAILER_DENOISE (0.5) if omitted")
+    p_video_ad.add_argument("--facedetailer-denoise", type=float, default=None, help=f"0=no change, 1=fully re-generate the detected face region; default {client.ANIMATEDIFF_FACEDETAILER_DENOISE}")
+    p_video_ad.add_argument("--facedetailer-steps", type=int, default=None, help=f"video face-detailer steps, default {client.ANIMATEDIFF_FACEDETAILER_STEPS} (LCM presets use their own)")
+    p_video_ad.add_argument("--faceid-v2-weight", type=float, default=None, help=f"FaceID face-structure weight (weight_faceidv2), default {client.ANIMATEDIFF_FACEID_V2_WEIGHT}; higher = steadier face but less motion (measured: 2.0 with LoRA 0.75 cut motion ~60%% with no identity gain)")
+    p_video_ad.add_argument("--faceid-lora-strength", type=float, default=None, help=f"FaceID LoRA strength, default {client.ANIMATEDIFF_FACEID_LORA_STRENGTH}")
+    p_video_ad.add_argument("--motion-scale", type=float, default=None, help=f"motion module strength, default {client.ANIMATEDIFF_MOTION_SCALE} (full motion); lower = less motion - 0.85 already freezes most of it")
+    p_video_ad.add_argument("--face-report", action="store_true", help="after generating, score every frame's face against --face-ref (InsightFace) and save <name>_faces.png, a contact sheet of the face in each frame")
     p_video_ad.add_argument("--no-facedetailer", action="store_true", help="skip the video face-detailer pass (faster, but the face may drift/soften)")
     p_video_ad.add_argument("--frames", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_FRAMES (16, the motion module's trained context length)")
     p_video_ad.add_argument("--fps", type=int, default=None, help="OUTPUT fps; defaults to 8 x --interp (same ~2s duration, smoother). Lower it for a longer slow-motion clip, e.g. --interp 4 --fps 16 = 61 frames, ~3.8s")
     p_video_ad.add_argument("--width", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_WIDTH (512) if omitted")
     p_video_ad.add_argument("--height", type=int, default=None, help="defaults to comfyui_client.ANIMATEDIFF_HEIGHT (512) if omitted")
     p_video_ad.add_argument("--style-positive", default=None, help="overrides REALISTIC_STYLE for this call only; omit to use the default")
-    p_video_ad.add_argument("--style-negative", default=None, help="overrides REALISTIC_NEGATIVE for this call only; omit to use the default. Never touches the age-safety/explicit-content negative terms, those aren't overridable")
+    p_video_ad.add_argument("--style-negative", default=None, help="overrides VIDEO_REALISTIC_NEGATIVE (REALISTIC_NEGATIVE minus 'symmetrical face') for this call only; omit to use the default. Never touches the age-safety/explicit-content negative terms, those aren't overridable")
     p_video_ad.add_argument("--checkpoint", default=None, choices=sorted(client.ANIMATEDIFF_CHECKPOINTS), help="swap the SD1.5 checkpoint AnimateDiff patches its motion module into; omit for the pipeline default (realistic_vision)")
     p_video_ad.add_argument("--motion-lora", default=None, choices=sorted(client.ANIMATEDIFF_MOTION_LORAS), help="camera-motion LoRA (zoom/pan/tilt/roll of the whole frame) - NOT a body-part physics control, no bounce/jiggle option exists. Requires the .ckpt downloaded to ComfyUI/models/animatediff_motion_lora/, see README")
     p_video_ad.add_argument("--motion-lora-strength", type=float, default=1.0, help="scales the motion LoRA's effect; typical useful range is 0-2, values much above 1 tend to distort the frame")
@@ -1289,7 +1321,10 @@ if __name__ == "__main__":
                                hires=not args.no_hires, hires_scale=args.hires_scale, hires_denoise=args.hires_denoise,
                                upscale_to=args.upscale_to, interp=args.interp,
                                use_facedetailer=not args.no_facedetailer,
-                               lcm=args.lcm, lcm_preset=args.lcm_preset)
+                               lcm=args.lcm, lcm_preset=args.lcm_preset,
+                               faceid_v2_weight=args.faceid_v2_weight, faceid_lora_strength=args.faceid_lora_strength,
+                               motion_scale=args.motion_scale, facedetailer_steps=args.facedetailer_steps,
+                               face_report=args.face_report)
     elif args.mode == "talk":
         import talking_head  # only this branch needs it; keeps the other modes' imports unchanged
         try:

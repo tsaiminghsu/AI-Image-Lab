@@ -244,6 +244,26 @@ ANIMATEDIFF_SCHEDULER = "karras"
 ANIMATEDIFF_VIDEO_CRF = 20  # h264 crf (0-51, lower = better/larger). Output is mp4/h264 via core
 # CreateVideo + SaveVideo (plays in any browser/player, unlike the old vp9 .webm at crf 32)
 
+# Face stability (video). Found by pulling every frame of the test clips apart: the video face
+# detailer never actually zoomed in on the face - with crop_factor 3.0 the crop grew past the
+# whole frame and max_size 768 clamped the upscale back to ~1.0 (ComfyUI log: "crop region
+# (768, 768) x 1.0006 -> (768, 768)"), so the "face fix" was a second full-frame 0.5-denoise pass
+# that added puffiness and drift, not detail. Now the crop is 1.5x the face box and guide_size 512
+# re-draws the face at ~512px. That, plus dropping "symmetrical face" from the video negative
+# (generate_character.VIDEO_REALISTIC_NEGATIVE), is what fixed the warped faces - with full motion.
+#
+# The FaceID/motion knobs below were measured on the 2070 (seed 6001, 512 base + detailer) and left
+# at their original values: stronger FaceID (weight_faceidv2 2.0, LoRA 0.75) cut motion by ~60%
+# with no identity gain (InsightFace similarity ~0.64 either way), and motion_scale 0.85 alone froze
+# the clip (-83% motion) and lowered identity. They stay exposed for a steadier, stiller face.
+ANIMATEDIFF_FACEID_V2_WEIGHT = 1.0
+ANIMATEDIFF_FACEID_LORA_STRENGTH = 0.6
+ANIMATEDIFF_MOTION_SCALE = 1.0
+ANIMATEDIFF_FACE_CROP_FACTOR = 1.5
+ANIMATEDIFF_FACE_GUIDE_SIZE = 512
+ANIMATEDIFF_FACEDETAILER_STEPS = 12  # a refinement pass at 0.45 denoise; was tied to the base's 20
+ANIMATEDIFF_FACEDETAILER_DENOISE = 0.45  # video-specific; the still path keeps FACEDETAILER_DENOISE
+
 # Hires for video - same ESRGAN-seeded two-pass idea as the HQ still path (UPSCALE_MODEL/
 # HIRES_* above): 4x ESRGAN -> lanczos down to base*scale -> VAEEncode -> second KSampler at low
 # denoise THROUGH THE SAME AnimateDiff+FaceID model (node 12), so the motion module keeps the
@@ -643,10 +663,14 @@ def submit_generation_animatediff(
     steps: int = ANIMATEDIFF_STEPS,
     cfg: float = ANIMATEDIFF_CFG,
     ip_adapter_weight: float = IP_ADAPTER_WEIGHT,
-    facedetailer_denoise: float = FACEDETAILER_DENOISE,
+    facedetailer_denoise: float = ANIMATEDIFF_FACEDETAILER_DENOISE,
     checkpoint: str = ANIMATEDIFF_CHECKPOINT,
     motion_lora_name: str = None,
     motion_lora_strength: float = 1.0,
+    faceid_v2_weight: float = ANIMATEDIFF_FACEID_V2_WEIGHT,
+    faceid_lora_strength: float = ANIMATEDIFF_FACEID_LORA_STRENGTH,
+    motion_scale: float = ANIMATEDIFF_MOTION_SCALE,
+    facedetailer_steps: int = ANIMATEDIFF_FACEDETAILER_STEPS,
     hires: bool = True,
     hires_scale: float = ANIMATEDIFF_HIRES_SCALE,
     hires_denoise: float = ANIMATEDIFF_HIRES_DENOISE,
@@ -683,17 +707,25 @@ def submit_generation_animatediff(
     "v2_lora_ZoomIn.ckpt") - conditions the motion module for a specific CAMERA movement, not a
     body-part physical effect. The loader node (ADE_AnimateDiffLoRALoader) is only added when
     given, since it's an optional input on node "2". motion_lora_strength scales its effect
-    (typical range 0-2, values much above 1 tend to distort the frame)."""
+    (typical range 0-2, values much above 1 tend to distort the frame).
+
+    Face stability knobs (see the ANIMATEDIFF_FACEID_* / MOTION_SCALE constants): faceid_v2_weight
+    is FaceID's face-structure branch (node 12 weight_faceidv2), faceid_lora_strength the FaceID
+    LoRA on node 11, motion_scale the motion module's temporal-attention scale (node 62
+    ADE_MultivalDynamic, only injected when != 1.0; lower = less motion and less face drift), and
+    facedetailer_steps the video detailer's own step count (LCM presets override it)."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH))
 
     sampler, scheduler = ANIMATEDIFF_SAMPLER, ANIMATEDIFF_SCHEDULER
     hires_steps = ANIMATEDIFF_HIRES_STEPS
+    detailer_steps = facedetailer_steps
     motion_module = ANIMATEDIFF_MOTION_MODULE
     if lcm_preset:
         preset = ANIMATEDIFF_LCM_PRESETS[lcm_preset]
         motion_module = preset["motion_module"]
         wf["2"]["inputs"]["beta_schedule"] = preset["beta_schedule"]
         steps, hires_steps = preset["steps"], preset["hires_steps"]
+        detailer_steps = preset["steps"]
         cfg = preset["cfg"]
         sampler, scheduler = preset["sampler"], preset["scheduler"]
         # Rewire first, THEN add node 61 - otherwise 61's own model input would point at itself.
@@ -713,21 +745,28 @@ def submit_generation_animatediff(
             "inputs": {"name": motion_lora_name, "strength": motion_lora_strength},
         }
         wf["2"]["inputs"]["motion_lora"] = ["60", 0]
+    if motion_scale is not None and abs(float(motion_scale) - 1.0) > 1e-6:
+        wf["62"] = {"class_type": "ADE_MultivalDynamic", "inputs": {"float_val": float(motion_scale)}}
+        wf["2"]["inputs"]["scale_multival"] = ["62", 0]
     wf["10"]["inputs"]["image"] = face_ref_image_filename
     wf["11"]["inputs"]["preset"] = IP_ADAPTER_PRESET
+    wf["11"]["inputs"]["lora_strength"] = faceid_lora_strength
     wf["12"]["inputs"]["weight"] = ip_adapter_weight
+    wf["12"]["inputs"]["weight_faceidv2"] = faceid_v2_weight
     wf["6"]["inputs"]["text"] = prompt
     wf["7"]["inputs"]["text"] = negative_prompt
     wf["5"]["inputs"]["width"] = width
     wf["5"]["inputs"]["height"] = height
     wf["5"]["inputs"]["batch_size"] = frames
-    for node_id, node_steps in (("3", steps), ("34", hires_steps), ("52", steps)):
+    for node_id, node_steps in (("3", steps), ("34", hires_steps), ("52", detailer_steps)):
         wf[node_id]["inputs"]["seed"] = seed
         wf[node_id]["inputs"]["steps"] = node_steps
         wf[node_id]["inputs"]["cfg"] = cfg
         wf[node_id]["inputs"]["sampler_name"] = sampler
         wf[node_id]["inputs"]["scheduler"] = scheduler
     wf["52"]["inputs"]["denoise"] = facedetailer_denoise
+    wf["50"]["inputs"]["crop_factor"] = ANIMATEDIFF_FACE_CROP_FACTOR
+    wf["52"]["inputs"]["guide_size"] = ANIMATEDIFF_FACE_GUIDE_SIZE
 
     # Video face detailer (50/52; 40/51 only feed it).
     if not use_facedetailer:
