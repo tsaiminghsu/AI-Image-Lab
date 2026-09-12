@@ -195,7 +195,23 @@ for _name, _profile in CHARACTERS.items():
 
 # Where character LoRAs live locally (hardlinked from models/lora/, see README).
 # gen_custom checks a LoRA file exists here before wiring it into the workflow.
-COMFYUI_LORAS_DIR = os.path.join(os.path.dirname(__file__), "..", "ComfyUI", "models", "loras")
+# Project layout, derived from this file's location instead of hardcoded. The CLI's --out
+# defaults used to be literal r"D:\AI-Image-Lab\..." strings, which made the whole CLI
+# unusable from a checkout anywhere else unless every invocation passed --out explicitly.
+# os.path.abspath normalises the separators, so on this machine the effective defaults are
+# byte-for-byte the strings they replaced. AI_IMAGE_LAB_ROOT overrides for an unusual layout.
+TRAINING_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.environ.get("AI_IMAGE_LAB_ROOT") or os.path.abspath(os.path.join(TRAINING_DIR, ".."))
+REFERENCE_CANDIDATES_DIR = os.path.join(TRAINING_DIR, "reference_candidates")
+REFERENCE_VIDEOS_DIR = os.path.join(REFERENCE_CANDIDATES_DIR, "videos")
+DATASETS_DIR = os.path.join(PROJECT_ROOT, "datasets")
+COMFYUI_LORAS_DIR = os.path.join(PROJECT_ROOT, "ComfyUI", "models", "loras")
+
+# Longest prompt any entry point accepts. Defined here, not in the API layer, so the HTTP
+# wrapper and the RunPod worker enforce the same number instead of each carrying their own.
+# Not enforced inside gen_custom itself: that would change CLI behaviour for no gain, since a
+# person typing a 2000-character prompt at a shell is not the case this guards against.
+MAX_PROMPT_CHARS = 2000
 
 # Default checkpoint for the HQ custom-generation path (GUI/API/CLI) when the
 # caller doesn't pick one. Pony-family photoreal merge - matches the GUI's
@@ -1247,7 +1263,7 @@ def build_parser():
     p_test_nsfw = sub.add_parser("test-suggestive")
     p_test_nsfw.add_argument("--character", required=True, choices=sorted(CHARACTERS))
     p_test_nsfw.add_argument("--anchor", required=True)
-    p_test_nsfw.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates")
+    p_test_nsfw.add_argument("--out", default=REFERENCE_CANDIDATES_DIR)
     p_test_nsfw.add_argument("--seed", type=int, default=5000)
     p_test_nsfw.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
 
@@ -1265,7 +1281,7 @@ def build_parser():
     p_custom.add_argument("--tier", choices=["safe", "suggestive"], default="safe", help="'suggestive' allows swimwear/lingerie-level content, same ceiling as test-suggestive - explicit content stays blocked either way")
     p_custom.add_argument("--character", default=None, choices=sorted(CHARACTERS), help="optional - prepends this character's identity description")
     p_custom.add_argument("--anchor", default=None, help="optional - face-conditions via IP-Adapter on this image, independent of --character. Must be a fictional/AI-generated face, never a real person's photo")
-    p_custom.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates")
+    p_custom.add_argument("--out", default=REFERENCE_CANDIDATES_DIR)
     p_custom.add_argument("--seed", type=int, default=9000)
     p_custom.add_argument("--filename", default=None)
     p_custom.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
@@ -1295,7 +1311,7 @@ def build_parser():
     p_gif.add_argument("--tier", choices=["safe", "suggestive"], default="safe")
     p_gif.add_argument("--character", default=None, choices=sorted(CHARACTERS), help="optional - prepends this character's identity description")
     p_gif.add_argument("--anchor", default=None, help="optional - face-conditions via IP-Adapter on this image. Must be a fictional/AI-generated face, never a real person's photo")
-    p_gif.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates")
+    p_gif.add_argument("--out", default=REFERENCE_CANDIDATES_DIR)
     p_gif.add_argument("--seed", type=int, default=9000, help="base seed - frame i uses seed + i")
     p_gif.add_argument("--frames", type=int, default=8, help="total frames in the GIF - frame 1 is a full txt2img generation, frames 2+ are low-denoise img2img 'wiggle' variations of frame 1 (see gen_gif's docstring)")
     p_gif.add_argument("--duration-ms", type=int, default=300, help="milliseconds each frame is shown for")
@@ -1323,7 +1339,7 @@ def build_parser():
     p_video_ad.add_argument("--tier", choices=["safe", "suggestive"], default="safe")
     p_video_ad.add_argument("--character", default=None, choices=sorted(CHARACTERS), help="optional - prepends this character's identity description")
     p_video_ad.add_argument("--face-ref", required=True, help="face image for IPAdapter-FaceID identity locking - must be a fictional/AI-generated face, never a real person's photo")
-    p_video_ad.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates\videos")
+    p_video_ad.add_argument("--out", default=REFERENCE_VIDEOS_DIR)
     p_video_ad.add_argument("--seed", type=int, default=6001)
     p_video_ad.add_argument("--ip-adapter-weight", type=float, default=client.IP_ADAPTER_WEIGHT)
     p_video_ad.add_argument("--facedetailer-denoise", type=float, default=None, help=f"0=no change, 1=fully re-generate the detected face region; default {client.ANIMATEDIFF_FACEDETAILER_DENOISE}")
@@ -1353,7 +1369,7 @@ def build_parser():
     p_talk = sub.add_parser("talk", help="talking-head lip-sync video from one portrait + a voice clip (SadTalker, runs in its own venv - ComfyUI not needed)")
     p_talk.add_argument("--image", required=True, help="source portrait - must be a fictional/AI-generated face (e.g. an anchor), never a real person's photo")
     p_talk.add_argument("--audio", required=True, help="voice clip (.wav, or anything ffmpeg reads - converted to 16kHz mono wav)")
-    p_talk.add_argument("--out", default=r"D:\AI-Image-Lab\training\reference_candidates\videos")
+    p_talk.add_argument("--out", default=REFERENCE_VIDEOS_DIR)
     p_talk.add_argument("--size", type=int, default=512, choices=[256, 512], help="face render size: 256 faster/~2-3GB VRAM, 512 sharper/~4-6GB")
     p_talk.add_argument("--preprocess", default="crop", choices=["crop", "extcrop", "resize", "full", "extfull"], help="crop = animate the face crop only; full/extfull = paste back into the whole image (pair with --still)")
     p_talk.add_argument("--still", action="store_true", help="minimal head motion - recommended with --preprocess full for half/full-body images")
@@ -1372,16 +1388,16 @@ def main(argv=None):
         for name, profile in sorted(CHARACTERS.items()):
             print(f"{name}: age {profile['age']}, {profile['appearance']}, {profile['style']}")
     elif args.mode == "anchor":
-        out = args.out or rf"D:\AI-Image-Lab\training\reference_candidates\{args.character}"
+        out = args.out or os.path.join(REFERENCE_CANDIDATES_DIR, args.character)
         gen_anchors(args.character, out, args.seeds)
     elif args.mode == "variations":
-        out = args.out or rf"D:\AI-Image-Lab\datasets\{args.character}"
+        out = args.out or os.path.join(DATASETS_DIR, args.character)
         gen_variations(args.character, args.anchor, out, args.count, args.ip_adapter_weight, args.seed)
     elif args.mode == "variations-suggestive":
-        out = args.out or rf"D:\AI-Image-Lab\datasets\{args.character}"
+        out = args.out or os.path.join(DATASETS_DIR, args.character)
         gen_suggestive_variations(args.character, args.anchor, out, args.count, args.ip_adapter_weight, args.seed)
     elif args.mode == "video":
-        out = args.out or rf"D:\AI-Image-Lab\training\reference_candidates\{args.character}\videos"
+        out = args.out or os.path.join(REFERENCE_CANDIDATES_DIR, args.character, "videos")
         gen_video(args.character, args.init_image, out, args.seed, args.frames, args.fps, args.motion)
     elif args.mode == "video-animatediff":
         gen_video_animatediff(args.prompt, args.negative_prompt, args.tier, args.character, args.face_ref, args.out, args.seed,

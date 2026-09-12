@@ -4,15 +4,17 @@ the refactor plan: "do not change the existing CLI subcommands/flags" without de
 sign-off - changing FROZEN_CLI below IS that sign-off, so only do it after confirming the
 CLI change is intentional, never just to make a failing test pass.
 
-The parser is built inside `if __name__ == "__main__":` (training/generate_character.py,
-around line 1208), so it can't be imported without also faking CHARACTERS/pose_skeletons/
-client wiring just to construct the object. AST reads the add_argument() calls straight out
-of the source instead.
+The frozen surface below is checked by reading the add_argument() calls out of the source
+with AST, which keeps working regardless of how the parser is assembled. build_parser() is
+importable too (it was extracted from the __main__ block so main() could be wrapped), so the
+tests at the bottom parse real arguments to check the resolved defaults.
 """
 
 import ast
+import io
 import os
 
+import generate_character as gc
 import pytest
 
 GENERATE_CHARACTER_PATH = os.path.join(
@@ -226,3 +228,50 @@ def test_cli_flags_match_frozen_snapshot(subcommand):
         f"added {added or '{}'}, removed {removed or '{}'}. "
         "If intentional, update FROZEN_CLI in this file to match (deliberate sign-off)."
     )
+
+
+# --- portability: the CLI's --out defaults must not be tied to one machine ----------------------
+
+
+def test_out_defaults_are_derived_from_the_checkout_location():
+    """These were literal r"D:\AI-Image-Lab\..." strings, which made the CLI unusable from a
+    checkout anywhere else unless every invocation passed --out. They must now sit under the
+    repo the module was imported from, and still be absolute."""
+    parser = gc.build_parser()
+    for argv in (
+        ["custom", "--prompt", "x"],
+        ["gif", "--prompt", "x", "--character", "mei", "--anchor", "a.png"],
+        ["video-animatediff", "--prompt", "x", "--face-ref", "f.png"],
+        ["talk", "--image", "i.png", "--audio", "a.wav"],
+    ):
+        out = parser.parse_args(argv).out
+        assert os.path.isabs(out), f"{argv[0]}: --out default is not absolute: {out}"
+        assert out.startswith(gc.TRAINING_DIR), f"{argv[0]}: --out default escaped the checkout: {out}"
+
+
+def test_no_hardcoded_absolute_paths_remain_in_argparse_defaults():
+    """A new flag defaulting to another D:\ literal would reintroduce the problem silently."""
+    with io.open(GENERATE_CHARACTER_PATH, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), GENERATE_CHARACTER_PATH)
+    offenders = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"
+        ):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "default" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                value = kw.value.value
+                if ":\\" in value or value.startswith("/"):
+                    offenders.append(f"line {node.lineno}: {value!r}")
+    assert not offenders, f"argparse defaults must be derived from PROJECT_ROOT: {offenders}"
+
+
+def test_max_prompt_chars_has_a_single_definition():
+    """worker/handler.py used to carry its own copy, so the cloud path could drift from the
+    local one. It now imports this value."""
+    worker = os.path.join(os.path.dirname(os.path.dirname(GENERATE_CHARACTER_PATH)), "worker", "handler.py")
+    with io.open(worker, encoding="utf-8") as f:
+        text = f.read()
+    assert "MAX_PROMPT_CHARS = gc.MAX_PROMPT_CHARS" in text
+    assert gc.MAX_PROMPT_CHARS == 2000

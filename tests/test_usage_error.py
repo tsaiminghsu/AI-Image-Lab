@@ -27,7 +27,8 @@ def test_usage_error_is_an_ordinary_exception():
 def test_library_code_raises_no_systemexit():
     """Every `raise SystemExit` below the CLI layer is a boundary bug waiting to happen. Only
     main() and the __main__ guard - the CLI's own exit path - may use it."""
-    tree = ast.parse(io.open(SOURCE, encoding="utf-8").read(), SOURCE)
+    with io.open(SOURCE, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), SOURCE)
     cli_only = {"main"}
     offenders = []
     for node in ast.walk(tree):

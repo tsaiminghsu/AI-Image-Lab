@@ -43,7 +43,7 @@ ASPECT_SIZES = {
     "9:16": (832, 1216),
     "16:9": (1216, 832),
 }
-MAX_PROMPT_CHARS = 2000
+MAX_PROMPT_CHARS = gc.MAX_PROMPT_CHARS  # one definition, shared with the local CLI/API paths
 _s3 = boto3.client("s3", region_name=AWS_REGION)
 
 
