@@ -107,6 +107,10 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   角色 LoRA」）。
 - 4 個 SDXL / Pony checkpoint 都有 fp8 量化版可選，預設仍是完整版。
 - Z-Image Turbo 只支援純文字生圖，沒有 FaceID / ControlNet / 精修版本。
+- GUI 有 6 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
+  `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是
+  降級成文字（Z-Image、SD1.5），降級時 GUI 會明講。場景庫在 `training/scenes/`（縮圖已
+  commit，`scene_library.py render-thumbs` 重生）。
 - `web/amplify/` 有 **737 行實際的 TypeScript 後端**（DynamoDB + API Gateway + 3 個 Lambda +
   Replicate/RunPod provider + 兩個 webhook），不是骨架——但**從來沒有部署過、沒有整合測試過**
   （這個環境沒有 AWS 帳號），而且**完全沒有前端程式碼**。`web/README.md` 是最準確的說明，

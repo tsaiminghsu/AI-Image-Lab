@@ -5,6 +5,38 @@
 
 ## 2026-09-12
 
+### 「圖片選擇生圖」分頁：點縮圖組 prompt，每個模型自動換成它聽得懂的敘述
+
+- **問題**：每個模型的敘述慣例都不一樣——Pony 要 `score_9` 系列品質標籤、SD1.5 男性角色要把
+  性別加權重（否則被畫成女生）、Z-Image 吃自然語言。使用者得自己記得哪個模型要加什麼，
+  打錯就是白生一張。而且「姿勢」和「臉」在 SDXL 上明明可以用 ControlNet 骨架和 FaceID
+  **結構性地鎖住**，用文字描述反而是最弱的做法。
+- **解法**：新增分頁，人物／姿勢／場景三個縮圖庫各點一張，`gc.plan_picker()` 依 checkpoint
+  翻譯成該模型能接受的輸入：
+  - **SDXL / Pony** → anchor 圖走 FaceID、骨架走 ControlNet（真的鎖住，不是文字）
+  - **Z-Image / SD1.5** → 這兩個沒有這些 adapter（`_plan_custom` 會直接拒絕），所以自動降級成
+    文字：骨架換成它的 `prompt_hint` + `camera`、角色換成外貌描述，並在 GUI 明講哪些被降級了
+  - 最終 prompt 即時預覽。預覽是**直接跑真正的管線函式**（`_plan_custom` →
+    `_build_prompt_and_negative`）產生的，不是另外拼一份字串，所以不可能跟實際送出的內容不一致
+- **順帶修掉的洞**：姿勢庫 31 個裡有 12 個是自動抽取的，`prompt_hint` 是空字串。在有 ControlNet
+  的路徑上沒差（骨架自己會講話），但在 Z-Image/SD1.5 上等於**選了姿勢卻什麼都沒要求**。
+  已全部補上文字描述，並加測試擋住未來再出現空的。
+- **場景庫**（`training/scenes/`，15 個）：縮圖預先生成後 commit，開分頁不用 GPU。
+  `tier` 是能見度規則——`safe` 分級下海灘/泳池那幾個場景根本不會出現在圖庫裡，而不是出現了
+  再讓負面詞去對抗它。
+- **實測（縮圖批次在 8 GB 卡上的兩次卡死）**：原本用 SDXL 原生 1024²，跑到**第 7 張**卡死在
+  `VAEDecode`——7.9/8.2 GB、GPU 100%、**沒有拋 OOM**，是靜默換頁到共享記憶體，在 PCIe x1 上
+  等於停住。改 768² 後撐到**第 10 張**才發生同樣的事，而且那次 ComfyUI 有 132 秒沒回應 HTTP，
+  連客戶端的重試預算都用光。所以壓力不是單張太大，是**同一個 ComfyUI session 連續生成累積的
+  記憶體碎片**。最後兩件一起做：768²（解碼 activation 縮到 56%，反正輸出都是 256px）+ 每張
+  render 前先 `client.free_vram()`（每張多約 20 秒重載 checkpoint，換來整批能無人看顧跑完）。
+  之後每張 12-16 秒、VRAM 穩定在 5.7 GB、溫度 65-73°C。
+- **測試**：`test_picker_plan.py`（每個模型家族的翻譯結果、hint 不重複、安全負面詞在所有家族
+  都存在）、`test_scene_library.py`（含「JSON 有但縮圖沒 commit 就紅」）、
+  `test_pose_library_meta.py`。`test_gui_arity.py` 教會兩件事：`evt: gr.SelectData` 這種由
+  Gradio 依型別注入的參數不算 `inputs=`，以及指派給名字的字面清單長度仍可靜態檢查（新分頁
+  九個事件共用同一組六個輸入元件，不必把清單複製九次）。
+
 ### 翻譯按鈕的 Google Translate 被限流，加 MyMemory 當備援 `bc16bf7`
 
 - **問題**：實測發現 `translate_prompt.py` 唯一用的 Google Translate 免費端點對這台機器的

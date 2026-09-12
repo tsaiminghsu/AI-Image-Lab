@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "scenes": [
+    {
+      "slug": "studio_white",
+      "name_zh": "攝影棚白背景",
+      "prompt": "plain white studio background",
+      "lighting": "studio softbox lighting",
+      "tier": "safe",
+      "thumb_seed": 7101
+    },
+    {
+      "slug": "cozy_cafe",
+      "name_zh": "溫馨咖啡廳",
+      "prompt": "cozy cafe interior",
+      "lighting": "warm indoor lighting",
+      "tier": "safe",
+      "thumb_seed": 7102
+    },
+    {
+      "slug": "city_street",
+      "name_zh": "城市街道",
+      "prompt": "quiet city street",
+      "lighting": "overcast daylight",
+      "tier": "safe",
+      "thumb_seed": 7103
+    },
+    {
+      "slug": "park_trees",
+      "name_zh": "公園綠地",
+      "prompt": "park with trees",
+      "lighting": "golden hour sunlight",
+      "tier": "safe",
+      "thumb_seed": 7104
+    },
+    {
+      "slug": "bright_bedroom",
+      "name_zh": "明亮臥室",
+      "prompt": "bright bedroom interior",
+      "lighting": "soft natural window light",
+      "tier": "safe",
+      "thumb_seed": 7105
+    },
+    {
+      "slug": "outdoor_garden",
+      "name_zh": "戶外花園",
+      "prompt": "outdoor garden",
+      "lighting": "overcast daylight",
+      "tier": "safe",
+      "thumb_seed": 7106
+    },
+    {
+      "slug": "minimalist_room",
+      "name_zh": "極簡室內",
+      "prompt": "minimalist indoor setting",
+      "lighting": "soft rim light",
+      "tier": "safe",
+      "thumb_seed": 7107
+    },
+    {
+      "slug": "bookstore",
+      "name_zh": "書店",
+      "prompt": "bookstore interior",
+      "lighting": "warm indoor lighting",
+      "tier": "safe",
+      "thumb_seed": 7108
+    },
+    {
+      "slug": "night_neon_street",
+      "name_zh": "夜晚霓虹街",
+      "prompt": "city street at night, neon signs",
+      "lighting": "soft rim light",
+      "tier": "safe",
+      "thumb_seed": 7109
+    },
+    {
+      "slug": "rooftop_sunset",
+      "name_zh": "天台夕陽",
+      "prompt": "rooftop terrace overlooking the city",
+      "lighting": "golden hour sunlight",
+      "tier": "safe",
+      "thumb_seed": 7110
+    },
+    {
+      "slug": "beach_sunset",
+      "name_zh": "夕陽海灘",
+      "prompt": "beach at sunset",
+      "lighting": "golden hour sunlight",
+      "tier": "suggestive",
+      "thumb_seed": 7111
+    },
+    {
+      "slug": "poolside",
+      "name_zh": "泳池畔",
+      "prompt": "poolside",
+      "lighting": "golden hour sunlight",
+      "tier": "suggestive",
+      "thumb_seed": 7112
+    },
+    {
+      "slug": "beach_day",
+      "name_zh": "白天海灘",
+      "prompt": "beach during the day",
+      "lighting": "overcast daylight",
+      "tier": "suggestive",
+      "thumb_seed": 7113
+    },
+    {
+      "slug": "tropical_resort",
+      "name_zh": "熱帶度假村",
+      "prompt": "tropical resort",
+      "lighting": "golden hour sunlight",
+      "tier": "suggestive",
+      "thumb_seed": 7114
+    },
+    {
+      "slug": "lakeside_dock",
+      "name_zh": "湖畔木棧道",
+      "prompt": "lakeside dock",
+      "lighting": "overcast daylight",
+      "tier": "suggestive",
+      "thumb_seed": 7115
+    }
+  ]
+}

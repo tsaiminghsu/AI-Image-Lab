@@ -14,6 +14,7 @@ import pytest
         "pose_skeletons",
         "pose_pack",
         "benchmark",
+        "scene_library",
     ],
 )
 def test_module_imports_offline(name):

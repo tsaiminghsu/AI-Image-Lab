@@ -18,6 +18,7 @@ the character recognizable across the dataset.
 """
 
 import argparse
+import glob
 import os
 import random
 import shutil
@@ -25,6 +26,7 @@ from types import SimpleNamespace
 
 import comfyui_client as client
 import pose_skeletons
+import scene_library
 
 # "photorealistic, high detail" reads to SDXL as "polished digital art" as
 # much as "photo" - it's a big part of why outputs look like a 3D render.
@@ -781,6 +783,92 @@ def _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facede
         height=height,
         effective_checkpoint=effective_checkpoint,
         ckpt_kwargs=ckpt_kwargs,
+    )
+
+
+def picker_anchor_path(trigger):
+    """The character's identity reference for the picker, or None if it has no anchor yet.
+
+    Matches only anchor_seed*.png deliberately: reference_candidates/<char>/ also accumulates
+    var_*.png and gui_seed*.png, which are generated outputs. Feeding one of those back as the
+    FaceID reference would compound whatever drift it already had.
+    """
+    return next(iter(sorted(glob.glob(os.path.join(REFERENCE_CANDIDATES_DIR, trigger, "anchor_seed*.png")))), None)
+
+
+def plan_picker(character=None, pose_slug=None, scene_slug=None, checkpoint=None, tier="safe", extra_text=None):
+    """Resolve three thumbnail picks - character, pose, scene - into what the chosen checkpoint
+    can actually be given, plus a preview of the exact strings it will receive.
+
+    The picker UI offers the same three choices whatever the checkpoint, but only the SDXL/Pony
+    family can honour them structurally: it takes the pose as a ControlNet skeleton and the
+    character as a FaceID anchor. Z-Image and SD1.5 have neither adapter wired up (_plan_custom
+    rejects both outright), so for those the same picks are degraded to words - the skeleton's
+    prompt_hint and camera, and the character's description with no face locking. That degrade
+    is the point of the tab rather than a limitation to hide: every family gets asked in the
+    dialect it understands. `notices` says in Chinese which picks became text-only, so the GUI
+    can warn before the user spends a generation discovering the pose was only a suggestion.
+
+    preview_prompt/preview_negative come from running the real pipeline helpers (_plan_custom,
+    then _build_prompt_and_negative) over the resolved plan rather than re-deriving them, so the
+    preview cannot drift from what gen_custom will send - Pony's quality tags, SD1.5's gender
+    weight, the safety negatives and the skeleton's hint all appear exactly where they will.
+    Callers pass the returned prompt_body/anchor_path/pose_name straight on to the generator.
+    """
+    trigger = character or None
+    is_text_only = checkpoint in client.ZIMAGE_MODELS or checkpoint in client.SD15_CHECKPOINTS
+    label = checkpoint or DEFAULT_CUSTOM_CHECKPOINT
+    notices = []
+    parts = []
+
+    if scene_slug:
+        parts.append(scene_library.scene_text(scene_slug))
+
+    anchor_path = None
+    pose_name = None
+    if is_text_only:
+        if pose_slug:
+            meta = pose_skeletons.load_meta(pose_slug)
+            parts.extend(v for v in (meta.get("prompt_hint"), meta.get("camera")) if v)
+            tag = str(meta.get("tag") or pose_slug).replace("_", " ")
+            notices.append(f"{label} 沒有 ControlNet：姿勢「{tag}」只會用文字描述，實際姿勢不保證跟骨架一樣")
+        if trigger:
+            notices.append(f"{label} 沒有 FaceID：角色「{trigger}」只會用文字描述，不會鎖臉")
+    else:
+        pose_name = pose_slug or None
+        if trigger:
+            anchor_path = picker_anchor_path(trigger)
+            if not anchor_path:
+                # Not "will fall back to text": the SDXL path refuses trigger-without-anchor
+                # rather than putting a stranger's face under that character's name, so the
+                # notice has to predict the refusal instead of promising a degrade.
+                notices.append(
+                    f"角色「{trigger}」還沒有 anchor 圖——這個 checkpoint 需要它才能鎖臉，"
+                    "請先產生一張，或改用 Z-Image / SD1.5（那些本來就只用文字描述）"
+                )
+
+    if extra_text and extra_text.strip():
+        parts.append(extra_text.strip())
+
+    prompt_body = ", ".join(parts)
+    ready = bool(prompt_body.strip())
+    preview_prompt = preview_negative = ""
+    if ready:
+        plan = _plan_custom(prompt_body, anchor_path, None, pose_name, None, checkpoint, True, None, None, None)
+        preview_prompt, preview_negative = _build_prompt_and_negative(
+            plan.prompt, None, tier, trigger, REALISTIC_STYLE, REALISTIC_NEGATIVE, plan.effective_checkpoint,
+        )
+
+    return SimpleNamespace(
+        mode="text_only" if is_text_only else "controlnet_faceid",
+        trigger=trigger,
+        anchor_path=anchor_path,
+        pose_name=pose_name,
+        prompt_body=prompt_body,
+        preview_prompt=preview_prompt,
+        preview_negative=preview_negative,
+        notices=notices,
+        ready=ready,
     )
 
 

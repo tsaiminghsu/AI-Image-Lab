@@ -979,6 +979,25 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
   之後不用重新下載。下載+運算過程可能需要 5-10 分鐘（視網路速度），之後每次
   生成就跟平常一樣快
 
+#### 圖片選擇生圖（點縮圖組 prompt，不用自己打字）
+
+- 分頁「🎯 圖片選擇生圖」：人物、姿勢、場景三個縮圖庫各點一張，系統依照你選的
+  checkpoint 組出它聽得懂的敘述，送出的完整 prompt 會即時顯示在右邊的預覽欄
+- **每個模型的敘述方式不一樣，這個分頁替你處理掉**：Pony 系自動加
+  `score_9, score_8_up, score_7_up` 品質標籤、SD1.5 自動把性別加權重（見「男性角色被
+  畫成女生」），你不用記得哪個模型要加什麼
+- **SDXL / Pony**：姿勢走 ControlNet 骨架、臉走 IP-Adapter FaceID，是真的鎖住，
+  不是只在 prompt 裡描述
+- **Z-Image / SD1.5**：這兩個沒有 ControlNet 也沒有 FaceID，選到時姿勢會自動改用該骨架
+  的文字描述（`prompt_hint` + `camera`）、角色改用外貌文字描述，預覽欄下方會明講哪些
+  被降級成文字了——不會安靜地少做事
+- 人物縮圖是各角色的 anchor 圖（只認 `anchor_seed*.png`，不會誤用先前的生成結果）；
+  還沒有 anchor 的角色不會出現在圖庫裡，下方會列出是哪些
+- 場景庫在 `training/scenes/`（15 個，縮圖已 commit，開分頁不需要 GPU）。內容分級選
+  `suggestive` 才會多出海灘/泳池等場景
+- 「補充描述」欄選填，**可以打中文**，送出前會自動翻成英文接在最後面
+- 其餘參數（HQ 兩段式、臉部/手部精修、畫布比例）走預設值，要細調請改用「自訂生圖」分頁
+
 #### 臉部/手部精修（ADetailer）
 
 - 點開「臉部/手部精修」摺疊區塊，勾選核取方塊即可，需要 anchor 圖
@@ -1184,6 +1203,26 @@ python generate_character.py custom --prompt "a cup of coffee on a wooden table"
 `SUGGESTIVE_NEGATIVE`）不受這兩個參數影響，永遠固定套用——這兩個參數只調整
 風格/寫實感相關的用詞，不是內容分級的開關。網頁 GUI 的「風格正/負面詞」摺疊
 區塊做的就是同一件事，省去每次都要打 CLI 參數或改程式碼的麻煩。
+
+### 場景庫縮圖（`scene_library.py`）
+
+「圖片選擇生圖」分頁的場景縮圖是預先生成後 commit 的，所以開分頁不需要 GPU。加了新場景
+（編輯 `training/scenes/scenes.json`）之後才需要重跑，需要 ComfyUI 開著：
+
+```powershell
+ComfyUI\.venv\Scripts\python.exe training\scene_library.py list
+ComfyUI\.venv\Scripts\python.exe training\scene_library.py render-thumbs
+ComfyUI\.venv\Scripts\python.exe training\scene_library.py render-thumbs --only cozy_cafe --force
+```
+
+已經有縮圖的場景會跳過（`--force` 重生）。用 juggernaut 以 768×768 生成後縮成 256px
+JPEG，並套用「不要有人」的負面詞——不加的話「空的咖啡廳」還是常常會坐個人進去，縮圖裡有
+陌生人會被誤讀成你選的角色。
+
+**每張 render 前會先 `/free` 釋放 VRAM**：實測在這張 8 GB 卡上，同一個 ComfyUI session
+連續生成會累積記憶體碎片，用 1024² 跑到第 7 張、用 768² 跑到第 10 張就會卡死在 VAEDecode
+（GPU 100%、不拋 OOM，是靜默換頁到共享記憶體，PCIe x1 上等於停住）。每張多約 20 秒重載
+checkpoint，換來整批能無人看顧跑完。細節見 `training/scenes/README.md`。
 
 ### 量化版模型（CLI）
 
@@ -1738,6 +1777,7 @@ AI-Image-Lab/
 │   ├── benchmark.py          # VRAM/RAM 記憶體洩漏測試
 │   ├── quantize_models.py    # 把 SDXL/Pony checkpoint 轉成 fp8 量化版 + 版本設定 CLI（用 ComfyUI 的 venv 跑）
 │   ├── pose_skeletons.py     # OpenPose 骨架庫（poses/ 裡的 json/png）
+│   ├── scene_library.py      # 場景庫（scenes/ 裡的 json + 縮圖）+ 縮圖生成 CLI
 │   ├── pose_pack.py          # 姿勢/角度標籤參考包產生器（每個標籤一張圖）
 │   ├── model_prompt_test.py  # 各 checkpoint 的 prompt 語法探索腳本（手動跑，不在流程裡）
 │   ├── image_api.py          # FastAPI 包裝 gen_custom()，給外部專案用 HTTP 呼叫
@@ -1759,6 +1799,7 @@ AI-Image-Lab/
 │   ├── config/               # kohya_ss 訓練設定（mylora.toml 等，本地那次的產物）
 │   ├── logs/                 # kohya_ss 訓練 log（train_mylora.*.log）
 │   ├── poses/                # 骨架庫的 json + 預覽圖 + contact sheet
+│   ├── scenes/               # 場景庫 scenes.json + thumbs/（圖片選擇生圖分頁用，有進 repo）
 │   ├── settings/             # 本機設定（model_variants.json），不進 repo
 │   └── reference_candidates/ # anchor 候選圖，不進 repo
 ├── datasets/<character>/     # 生成的訓練圖 + caption，不進 repo

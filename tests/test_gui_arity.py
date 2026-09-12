@@ -22,9 +22,15 @@ import pytest
 
 GUI_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "training", "gui.py")
 
-EVENT_METHODS = {"click", "change", "submit", "upload", "select", "input", "release"}
+EVENT_METHODS = {"click", "change", "submit", "upload", "select", "input", "release", "then"}
 
-# The five generation entry points every tab's primary button is wired to. If gui.py stops
+# Parameters Gradio fills in itself rather than from `inputs=`. It decides this by annotation
+# (utils.is_special_typed_parameter -> special_args, gradio/blocks.py), removing them from the
+# positional binding entirely - so `def f(evt: gr.SelectData)` with `inputs=None` is correct
+# and must not be counted as a missing input here.
+SPECIAL_ANNOTATIONS = {"SelectData", "EventData", "Request", "OAuthProfile", "OAuthToken"}
+
+# The generation entry points every tab's primary button is wired to. If gui.py stops
 # calling one of these from an event binding, the arity test below would silently stop
 # covering it - test_generation_handlers_are_covered catches that.
 GENERATION_HANDLERS = {
@@ -33,6 +39,7 @@ GENERATION_HANDLERS = {
     "generate_talking_head_ui",
     "generate_video_svd",
     "generate_gif",
+    "generate_from_picker",
 }
 
 
@@ -78,10 +85,38 @@ def _component_names(tree):
     return names
 
 
-def _inputs_count(inputs_node, component_names):
+def _list_literal_lengths(tree):
+    """Names bound to a plain `x = [a, b, c]` inside the Blocks tree, mapped to their length.
+
+    Lets a binding share one `inputs=` list across several events (gui.py's picker tab reuses
+    the same six components for every preview refresh) without giving up the arity check -
+    the length is still right there in the source. Deliberately only literal lists: a
+    comprehension like `variant_radios = [gr.Radio(...) for ...]` (gui.py) has no statically
+    known length and must still be paired with a `*args` handler.
+    """
+    lengths = {}
+
+    def visit(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if (
+                isinstance(child, ast.Assign)
+                and len(child.targets) == 1
+                and isinstance(child.targets[0], ast.Name)
+                and isinstance(child.value, (ast.List, ast.Tuple))
+            ):
+                lengths[child.targets[0].id] = len(child.value.elts)
+            visit(child)
+
+    visit(tree)
+    return lengths
+
+
+def _inputs_count(inputs_node, component_names, list_lengths):
     """Expected positional-arg count implied by an `inputs=` value, or None when it's a
-    bare Name that isn't a single component (i.e. a list variable) - callers must then
-    require the handler to take `*args`, since the true count isn't visible statically."""
+    bare Name that is neither a single component nor a known list literal - callers must
+    then require the handler to take `*args`, since the true count isn't visible statically."""
     if inputs_node is None:
         return 0
     if isinstance(inputs_node, ast.Constant) and inputs_node.value is None:
@@ -89,7 +124,9 @@ def _inputs_count(inputs_node, component_names):
     if isinstance(inputs_node, (ast.List, ast.Tuple)):
         return len(inputs_node.elts)
     if isinstance(inputs_node, ast.Name):
-        return 1 if inputs_node.id in component_names else None
+        if inputs_node.id in component_names:
+            return 1
+        return list_lengths.get(inputs_node.id)
     return None  # e.g. a BinOp like `outputs=x + [y]` - not used for inputs= today
 
 
@@ -107,8 +144,20 @@ def _handler_info(call, functions):
         label = handler_node.id
     else:
         return None
-    arity = len(node_args.posonlyargs) + len(node_args.args)
+    positional = node_args.posonlyargs + node_args.args
+    arity = sum(1 for a in positional if not _is_special_param(a))
     return label, arity, node_args.vararg is not None
+
+
+def _is_special_param(arg):
+    """True for a parameter Gradio injects by type (`evt: gr.SelectData`, `req: gr.Request`, ...)
+    rather than taking from `inputs=`."""
+    ann = arg.annotation
+    if isinstance(ann, ast.Attribute):
+        return ann.attr in SPECIAL_ANNOTATIONS
+    if isinstance(ann, ast.Name):
+        return ann.id in SPECIAL_ANNOTATIONS
+    return False
 
 
 def _collect_bindings():
@@ -117,6 +166,7 @@ def _collect_bindings():
     tree = _load_tree()
     functions = _find_functions(tree)
     component_names = _component_names(tree)
+    list_lengths = _list_literal_lengths(tree)
     bindings = []
     for node in ast.walk(tree):
         if not (
@@ -128,7 +178,7 @@ def _collect_bindings():
             continue
         label, arity, is_variadic = info
         inputs_kw = next((kw.value for kw in node.keywords if kw.arg == "inputs"), None)
-        inputs_count = _inputs_count(inputs_kw, component_names)
+        inputs_count = _inputs_count(inputs_kw, component_names, list_lengths)
         test_id = f"gui.py:{node.lineno}:{label}"
         bindings.append((test_id, label, arity, inputs_count, is_variadic, node.lineno))
     return bindings

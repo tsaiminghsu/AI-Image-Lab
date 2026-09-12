@@ -23,6 +23,7 @@ import caption_image
 import comfyui_client as client
 import generate_character as gc
 import pose_skeletons
+import scene_library
 import talking_head
 import translate_prompt
 
@@ -164,6 +165,42 @@ MOTION_LORA_NONE = "(無 - 純 prompt 描述動作)"
 MOTION_LORA_CHOICES = [MOTION_LORA_NONE] + sorted(client.ANIMATEDIFF_MOTION_LORAS)
 
 
+def picker_characters():
+    """(trigger, anchor_path, caption) for every character that has an identity anchor.
+
+    Characters with no anchor_seed*.png yet are left out of the gallery entirely rather than
+    shown as a broken tile: on SDXL they are the one pick that cannot be honoured at all, and a
+    tile you can click but that silently does less than the others is worse than no tile.
+    """
+    rows = []
+    for trigger in sorted(gc.CHARACTERS):
+        anchor = gc.picker_anchor_path(trigger)
+        if not anchor:
+            continue
+        profile = gc.CHARACTERS[trigger]
+        gender = "女性" if profile["gender"] == "woman" else "男性"
+        rows.append((trigger, anchor, f"{trigger}｜{profile['age']} 歲{gender}"))
+    return rows
+
+
+def picker_pose_items():
+    """(slug, skeleton_png, caption) for the pose gallery. The caption is the library's own tag
+    with underscores relaxed - the 12 bootstrapped entries store it as their slug."""
+    items = []
+    for slug in pose_skeletons.list_names():
+        meta = pose_skeletons.load_meta(slug)
+        items.append((slug, pose_skeletons.resolve(slug), str(meta.get("tag") or slug).replace("_", " ")))
+    return items
+
+
+def picker_scene_items(tier):
+    return [(s["slug"], scene_library.thumb_path(s["slug"]), s["name_zh"]) for s in scene_library.list_scenes(tier)]
+
+
+def _gallery_value(items):
+    return [(path, caption) for _slug, path, caption in items]
+
+
 def _variant_label(row):
     full = f"完整版 {row['full_gb']} GB" if row["full_present"] else "完整版（找不到檔案）"
     quant = f"量化版 {row['quant_gb']} GB" if row["quant_present"] else "量化版（還沒轉出）"
@@ -286,6 +323,94 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
                   facedetailer_face_denoise=face_denoise if use_facedetailer else None,
                   facedetailer_hand_denoise=hand_denoise if use_facedetailer else None)
     return os.path.join(out_dir, f"{stem}.png")
+
+
+def select_picker_character(evt: gr.SelectData):
+    return picker_characters()[evt.index][0]
+
+
+def select_picker_pose(evt: gr.SelectData):
+    return picker_pose_items()[evt.index][0]
+
+
+def select_picker_scene(tier, evt: gr.SelectData):
+    return picker_scene_items(tier)[evt.index][0]
+
+
+def refresh_picker_scenes(tier):
+    """The suggestive-tier scenes only exist at that tier, so switching back to safe has to drop
+    both the tiles and any selection made from them - otherwise a beach scene stays selected
+    while invisible, and generates."""
+    return gr.update(value=_gallery_value(picker_scene_items(tier)), selected_index=None), None
+
+
+def _picker_extra_in_english(extra_text):
+    """CLIP largely ignores Chinese, so a Chinese 補充描述 would quietly do nothing. Translate it
+    here rather than making the user press the button first - the point of this tab is that
+    typing correct model-facing text is not a prerequisite."""
+    if not extra_text or not extra_text.strip() or extra_text.isascii():
+        return extra_text
+    try:
+        return translate_prompt.translate_to_english(extra_text)
+    except RuntimeError as exc:
+        raise gr.Error(f"補充描述翻譯失敗（{exc}）——可以先自己改成英文，或清空這一欄") from exc
+
+
+def update_picker_preview(character, pose_slug, scene_slug, checkpoint_choice, tier, extra_text):
+    checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
+    try:
+        plan = gc.plan_picker(character, pose_slug, scene_slug, checkpoint, tier, extra_text)
+    except (gc.UsageError, ValueError) as exc:
+        return "", f"⚠️ {exc}"
+    if not plan.ready:
+        return "", "選一個場景或姿勢（或填補充描述）就會在這裡看到實際送出的 prompt。"
+    lines = [f"- ⚠️ {n}" for n in plan.notices]
+    if plan.mode == "controlnet_faceid":
+        locked = []
+        if plan.anchor_path:
+            locked.append("臉（FaceID anchor）")
+        if plan.pose_name:
+            locked.append("姿勢（ControlNet 骨架）")
+        if locked:
+            lines.insert(0, f"- ✅ 這個 checkpoint 會真的鎖住：{'、'.join(locked)}")
+    if extra_text and not str(extra_text).isascii():
+        lines.append("- ℹ️ 補充描述是中文，送出前會自動翻成英文（預覽顯示的是翻譯前的組合）")
+    return plan.preview_prompt, "\n".join(lines)
+
+
+@_show_usage_errors
+def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, tier, seed, extra_text):
+    """Run a generation from three thumbnail picks.
+
+    Delegates to generate() rather than calling gc.gen_custom itself: that handler carries ~90
+    lines of gating (Z-Image model-file check, variant preflight, the HQ-only skeleton rule,
+    canvas/crop guard, starting ComfyUI, where the output lands) which must not exist twice.
+    plan_picker has already nulled the anchor and skeleton for checkpoints that can't take them,
+    so none of generate()'s rejections can fire on input that got here.
+    """
+    checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
+    plan = gc.plan_picker(character, pose_slug, scene_slug, checkpoint, tier, _picker_extra_in_english(extra_text))
+    if not plan.ready:
+        raise gr.Error("至少要選一個場景或姿勢，或在「補充描述」填點東西——只選角色沒有畫面可以生成")
+    if plan.trigger and not plan.anchor_path and plan.mode == "controlnet_faceid":
+        # Unreachable from the gallery (picker_characters only lists characters that have an
+        # anchor), but generate() refuses trigger-without-anchor on SDXL rather than quietly
+        # producing a stranger under that name - so say the same thing in this tab's terms
+        # instead of letting its less specific message through.
+        raise gr.Error(
+            f"角色「{plan.trigger}」還沒有 anchor 圖，這個 checkpoint 需要它才能鎖臉。"
+            f"先用 `generate_character.py anchors --character {plan.trigger}` 產生一張，"
+            "或改用 Z-Image / SD1.5（那些本來就只用文字描述）"
+        )
+    for notice in plan.notices:
+        gr.Info(notice)
+    return generate(
+        plan.trigger or NO_CHARACTER, plan.anchor_path, None, plan.prompt_body, tier, "", seed,
+        client.IP_ADAPTER_WEIGHT, None, plan.pose_name or POSE_NONE, client.CONTROLNET_STRENGTH,
+        RESOLUTION_AUTO, True, client.HIRES_DENOISE, client.CHARACTER_LORA_STRENGTH,
+        True, client.FACEDETAILER_FACE_DENOISE, client.FACEDETAILER_HAND_DENOISE, FACEDETAILER_BACKEND_YOLO,
+        gc.REALISTIC_STYLE, gc.REALISTIC_NEGATIVE, checkpoint_choice, 0.0,
+    )
 
 
 @_show_usage_errors
@@ -701,6 +826,108 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
                         gif_checkpoint_choice, gif_lora_strength],
                 outputs=gif_output,
+                concurrency_id="gpu",
+            )
+
+        with gr.Tab("🎯 圖片選擇生圖"):
+            gr.Markdown(
+                "**點圖就好，不用自己想 prompt。**選人物、姿勢、場景各一張，系統會依照你選的 checkpoint "
+                "組出它聽得懂的敘述——Pony 系自動加品質標籤、SD1.5 自動加性別權重，"
+                "而且在 SDXL/Pony 上姿勢是走 ControlNet 骨架、臉是走 FaceID，不是只用文字講。\n\n"
+                "Z-Image 跟 SD1.5 沒有這兩個功能，選到那些 checkpoint 時姿勢和臉會**自動改成文字描述**，"
+                "下方會明講哪些被降級了。送出的完整 prompt 會即時顯示在預覽欄，不用猜。"
+            )
+            pick_char_state = gr.State(None)
+            pick_pose_state = gr.State(None)
+            pick_scene_state = gr.State(None)
+            with gr.Row():
+                with gr.Column(scale=3):
+                    with gr.Row():
+                        gr.Markdown("### 1. 人物")
+                        pick_char_clear = gr.Button("清除人物", size="sm", scale=0)
+                    pick_char_gallery = gr.Gallery(
+                        value=_gallery_value(picker_characters()), columns=5, height=250,
+                        allow_preview=False, object_fit="cover", show_label=False, buttons=[],
+                    )
+                    _picker_skipped = [t for t in sorted(gc.CHARACTERS) if not gc.picker_anchor_path(t)]
+                    if _picker_skipped:
+                        gr.Markdown(
+                            f"（{'、'.join(_picker_skipped)} 還沒有 anchor 圖，先不列在這裡——"
+                            "用 `generate_character.py anchors` 產生後就會自動出現）"
+                        )
+                    with gr.Row():
+                        gr.Markdown("### 2. 姿勢")
+                        pick_pose_clear = gr.Button("清除姿勢", size="sm", scale=0)
+                    pick_pose_gallery = gr.Gallery(
+                        value=_gallery_value(picker_pose_items()), columns=6, height=300,
+                        allow_preview=False, object_fit="contain", show_label=False, buttons=[],
+                    )
+                    with gr.Row():
+                        gr.Markdown("### 3. 場景")
+                        pick_scene_clear = gr.Button("清除場景", size="sm", scale=0)
+                    pick_scene_gallery = gr.Gallery(
+                        value=_gallery_value(picker_scene_items("safe")), columns=5, height=250,
+                        allow_preview=False, object_fit="cover", show_label=False, buttons=[],
+                    )
+                with gr.Column(scale=2):
+                    pick_checkpoint = gr.Dropdown(
+                        CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
+                    )
+                    pick_tier = gr.Radio(
+                        ["safe", "suggestive"], value="safe",
+                        label="內容分級（suggestive 會多出海灘/泳池等場景；露骨內容依然封鎖）",
+                    )
+                    # Distinct from every other tab's default (9000: 自訂生圖/GIF; 6001: AnimateDiff/SVD) -
+                    # measured 2026-09-12: two GUI sessions both defaulting to 9000 submitted around the
+                    # same time and one clobbered gui_seed9000.png before the other's client read it back,
+                    # so a tab's own client displayed a completely different generation as its result.
+                    # Different defaults across tabs reduce how often that collision fires; it doesn't
+                    # eliminate it (nothing stops someone typing 9000 here too, or two picker tabs racing
+                    # each other), since output filenames are seed-keyed rather than job-id-keyed.
+                    pick_seed = gr.Number(value=4001, label="Seed", precision=0)
+                    pick_extra = gr.Textbox(
+                        label="補充描述（選填，中文也可以，送出前會自動翻成英文）", lines=2,
+                        placeholder="例如：手上拿著紙杯、戴著耳機",
+                    )
+                    pick_preview = gr.Textbox(
+                        label="實際送出的 prompt（唯讀，含這個 checkpoint 需要的標籤）",
+                        lines=6, interactive=False,
+                    )
+                    pick_notice = gr.Markdown("選一個場景或姿勢（或填補充描述）就會在這裡看到實際送出的 prompt。")
+                    pick_btn = gr.Button("生成", variant="primary")
+                    pick_output = gr.Image(label="結果")
+
+            _preview_inputs = [pick_char_state, pick_pose_state, pick_scene_state,
+                               pick_checkpoint, pick_tier, pick_extra]
+            _preview_outputs = [pick_preview, pick_notice]
+            pick_char_gallery.select(select_picker_character, inputs=None, outputs=pick_char_state).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_pose_gallery.select(select_picker_pose, inputs=None, outputs=pick_pose_state).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_scene_gallery.select(select_picker_scene, inputs=[pick_tier], outputs=pick_scene_state).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_char_clear.click(
+                lambda: (None, gr.update(selected_index=None)), inputs=None,
+                outputs=[pick_char_state, pick_char_gallery]).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_pose_clear.click(
+                lambda: (None, gr.update(selected_index=None)), inputs=None,
+                outputs=[pick_pose_state, pick_pose_gallery]).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_scene_clear.click(
+                lambda: (None, gr.update(selected_index=None)), inputs=None,
+                outputs=[pick_scene_state, pick_scene_gallery]).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_tier.change(
+                refresh_picker_scenes, inputs=pick_tier, outputs=[pick_scene_gallery, pick_scene_state]).then(
+                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_checkpoint.change(update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_extra.change(update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+            pick_btn.click(
+                generate_from_picker,
+                inputs=[pick_char_state, pick_pose_state, pick_scene_state, pick_checkpoint,
+                        pick_tier, pick_seed, pick_extra],
+                outputs=pick_output,
                 concurrency_id="gpu",
             )
 
