@@ -13,7 +13,11 @@ on:
   workflow_call: # worker-image.yml gates the Docker build on this
 
 concurrency:
-  group: checks-${{ github.ref }}
+  # github.workflow is the CALLER's name under workflow_call, so the standalone run and the
+  # one worker-image.yml pulls in land in different groups. Without that they collide on a
+  # push that triggers both, and one silently cancels the other (measured: the standalone
+  # Checks run on 57d44a0 was cancelled after 2s by the worker-image build's copy).
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,9 +30,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11" # matches ComfyUI\.venv (3.11.15)
           cache: pip
