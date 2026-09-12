@@ -401,6 +401,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
                 style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
             gr.Markdown(
+                "**目前預設（cyberrealistic_pony + HQ + 精修）就是實測最真實、失真最少的組合，不用改就能直接用。**"
+                "純文字生圖、不需要鎖臉/姿勢/精修時，`z_image_turbo` 寫實度和手部更好，可以切過去試試。\n\n"
                 "**什麼時候要切換 checkpoint：**\n"
                 "- 需要「Anchor 身分鎖定」「骨架姿勢控制」或「臉部/手部精修」任一項 → 只能選 SDXL 系列"
                 "（juggernaut / pony / cyberrealistic_pony / pony_realism），這三個功能都是接在 SDXL 專用模型檔上，"
@@ -458,6 +460,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
         "跟上面的靜態圖是分開的 workflow，用 SD1.5 + AnimateDiff motion module 生成短動態影片，"
         "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分，再把所有影格的臉部一起重新採樣精修（不會一幀一個樣）——"
         "解決純 SVD img2vid（見 README「幫已有的圖片配上動作」）常見的臉部變形/融化問題。"
+        "**目前預設（realistic_vision、高清開、精修開、LCM 關）就是實測畫質最完整的組合，不用改就能直接用；"
+        "只有女性角色、想省時間才建議勾 LCM 快速模式——男性角色開 LCM 常常會被畫成女生，見下方勾選框說明。**"
         "預設流程：採樣 512² → 二段式高清 768² → 臉部精修 → ESRGAN 放大到長邊 1024 → mp4。"
         "第一次執行會比較久（SD1.5 checkpoint、motion module、FaceID SD1.5 模型是分開載入的新模型組合）。"
     )
@@ -491,7 +495,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     video_interp = gr.Radio(list(client.ANIMATEDIFF_INTERP_CHOICES), value=1,
                                             label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
                     video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
-                video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README）")
+                video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README。男性角色實測常被畫成女生，不建議勾）")
             video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.ANIMATEDIFF_FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
             with gr.Row():
                 video_faceid_v2_weight = gr.Slider(0.0, 3.0, value=client.ANIMATEDIFF_FACEID_V2_WEIGHT, step=0.1,
