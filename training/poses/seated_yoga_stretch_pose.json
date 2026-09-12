@@ -1,7 +1,7 @@
 {
   "tag": "seated_yoga_stretch_pose",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "side view, eye level",
+  "prompt_hint": "seated on the floor, legs extended forward, leaning forward reaching toward the toes",
   "source": "extracted from seated_yoga_stretch_pose.png",
   "canvas_width": 832,
   "canvas_height": 1216,

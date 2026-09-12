@@ -1,7 +1,7 @@
 {
   "tag": "hands_in_pockets",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "standing, both hands in the trouser pockets",
   "source": "extracted from hands_in_pockets.png; legs rebuilt (source render cropped at the knee) and figure uniformly rescaled to fit the full body in frame",
   "canvas_width": 832,
   "canvas_height": 1216,

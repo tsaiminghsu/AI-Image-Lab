@@ -1,7 +1,7 @@
 {
   "tag": "arms_crossed",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "standing, arms crossed over the chest",
   "source": "extracted from arms_crossed.png; legs rebuilt (source render cropped at the knee) and figure uniformly rescaled to fit the full body in frame",
   "canvas_width": 832,
   "canvas_height": 1216,

@@ -1,7 +1,7 @@
 {
   "tag": "sitting_on_the_floor_knees_bent",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "3/4 view, eye level",
+  "prompt_hint": "sitting on the floor, knees bent, one hand on the floor behind for support",
   "source": "extracted from sitting_on_the_floor_knees_bent.png",
   "canvas_width": 832,
   "canvas_height": 1216,

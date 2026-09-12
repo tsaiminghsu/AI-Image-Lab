@@ -1,7 +1,7 @@
 {
   "tag": "jogging_pose_mid_stride",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "3/4 view, eye level",
+  "prompt_hint": "jogging mid-stride, one knee lifted, elbows bent",
   "source": "extracted from jogging_pose_mid_stride.png; legs rebuilt (source render cropped at the knee) and figure uniformly rescaled to fit the full body in frame",
   "canvas_width": 832,
   "canvas_height": 1216,

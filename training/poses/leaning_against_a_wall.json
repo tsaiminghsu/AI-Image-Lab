@@ -1,7 +1,7 @@
 {
   "tag": "leaning_against_a_wall",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "3/4 view, eye level",
+  "prompt_hint": "leaning against a wall, one arm raised overhead against it",
   "source": "extracted from leaning_against_a_wall.png; legs rebuilt (source render cropped at the knee) and figure uniformly rescaled to fit the full body in frame",
   "canvas_width": 832,
   "canvas_height": 1216,

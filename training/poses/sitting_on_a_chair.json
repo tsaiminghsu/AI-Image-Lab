@@ -1,7 +1,7 @@
 {
   "tag": "sitting_on_a_chair",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "side view, eye level",
+  "prompt_hint": "sitting on a chair, knees bent, hands resting on the lap",
   "source": "extracted from sitting_on_a_chair.png",
   "canvas_width": 832,
   "canvas_height": 1216,

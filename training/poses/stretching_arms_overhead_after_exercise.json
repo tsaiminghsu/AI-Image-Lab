@@ -1,7 +1,7 @@
 {
   "tag": "stretching_arms_overhead_after_exercise",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "standing, both arms stretched overhead",
   "source": "extracted from stretching_arms_overhead_after_exercise.png",
   "canvas_width": 832,
   "canvas_height": 1216,

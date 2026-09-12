@@ -1,7 +1,7 @@
 {
   "tag": "standing_yoga_tree_pose",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "tree pose, standing on one leg, the other foot resting against the inner thigh",
   "source": "extracted from standing_yoga_tree_pose.png",
   "canvas_width": 832,
   "canvas_height": 1216,

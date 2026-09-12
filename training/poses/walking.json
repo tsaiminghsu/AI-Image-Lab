@@ -1,7 +1,7 @@
 {
   "tag": "walking",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "walking toward the camera, mid-step",
   "source": "extracted from walking.png",
   "canvas_width": 832,
   "canvas_height": 1216,

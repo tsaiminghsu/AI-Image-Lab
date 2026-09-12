@@ -1,7 +1,7 @@
 {
   "tag": "standing_straight",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "standing upright, arms relaxed at the sides",
   "source": "extracted from standing_straight.png; legs rebuilt (source render cropped at the knee) and figure uniformly rescaled to fit the full body in frame",
   "canvas_width": 832,
   "canvas_height": 1216,

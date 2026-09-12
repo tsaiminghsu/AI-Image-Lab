@@ -1,7 +1,7 @@
 {
   "tag": "hand_touching_hair",
-  "camera": "extracted from render",
-  "prompt_hint": "",
+  "camera": "front view, eye level",
+  "prompt_hint": "standing, one hand raised to touch the hair",
   "source": "extracted from hand_touching_hair.png; legs rebuilt (source render cropped at the knee) and figure uniformly rescaled to fit the full body in frame",
   "canvas_width": 832,
   "canvas_height": 1216,
