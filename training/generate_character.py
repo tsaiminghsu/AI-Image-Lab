@@ -204,11 +204,23 @@ COMFYUI_LORAS_DIR = os.path.join(os.path.dirname(__file__), "..", "ComfyUI", "mo
 DEFAULT_CUSTOM_CHECKPOINT = "cyberrealistic_pony"
 
 
+class UsageError(Exception):
+    """Invalid caller-supplied arguments - an unknown character, an impossible flag
+    combination, a checkpoint the requested feature is not wired up for.
+
+    The message is the user-facing text. The CLI's __main__ turns it back into SystemExit so
+    exit code and stderr output are unchanged; gui.py shows it as a gr.Error toast; image_api
+    and worker/handler.py record it as a job error. Library code must NOT raise SystemExit:
+    it derives from BaseException, so `except Exception` at any of those boundaries lets it
+    through and kills the calling thread instead of reporting the message.
+    """
+
+
 def get_character(trigger):
     try:
         return CHARACTERS[trigger]
     except KeyError:
-        raise SystemExit(
+        raise UsageError(
             f"unknown character '{trigger}'. Known characters: {', '.join(sorted(CHARACTERS))}"
         )
 
@@ -730,12 +742,12 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     the batch generators. Explicit width/height always wins over that
     default. Plain 1024x1024 stays the default with no pose reference."""
     if checkpoint and checkpoint not in client.CHECKPOINTS and checkpoint not in client.ZIMAGE_MODELS:
-        raise SystemExit(f"unknown checkpoint {checkpoint!r} - choices: "
+        raise UsageError(f"unknown checkpoint {checkpoint!r} - choices: "
                          f"{sorted(client.CHECKPOINTS) + sorted(client.ZIMAGE_MODELS)}")
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
     is_zimage = checkpoint in client.ZIMAGE_MODELS
     if is_zimage and (anchor_path or pose_reference_path or pose_name or use_facedetailer):
-        raise SystemExit(f"checkpoint {checkpoint!r} is Z-Image - only plain txt2img is wired up (anchor/FaceID, "
+        raise UsageError(f"checkpoint {checkpoint!r} is Z-Image - only plain txt2img is wired up (anchor/FaceID, "
                          "pose reference / skeleton ControlNet and FaceDetailer all need SDXL- or SD1.5-specific "
                          "adapter files; --character still works as a text description)")
 
@@ -748,10 +760,10 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     pose_is_skeleton = False
     if pose_name:
         if pose_reference_path:
-            raise SystemExit("pass either pose_name (library skeleton) or pose_reference_path (photo), not both")
+            raise UsageError("pass either pose_name (library skeleton) or pose_reference_path (photo), not both")
         skel = pose_skeletons.resolve(pose_name)
         if not skel:
-            raise SystemExit(f"unknown pose {pose_name!r} - choices: {pose_skeletons.list_names()}")
+            raise UsageError(f"unknown pose {pose_name!r} - choices: {pose_skeletons.list_names()}")
         pose_reference_path = skel
         pose_is_skeleton = True
         hint = pose_skeletons.load_meta(pose_name).get("prompt_hint")
@@ -765,7 +777,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     use_hq = hq and not is_sd15 and not is_zimage
 
     if pose_is_skeleton and not use_hq:
-        raise SystemExit("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
+        raise UsageError("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
                          "directly, which only the HQ template wires up (drop --no-hq)")
 
     if use_facedetailer is None:
@@ -773,13 +785,13 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
 
     if not use_hq:
         if pose_reference_path and not anchor_path:
-            raise SystemExit("pose_reference requires anchor_path (ControlNet workflow still needs a face anchor for IP-Adapter)")
+            raise UsageError("pose_reference requires anchor_path (ControlNet workflow still needs a face anchor for IP-Adapter)")
         if use_facedetailer and pose_reference_path:
-            raise SystemExit("use_facedetailer and pose_reference are on separate workflow templates and can't be combined yet (turn on hq to combine them)")
+            raise UsageError("use_facedetailer and pose_reference are on separate workflow templates and can't be combined yet (turn on hq to combine them)")
         if use_facedetailer and not anchor_path:
-            raise SystemExit("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
+            raise UsageError("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
     if is_sd15 and (anchor_path or pose_reference_path):
-        raise SystemExit(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up "
+        raise UsageError(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up "
                           "(anchor/IP-Adapter and pose_reference/ControlNet need the SDXL-family "
                           "adapter files, which don't match SD1.5's UNet/CLIP shape)")
 
@@ -807,7 +819,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
         try:
             pose_skeletons.check_canvas(pose_name, width, height)
         except ValueError as exc:
-            raise SystemExit(str(exc))
+            raise UsageError(str(exc))
 
     ckpt_kwargs = {}
     if checkpoint and not is_zimage:
@@ -976,10 +988,10 @@ def gen_gif(prompt, extra_negative, tier, trigger, anchor_path, out_dir, base_se
     Deliberately skips pose_reference_path/use_facedetailer (gen_custom's
     per-frame extras) - not wired into the img2img workflow template."""
     if checkpoint in client.SD15_CHECKPOINTS:
-        raise SystemExit(f"checkpoint {checkpoint!r} is SD1.5 - gen_gif's img2img wiggle frames need "
+        raise UsageError(f"checkpoint {checkpoint!r} is SD1.5 - gen_gif's img2img wiggle frames need "
                           "IP-Adapter, which needs the SDXL-family model files SD1.5 doesn't have")
     if checkpoint in client.ZIMAGE_MODELS:
-        raise SystemExit(f"checkpoint {checkpoint!r} is Z-Image - gen_gif's img2img wiggle frames need "
+        raise UsageError(f"checkpoint {checkpoint!r} is Z-Image - gen_gif's img2img wiggle frames need "
                          "IP-Adapter, which has no Z-Image version; pick an SDXL-family checkpoint")
 
     os.makedirs(out_dir, exist_ok=True)
@@ -1106,16 +1118,16 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
 
     Returns the path of the saved .mp4."""
     if checkpoint and checkpoint not in client.ANIMATEDIFF_CHECKPOINTS:
-        raise SystemExit(f"unknown animatediff checkpoint {checkpoint!r} - choices: {sorted(client.ANIMATEDIFF_CHECKPOINTS)}")
+        raise UsageError(f"unknown animatediff checkpoint {checkpoint!r} - choices: {sorted(client.ANIMATEDIFF_CHECKPOINTS)}")
     if motion_lora and motion_lora not in client.ANIMATEDIFF_MOTION_LORAS:
-        raise SystemExit(f"unknown motion lora {motion_lora!r} - choices: {sorted(client.ANIMATEDIFF_MOTION_LORAS)}")
+        raise UsageError(f"unknown motion lora {motion_lora!r} - choices: {sorted(client.ANIMATEDIFF_MOTION_LORAS)}")
     if lcm and lcm_preset not in client.ANIMATEDIFF_LCM_PRESETS:
-        raise SystemExit(f"unknown lcm preset {lcm_preset!r} - choices: {sorted(client.ANIMATEDIFF_LCM_PRESETS)}")
+        raise UsageError(f"unknown lcm preset {lcm_preset!r} - choices: {sorted(client.ANIMATEDIFF_LCM_PRESETS)}")
     interp = int(interp or 1)
     if interp not in client.ANIMATEDIFF_INTERP_CHOICES:
-        raise SystemExit(f"interp must be one of {client.ANIMATEDIFF_INTERP_CHOICES}")
+        raise UsageError(f"interp must be one of {client.ANIMATEDIFF_INTERP_CHOICES}")
     if interp > 1 and not client.has_node(client.RIFE_NODE):
-        raise SystemExit(
+        raise UsageError(
             f"frame interpolation needs the '{client.RIFE_NODE}' node, which the running ComfyUI server "
             "doesn't have - install ComfyUI-Frame-Interpolation and restart ComfyUI (README: "
             "'2c. RIFE 補幀節點'), or drop --interp")
@@ -1206,7 +1218,10 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     return out_path
 
 
-if __name__ == "__main__":
+def build_parser():
+    """The CLI surface, as a pure function so tests can assert the subcommands and flags
+    without executing anything. tests/test_cli_surface.py pins them: they are the
+    user-facing contract and must not change silently."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--variant", choices=list(client.VARIANT_CHOICES), default=None,
                         help="full or quant (fp8) for the SDXL/Pony checkpoints in this run; goes BEFORE the "
@@ -1346,7 +1361,11 @@ if __name__ == "__main__":
     p_talk.add_argument("--enhancer", default="none", choices=["none", "gfpgan", "RestoreFormer"], help="face restoration on every frame (GFPGAN weights ~348MB download on first use)")
     p_talk.add_argument("--pose-style", type=int, default=0, help="head-pose style id, 0-45")
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     if args.variant:
         client.set_variant_override(args.variant)
     if args.mode == "list-characters":
@@ -1414,3 +1433,12 @@ if __name__ == "__main__":
                 checkpoint=args.checkpoint, lora_strength=args.lora_strength)
     else:
         gen_test_suggestive(args.character, args.anchor, args.out, args.seed, args.ip_adapter_weight)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except UsageError as exc:
+        # Library code signals caller errors with UsageError; here it becomes exactly what
+        # `raise SystemExit(msg)` always did - the message on stderr, exit code 1.
+        raise SystemExit(str(exc))

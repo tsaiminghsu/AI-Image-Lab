@@ -416,4 +416,9 @@ def _categories_explicit(argv):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except gc.UsageError as exc:
+        # --character has no argparse choices=, so an unknown one reaches gc.get_character and
+        # must print one line rather than a traceback - same contract as generate_character's CLI.
+        raise SystemExit(str(exc))

@@ -1,10 +1,11 @@
 """Characterization tests that pin generate_character.py's CURRENT prompt/negative-prompt assembly
 behaviour exactly - Pony quality-tag handling, prompt ordering, the SD1.5 gender-weight rescue, and
-(most importantly) the exact divergence between gen_video_animatediff's inline copy of the
-assembly and the shared _build_prompt_and_negative() helper it should eventually call instead.
+(most importantly) the three ways gen_video_animatediff's composition legitimately differs from the
+still-image paths, now that it goes through the shared _build_prompt_and_negative() helper.
 
-These are characterization tests, not correctness tests: they describe what the code does today so
-an upcoming de-duplication refactor can be checked against them without changing behaviour.
+These are characterization tests, not correctness tests: they were written against the inline copy
+gen_video_animatediff used to carry, and passing unchanged after that copy was replaced by a call
+to the shared helper is what proved the de-duplication behaviour-preserving.
 """
 
 import itertools
@@ -134,8 +135,15 @@ def test_sdxl_checkpoint_base_prompt_has_no_gender_weight(checkpoint):
 # --- get_character with an unknown trigger --------------------------------------------------------
 
 
-def test_get_character_unknown_trigger_raises_systemexit_with_exact_message():
-    with pytest.raises(SystemExit) as excinfo:
+def test_get_character_unknown_trigger_raises_usage_error_with_exact_message():
+    """The message is user-facing text and is pinned byte for byte: the CLI prints it to
+    stderr, the GUI shows it as a toast, image_api records it as the job error.
+
+    The type changed from SystemExit to UsageError deliberately - SystemExit derives from
+    BaseException, which is what let it escape `except Exception` at two boundaries. See
+    tests/test_usage_error.py for that contract; the message itself is unchanged.
+    """
+    with pytest.raises(gc.UsageError) as excinfo:
         gc.get_character("definitely_not_a_real_character")
     assert str(excinfo.value) == (
         "unknown character 'definitely_not_a_real_character'. Known characters: " + ", ".join(sorted(gc.CHARACTERS))
@@ -165,14 +173,14 @@ _ANIMATEDIFF_TRIGGERS = [None, "mei"]
     list(itertools.product(_ANIMATEDIFF_TIERS, _ANIMATEDIFF_STYLE_NEGATIVES, _ANIMATEDIFF_TRIGGERS)),
 )
 def test_animatediff_inline_assembly_matches_shared_builder(monkeypatch, tmp_path, tier, style_negative, trigger):
-    """gen_video_animatediff (generate_character.py:1053, inline assembly at :1119-1132) duplicates
-    _build_prompt_and_negative() instead of calling it, which is exactly the copy-paste the upcoming
-    de-duplication refactor removes. This test is what proves that refactor behaviour-preserving:
-    if it still passes unmodified once gen_video_animatediff calls the shared helper instead, the
-    refactor changed nothing observable.
+    """gen_video_animatediff used to duplicate _build_prompt_and_negative() inline rather than call
+    it. This test was written against that copy and still passes unchanged now that the copy is
+    gone, which is what proves the de-duplication changed nothing observable. It keeps earning its
+    place: it is the only thing that catches the shared helper being called with the wrong
+    arguments for this path.
 
-    Pinned here, both confirmed by reading generate_character.py:1119-1132 against
-    _build_prompt_and_negative (:529-555):
+    Pinned here, both originally confirmed by reading the inline copy against
+    _build_prompt_and_negative:
 
     - negative prompt: the inline code is a verbatim copy of the shared helper's negative-side
       logic (safety-tier selection by `tier`, then style_negative, then extra_negative), MINUS the

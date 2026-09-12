@@ -82,11 +82,11 @@ def _run_job(job_id: str, req: GenerateRequest) -> None:
         with _jobs_lock:
             _jobs[job_id] = {"status": "done", "image_path": image_path, "error": None}
     except BaseException as exc:  # noqa: BLE001 - surface any failure to the polling client, don't crash the worker thread
-        # BaseException, not Exception: generate_character signals invalid arguments with
-        # SystemExit (get_character on an unknown trigger, gen_custom's flag checks), which is a
+        # BaseException, not Exception: caller errors arrive as gc.UsageError, but the scripts
+        # underneath (pose_skeletons, talking_head) can still raise SystemExit, which derives from
         # BaseException. `except Exception` let those escape, killing this worker thread while the
         # job stayed "pending" forever with no error ever reported to the polling client.
-        # worker/handler.py:179 catches BaseException for exactly this reason.
+        # worker/handler.py catches BaseException for exactly this reason.
         with _jobs_lock:
             _jobs[job_id] = {"status": "error", "image_path": None, "error": str(exc)}
 

@@ -114,7 +114,7 @@ def handler(job):
         character_id = inp.get("characterId") or None
         trigger = None
         if character_id:
-            gc.get_character(character_id)  # raises SystemExit on unknown -> caught below
+            gc.get_character(character_id)  # raises gc.UsageError on unknown -> caught below
             trigger = character_id
 
         # Reference face: uploaded image wins, else the character's anchor.
@@ -176,7 +176,7 @@ def handler(job):
         )
         return {"outputKey": key, "outputUrl": url, "seed": seed, "width": width, "height": height}
 
-    except BaseException as exc:  # SystemExit from get_character included
+    except BaseException as exc:  # gc.UsageError included, and anything else a handler can hit
         return {"error": f"{type(exc).__name__}: {exc}"}
     finally:
         for p in tmp_files:

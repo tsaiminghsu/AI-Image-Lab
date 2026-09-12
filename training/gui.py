@@ -31,20 +31,22 @@ _comfyui_process = None  # only set when this GUI auto-started ComfyUI itself
 def _show_usage_errors(fn):
     """Turn generate_character's caller-error signal into a Gradio toast.
 
-    generate_character raises SystemExit for invalid arguments (get_character on an unknown
-    trigger, gen_custom's flag-combination checks, ...). SystemExit derives from BaseException,
-    not Exception, so Gradio's queue - which only catches Exception - lets it escape and kills
-    the worker task instead of showing the message. Today the handlers below happen to
-    pre-check most of those cases in Traditional Chinese first, but nothing enforces that the
-    pre-checks stay exhaustive, and gen_custom keeps growing flags. worker/handler.py already
-    catches BaseException for exactly this reason; this is the GUI's equivalent.
+    generate_character raises gc.UsageError for invalid arguments (get_character on an unknown
+    trigger, gen_custom's flag-combination checks, ...). The handlers below also pre-check most
+    of those cases in Traditional Chinese, but nothing enforces that the pre-checks stay
+    exhaustive and gen_custom keeps growing flags, so this catches whatever slips through and
+    shows the message instead of failing the queue task.
+
+    SystemExit is still caught alongside it: the CLI-only scripts this GUI reaches (SadTalker
+    via talking_head, pose_skeletons) may still use it, and it derives from BaseException, so
+    Gradio's Exception-only handling would let it escape and kill the worker task silently.
     """
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except SystemExit as exc:
+        except (gc.UsageError, SystemExit) as exc:
             raise gr.Error(str(exc)) from exc
 
     return wrapper
