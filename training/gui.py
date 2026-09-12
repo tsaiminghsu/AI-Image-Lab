@@ -15,6 +15,7 @@ import atexit
 import functools
 import glob
 import os
+import threading
 
 import gradio as gr
 
@@ -26,6 +27,7 @@ import talking_head
 import translate_prompt
 
 _comfyui_process = None  # only set when this GUI auto-started ComfyUI itself
+_comfyui_start_lock = threading.Lock()  # see _ensure_comfyui
 
 
 def _show_usage_errors(fn):
@@ -55,14 +57,24 @@ def _show_usage_errors(fn):
 def _ensure_comfyui():
     """Start ComfyUI on first actual generation instead of requiring it
     pre-started just to open the GUI - keeps the ~2GB process off when the
-    GUI is only sitting open unused."""
+    GUI is only sitting open unused.
+
+    Serialised: the is-it-running check and the spawn are separate steps, and
+    different tabs' buttons are different Gradio listeners running on their own
+    worker threads (concurrency_limit is per listener). Two first-clicks landing
+    together would both see "not running" and spawn a second ComfyUI that then
+    fails to bind port 8188 - and whose ~2GB stays around unowned, since
+    _shutdown_comfyui only tracks the one process in _comfyui_process. The lock
+    is held across client.start_server(), which blocks until the server answers,
+    so the second caller re-checks afterwards and finds it up."""
     global _comfyui_process
-    if client.is_server_running():
-        return
-    if _comfyui_process is not None and _comfyui_process.poll() is None:
-        return  # already starting from a previous click
-    gr.Info("ComfyUI 尚未啟動，正在自動啟動（第一次可能要等幾秒）...")
-    _comfyui_process = client.start_server()
+    with _comfyui_start_lock:
+        if client.is_server_running():
+            return
+        if _comfyui_process is not None and _comfyui_process.poll() is None:
+            return  # already starting from a previous click
+        gr.Info("ComfyUI 尚未啟動，正在自動啟動（第一次可能要等幾秒）...")
+        _comfyui_process = client.start_server()
 
 
 @atexit.register
@@ -482,7 +494,14 @@ with gr.Blocks(title="AI Image Lab") as demo:
             variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
             caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
             translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
-            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
+            # concurrency_id="gpu" on every generation button in this file: Gradio's default
+            # concurrency_limit=1 is PER LISTENER, so without a shared id one browser tab could
+            # start "生成" while another starts "生成 GIF" - two jobs aimed at the same 8GB card.
+            # comfyui_client's own lock would serialise them anyway, but the second user would
+            # just see their button spin with no explanation; a shared concurrency_id makes
+            # Gradio queue it visibly instead. Includes the SadTalker button, which does not go
+            # through ComfyUI but competes for the same VRAM.
+            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output, concurrency_id="gpu")
 
         with gr.Tab("🎬 AnimateDiff 動態影片"):
             gr.Markdown(
@@ -563,6 +582,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
                         video_faceid_v2_weight, video_motion_scale],
                 outputs=video_output,
+                concurrency_id="gpu",
             )
 
         with gr.Tab("🗣️ SadTalker 對嘴影片"):
@@ -596,6 +616,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
                         talk_enhancer, talk_pose_style],
                 outputs=talk_output,
+                concurrency_id="gpu",
             )
 
         with gr.Tab("📹 SVD 圖生影片"):
@@ -624,6 +645,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 generate_video_svd,
                 inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion],
                 outputs=svd_output,
+                concurrency_id="gpu",
             )
 
         with gr.Tab("🎞️ 批次生成 GIF"):
@@ -676,6 +698,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
                         gif_checkpoint_choice, gif_lora_strength],
                 outputs=gif_output,
+                concurrency_id="gpu",
             )
 
 if __name__ == "__main__":

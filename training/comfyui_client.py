@@ -13,6 +13,7 @@ import copy
 import json
 import os
 import subprocess
+import threading
 import time
 
 import requests
@@ -385,6 +386,16 @@ POLL_TIMEOUT_SECONDS_VIDEO = 1800  # svd.safetensors is ~9.5GB - first load / sw
 # is slow, and can be much slower still if VRAM is fragmented from a prior session's models -
 # measured one run taking >900s this way even with VIDEO_WIDTH/HEIGHT halved to 512
 
+# How long a run of CONSECUTIVE failed polls may last before we stop believing the job is still
+# alive. Sized against what a transient actually looks like here: the HQ path pages to disk on
+# this 32GB box, and a ComfyUI busy swapping can take tens of seconds to answer an HTTP request
+# (or serve the aiohttp error page instead of JSON while it restarts). 120s of retrying is cheap
+# next to a 900-2400s job; the old behaviour - one ConnectionError/ReadTimeout kills the client
+# while the server keeps rendering to completion - is what this budget buys out of.
+POLL_RETRY_BUDGET_SECONDS = 120
+RETRY_BACKOFF_SECONDS = (2, 4, 8, 16)  # then 16s forever, until the budget or deadline runs out
+PROMPT_POST_MAX_ATTEMPTS = 3  # POST /prompt is NOT idempotent - see _post_prompt_with_retry
+
 
 def _load_template(path=WORKFLOW_TEMPLATE_PATH):
     """Load a workflow template and fail immediately if its node ids moved.
@@ -432,6 +443,167 @@ def free_vram() -> None:
     try:
         requests.post(f"{COMFYUI_URL}/free", json={"unload_models": True, "free_memory": True}, timeout=30)
     except requests.exceptions.RequestException:
+        pass
+
+
+# --- Transient-failure handling -------------------------------------------------------------
+# Everything below is about one distinction: whether repeating a request can cost a second
+# generation on the 8GB card. Reads (GET /history, GET /view, GET /queue) and the
+# overwrite=true image upload are idempotent and get retried generously; POST /prompt is not
+# and gets retried only when the request provably never left this process.
+
+
+class _TransientHTTPError(Exception):
+    """A 5xx from ComfyUI. Not a requests exception, so it needs its own type to flow through
+    the same retry path (r.raise_for_status() would raise HTTPError, which we deliberately do
+    NOT retry: a 4xx is our own bad request and repeating it just fails again)."""
+
+
+def _transient_exceptions():
+    """Retriable exception types, resolved at call time because `requests` is a module global
+    that the test suite swaps for a fake. ValueError covers `.json()` on a non-JSON body -
+    ComfyUI's aiohttp serves an HTML error page while it is restarting, and modern requests
+    raises JSONDecodeError, which subclasses ValueError."""
+    ex = requests.exceptions
+    return (ex.ConnectionError, ex.Timeout, ValueError)
+
+
+def _http_with_retry(call, what: str, budget_seconds: float = POLL_RETRY_BUDGET_SECONDS, deadline: float = None):
+    """Run an IDEMPOTENT HTTP call, retrying transient failures with a capped backoff.
+
+    Gives up once a run of consecutive failures has cost more than budget_seconds, or once the
+    optional absolute `deadline` (the job's own timeout) has passed. Callers get a fresh window
+    per call, which is what makes a single successful poll reset the budget.
+
+    The elapsed figure is max(wall clock, time actually slept): wall clock is the honest measure
+    in production (a poll that times out burns its own 10s before we even back off), and the
+    slept total keeps the bound deterministic when time.sleep is stubbed out in tests.
+    """
+    retriable = (_TransientHTTPError,) + _transient_exceptions()
+    waited, attempt, window_start = 0.0, 0, time.time()
+    while True:
+        try:
+            return call()
+        except retriable as exc:
+            attempt += 1
+            spent = max(time.time() - window_start, waited)
+            delay = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+            out_of_time = spent > budget_seconds or (deadline is not None and time.time() >= deadline)
+            if out_of_time:
+                raise RuntimeError(
+                    f"ComfyUI 伺服器連續 {attempt} 次沒有回應（已重試 {spent:.0f} 秒）：{what}。"
+                    f"最後一次的錯誤是 {type(exc).__name__}: {exc}"
+                ) from exc
+            if attempt == 1:
+                # Once per failure window, not once per retry - a 900s job that hiccups every
+                # few minutes would otherwise fill the console.
+                print(f"[comfyui] {what}失敗（{type(exc).__name__}: {exc}），{delay} 秒後重試"
+                      f"（最多再試 {budget_seconds:.0f} 秒）。ComfyUI 可能還在算圖 - 高畫質流程會用到分頁檔，"
+                      f"這時候它回應 HTTP 會很慢，工作本身通常還活著。", flush=True)
+            time.sleep(delay)
+            waited += delay
+
+
+def _is_connection_refused(exc) -> bool:
+    """True when a requests.ConnectionError provably never reached the server.
+
+    requests wraps urllib3: a refused TCP connect arrives as
+    ConnectionError(MaxRetryError(NewConnectionError(...))). urllib3 is deliberately not
+    imported here (this module stays requests + stdlib only, for the GPU-less worker image),
+    so match on the wrapped exception's class name and on WSAECONNREFUSED (WinError 10061),
+    which is what "ComfyUI is not running" looks like on this Windows box.
+    """
+    text, names, node, hops = "", [], exc, 0
+    while node is not None and hops < 8:
+        names.append(type(node).__name__)
+        text += f" {node}"
+        nested = next((a for a in getattr(node, "args", ()) if isinstance(a, BaseException)), None)
+        node = nested if nested is not None else (node.__cause__ or node.__context__)
+        hops += 1
+    blob = f"{' '.join(names)} {text}".lower()
+    return "newconnectionerror" in blob or "10061" in blob or "refused" in blob
+
+
+def _post_prompt_with_retry(payload: dict):
+    """POST /prompt, retrying ONLY when the request cannot have been received.
+
+    The endpoint is not idempotent: server.py's post_prompt puts the workflow straight onto the
+    queue (server.py:1131), so a blind retry queues a second full generation on a card that can
+    only run one at a time. Retriable: ConnectTimeout, and a ConnectionError whose cause is a
+    refused connection - in both cases no bytes reached ComfyUI. A ReadTimeout is the opposite
+    case: the request WAS sent, the job may well be queued, and only the user can tell.
+    """
+    ex = requests.exceptions
+    for attempt in range(1, PROMPT_POST_MAX_ATTEMPTS + 1):
+        try:
+            return requests.post(f"{COMFYUI_URL}/prompt", json=payload, timeout=30)
+        except ex.RequestException as exc:
+            never_sent = isinstance(exc, ex.ConnectTimeout) or (
+                isinstance(exc, ex.ConnectionError) and _is_connection_refused(exc)
+            )
+            if not never_sent:
+                if isinstance(exc, ex.Timeout):
+                    raise RuntimeError(
+                        "送出 prompt 之後讀取回應時逾時 - ComfyUI 可能已經收到並排進佇列了。"
+                        f"直接重送會在這張 8GB 顯示卡上多跑一次生成，請先看 {COMFYUI_URL} 的佇列（Queue）"
+                        f"確認之後再決定要不要重送。原始錯誤：{type(exc).__name__}: {exc}"
+                    ) from exc
+                raise
+            if attempt == PROMPT_POST_MAX_ATTEMPTS:
+                raise
+            delay = RETRY_BACKOFF_SECONDS[attempt - 1]
+            print(f"[comfyui] 連不上 ComfyUI（{type(exc).__name__}），{delay} 秒後重送第 {attempt + 1} 次 - "
+                  f"連線被拒代表這個請求沒有送達，重送不會多排一次生成。", flush=True)
+            time.sleep(delay)
+
+
+def _queue_ids():
+    """(running_ids, pending_ids) from GET /queue.
+
+    Shape straight from the server: {"queue_running": [...], "queue_pending": [...]}
+    (ComfyUI/server.py:1064-1070), where each entry is the queue tuple
+    (number, prompt_id, prompt, extra_data, outputs_to_execute) with the sensitive 6th element
+    stripped (ComfyUI/server.py:69-71, execution.py:1317-1321) - so the prompt id is at index 1.
+    """
+    body = requests.get(f"{COMFYUI_URL}/queue", timeout=10).json()
+
+    def ids(key):
+        return [e[1] for e in (body.get(key) or []) if isinstance(e, (list, tuple)) and len(e) > 1]
+
+    return ids("queue_running"), ids("queue_pending")
+
+
+def _cleanup_orphan_prompt(prompt_id: str) -> None:
+    """Best-effort: get our own prompt out of ComfyUI's queue after we stopped waiting for it.
+
+    Two mechanisms, because the queue has two halves:
+      - pending: POST /queue {"delete": [id]} (ComfyUI/server.py:1146-1158). delete_queue_item
+        only scans the pending heap (execution.py:1351), so this is a no-op on a running job.
+      - running: POST /interrupt. This checkout's handler takes an OPTIONAL prompt_id and only
+        interrupts when that id is the one running (ComfyUI/server.py:1160-1190) - but older
+        ComfyUI builds ignore the body and interrupt whatever is executing, and this client also
+        runs against remote/RunPod servers of unknown vintage. So check GET /queue ourselves
+        first and skip the call entirely unless our prompt is the running one: never kill
+        somebody else's job while tidying up after ours.
+
+    Every call is wrapped. This runs from an except/finally path, and a failure here must never
+    replace the TimeoutError/KeyboardInterrupt the caller actually needs to see.
+    """
+    try:
+        requests.post(f"{COMFYUI_URL}/queue", json={"delete": [prompt_id]}, timeout=10)
+    except Exception:
+        pass
+    try:
+        running, _pending = _queue_ids()
+    except Exception:
+        return  # can't prove it is ours that is running -> do not interrupt anything
+    if prompt_id not in running:
+        return
+    try:
+        requests.post(f"{COMFYUI_URL}/interrupt", json={"prompt_id": prompt_id}, timeout=10)
+        print(f"[comfyui] 已要求 ComfyUI 中斷還在執行的 prompt {prompt_id}（本次工作已放棄，"
+              f"不中斷的話它會繼續佔著顯示卡把圖畫完）。", flush=True)
+    except Exception:
         pass
 
 
@@ -484,6 +656,22 @@ def _reset_if_mode_switch(wf: dict) -> bool:
     if last is None or _is_lcm_workflow(last) == _is_lcm_workflow(wf):
         return False
     new_mode = "LCM" if _is_lcm_workflow(wf) else "non-LCM"
+    # /free unloads every cached model process-wide. Our own prompt is not queued yet at this
+    # point, so anything the server reports as running or pending belongs to another client
+    # (a second GUI tab, image_api, a CLI run) - freeing there would yank the models out from
+    # under a job mid-sample. A wrong-mode render is recoverable; someone else's ruined 15
+    # minute run is not. Only asked when a switch is actually needed, so the common path still
+    # costs no extra request.
+    try:
+        running, pending = _queue_ids()
+    except Exception:
+        running, pending = [], []  # server can't say - behave as before and reset
+    if running or pending:
+        print(f"[comfyui] 要切換到 {new_mode} 取樣，但 ComfyUI 佇列上還有別的工作"
+              f"（執行中 {len(running)}、排隊中 {len(pending)}），這次跳過模型快取重置 - "
+              f"現在 /free 會把別人正在用的模型卸載掉。這次的結果有可能是雜訊，等佇列空了再重跑一次。",
+              flush=True)
+        return False
     print(f"[comfyui] switching to {new_mode} sampling - resetting ComfyUI's model cache first "
           f"(mixing LCM and non-LCM in one session otherwise produces noise)", flush=True)
     try:
@@ -529,15 +717,24 @@ def upload_reference_image(local_path: str) -> str:
     """Upload a face-reference image into ComfyUI's input/ dir. Returns the
     filename to use as the LoadImage node's `image` input."""
     filename = os.path.basename(local_path)
-    with open(local_path, "rb") as f:
-        r = requests.post(
-            f"{COMFYUI_URL}/upload/image",
-            files={"image": (filename, f)},
-            data={"overwrite": "true"},
-            timeout=60,
-        )
-    r.raise_for_status()
-    return r.json()["name"]
+
+    def attempt():
+        # Re-opened per attempt: a retried POST has to send the file from byte 0, and the
+        # handle from the failed attempt is already partially consumed. Safe to repeat at all
+        # only because of overwrite=true - the upload lands on the same name every time.
+        with open(local_path, "rb") as f:
+            r = requests.post(
+                f"{COMFYUI_URL}/upload/image",
+                files={"image": (filename, f)},
+                data={"overwrite": "true"},
+                timeout=60,
+            )
+        if getattr(r, "status_code", 200) >= 500:
+            raise _TransientHTTPError(f"HTTP {r.status_code}")
+        r.raise_for_status()
+        return r
+
+    return _http_with_retry(attempt, f"上傳參考圖 {filename}").json()["name"]
 
 
 def submit_generation(
@@ -1511,38 +1708,76 @@ def enforce_min_cfg(wf: dict) -> list:
     return changed
 
 
+# One generation at a time, per process. This is the exact region where the non-reentrant
+# module globals are mutated (_variant_notices_shown / LAST_VARIANT_NOTICES inside
+# apply_model_variants) and where _reset_if_mode_switch's read-/history-then-POST-/free check
+# races: two threads switching mode together could both see "the last prompt was the other
+# mode" and one could /free the models the other is already sampling with. It is also a plain
+# hardware fact that the 8GB card runs one job at a time, so serialising here costs nothing.
+# RLock, not Lock: the region is long and any helper that ends up re-entering it (a retry path
+# that resubmits, say) should block on ComfyUI rather than deadlock on ourselves.
+_CLIENT_LOCK = threading.RLock()
+
+
 def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
                      client_id: str = None) -> str:
+    with _CLIENT_LOCK:
+        return _submit_and_wait_locked(wf, output_node_id, timeout_seconds, client_id)
+
+
+def _submit_and_wait_locked(wf: dict, output_node_id: str, timeout_seconds: int, client_id: str) -> str:
     apply_model_variants(wf)
     enforce_min_cfg(wf)
     _reset_if_mode_switch(wf)
     payload = {"prompt": wf}
     if client_id:
         payload["client_id"] = client_id
-    r = requests.post(f"{COMFYUI_URL}/prompt", json=payload, timeout=30)
+    r = _post_prompt_with_retry(payload)
     r.raise_for_status()
     body = r.json()
     if body.get("node_errors"):
         raise RuntimeError(f"workflow validation failed: {body['node_errors']}")
     prompt_id = body["prompt_id"]
 
+    def poll():
+        r = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+        if getattr(r, "status_code", 200) >= 500:
+            raise _TransientHTTPError(f"HTTP {r.status_code}")
+        return r.json()
+
     deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        hist = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10).json()
-        entry = hist.get(prompt_id)
-        if entry:
-            status = entry["status"]
-            # status["completed"] never becomes True on a server-side node error - it just
-            # stays False forever, so a naive "wait for completed" loop spins for the full
-            # timeout_seconds (up to 1800s) on a job that actually failed in under a second.
-            # Check status_str explicitly so failures surface immediately with the real cause.
-            if status["status_str"] == "error":
-                raise RuntimeError(f"generation failed: {_format_execution_error(status)}")
-            if status["completed"]:
-                image_info = entry["outputs"][output_node_id]["images"][0]
-                return _download_output(image_info)
-        time.sleep(POLL_INTERVAL_SECONDS)
-    raise TimeoutError(f"prompt {prompt_id} did not complete within {timeout_seconds}s")
+    try:
+        while time.time() < deadline:
+            # Each poll gets its own retry window, so one good answer wipes out the failures
+            # before it - exactly the semantics we want for a job that hiccups repeatedly over
+            # 900s without ever being dead.
+            hist = _http_with_retry(poll, f"查詢 prompt {prompt_id} 的進度",
+                                    deadline=deadline)
+            entry = hist.get(prompt_id)
+            if entry:
+                status = entry["status"]
+                # status["completed"] never becomes True on a server-side node error - it just
+                # stays False forever, so a naive "wait for completed" loop spins for the full
+                # timeout_seconds (up to 1800s) on a job that actually failed in under a second.
+                # Check status_str explicitly so failures surface immediately with the real cause.
+                if status["status_str"] == "error":
+                    raise RuntimeError(f"generation failed: {_format_execution_error(status)}")
+                if status["completed"]:
+                    image_info = entry["outputs"][output_node_id]["images"][0]
+                    return _download_output(image_info)
+            time.sleep(POLL_INTERVAL_SECONDS)
+        raise TimeoutError(f"prompt {prompt_id} did not complete within {timeout_seconds}s")
+    except (TimeoutError, KeyboardInterrupt):
+        # We are walking away from a job the server still owns. Left alone it would keep the
+        # 8GB card busy (or sit in the queue and start later, after the user has already moved
+        # on), so take it out of the queue and - only if it is the one actually running -
+        # interrupt it. Deliberately NOT done for the retry-budget RuntimeError above: a server
+        # that has stopped answering will not answer a cleanup request either.
+        try:
+            _cleanup_orphan_prompt(prompt_id)
+        except Exception:
+            pass
+        raise
 
 
 def _format_execution_error(status: dict) -> str:
@@ -1558,8 +1793,16 @@ def _download_output(image_info: dict) -> str:
         "subfolder": image_info.get("subfolder", ""),
         "type": image_info.get("type", "output"),
     }
-    r = requests.get(f"{COMFYUI_URL}/view", params=params, timeout=60)
-    r.raise_for_status()
+    def attempt():
+        # Idempotent read of a file ComfyUI already wrote - worth retrying, since failing here
+        # throws away a finished generation (the expensive part is already paid for).
+        r = requests.get(f"{COMFYUI_URL}/view", params=params, timeout=60)
+        if getattr(r, "status_code", 200) >= 500:
+            raise _TransientHTTPError(f"HTTP {r.status_code}")
+        r.raise_for_status()
+        return r
+
+    r = _http_with_retry(attempt, f"下載輸出檔 {image_info['filename']}")
     # Overridable so the RunPod worker can write to a tempdir instead of the
     # repo's outputs/ tree (which doesn't exist in the container).
     out_dir = os.environ.get(

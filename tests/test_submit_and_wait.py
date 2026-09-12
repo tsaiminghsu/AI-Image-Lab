@@ -1,18 +1,29 @@
-"""Coverage for _submit_and_wait's HTTP/polling contract (comfyui_client.py:1472-1540) and the
-LCM<->non-LCM mode-switch reset logic (comfyui_client.py:418-478) that it also drives.
+"""Coverage for _submit_and_wait's HTTP/polling contract, the LCM<->non-LCM mode-switch reset
+logic it drives, and the retry/cleanup/concurrency behaviour around both.
 
-The regression this file exists to pin down: status["completed"] never flips True on a
+The regression this file started out pinning down: status["completed"] never flips True on a
 server-side node error, so a naive "poll until completed" loop would spin for the full
 timeout_seconds (up to 2400s for the AnimateDiff path) on a job that failed in under a second.
 _submit_and_wait checks status_str == "error" explicitly to surface that failure immediately.
+
+The second theme is resilience, and it hinges on one asymmetry: GET /history, GET /view and the
+overwrite=true upload can be repeated for free, but POST /prompt queues a whole extra generation
+on an 8GB card. The tests below hold that line - a flaky poll must never cost a second job, and
+abandoning a job must never leave it rendering (or kill somebody else's).
 """
 
 import os
+import threading
+import time
+from urllib.parse import urlparse
 
 import pytest
+import requests
 
 import comfyui_client as client
-from helpers import FakeComfy
+from helpers import FakeComfy, FakeResponse
+
+_real_sleep = time.sleep  # kept out of reach of the no_sleep fixture (see the threading test)
 
 # Grabbed before any test monkeypatches client._submit_and_wait (see the LCM tests below), so
 # these tests always exercise the real function regardless of what other fixtures replace it with.
@@ -140,6 +151,283 @@ def test_fresh_server_does_not_free(fake_comfy):
     _real_submit_and_wait(lcm_wf, timeout_seconds=5)
 
     assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_mode_switch_skips_free_when_the_queue_is_busy(fake_comfy):
+    """Another client's job is running: /free would unload the models it is sampling with, so
+    the reset is skipped even though the mode differs. Ours is not queued yet at this point,
+    so anything the queue reports is by definition somebody else's."""
+    non_lcm_wf = _build_workflow_via_animatediff(lcm_preset=None)
+    lcm_wf = _build_workflow_via_animatediff(lcm_preset="lcm_lora")
+    fake_comfy.last_history = _history_with_last_prompt(non_lcm_wf)
+    fake_comfy.queue_running = ["someone-elses-job"]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.mp4")]
+
+    _real_submit_and_wait(lcm_wf, timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_mode_switch_skips_free_when_something_is_merely_pending(fake_comfy):
+    non_lcm_wf = _build_workflow_via_animatediff(lcm_preset=None)
+    lcm_wf = _build_workflow_via_animatediff(lcm_preset="lcm_lora")
+    fake_comfy.last_history = _history_with_last_prompt(non_lcm_wf)
+    fake_comfy.queue_pending = ["someone-elses-queued-job"]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.mp4")]
+
+    _real_submit_and_wait(lcm_wf, timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_queue_ids_reads_comfyuis_own_entry_shape(fake_comfy):
+    fake_comfy.queue_running, fake_comfy.queue_pending = ["a"], ["b", "c"]
+    assert client._queue_ids() == (["a"], ["b", "c"])
+
+
+# -- E1: polling retries (GET /history/<id> is idempotent - retry generously) -------------------
+
+
+def test_poll_survives_transient_failures_without_resubmitting(fake_comfy, no_sleep):
+    """Two dead polls then a good one: the job still completes, and - the whole point of
+    splitting the policy - POST /prompt was never repeated."""
+    fake_comfy.get_failures["/history/"] = [
+        requests.exceptions.ConnectionError("connection aborted"),
+        requests.exceptions.ReadTimeout("read timed out"),
+    ]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    path = _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert os.path.basename(path) == "out.png"
+    assert fake_comfy.paths("post").count("/prompt") == 1
+    assert no_sleep[:2] == [2, 4]  # the documented 2/4/8/16 backoff
+
+
+def test_poll_retries_http_500_and_non_json_bodies(fake_comfy, no_sleep):
+    """ComfyUI restarting serves its aiohttp error page, so .json() raises - and a 5xx never
+    reaches .json() at all. Both are "ask again", not "the job is gone"."""
+    fake_comfy.get_failures["/history/"] = [
+        FakeResponse(status_code=503),
+        FakeResponse(status_code=200, body=None),  # body None -> .json() raises ValueError
+    ]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    assert os.path.basename(_real_submit_and_wait({"3": {}}, timeout_seconds=60)) == "out.png"
+
+
+def test_poll_gives_up_after_the_retry_budget(fake_comfy, no_sleep):
+    fake_comfy.get_failures["/history/"] = [requests.exceptions.ConnectionError("down")] * 30
+
+    with pytest.raises(RuntimeError, match="沒有回應"):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=600)
+
+    assert sum(no_sleep) > client.POLL_RETRY_BUDGET_SECONDS
+    # Bounded, not endless: 2+4+8+16+16... crosses 120s on the 11th consecutive failure.
+    assert len([p for p, _ in fake_comfy.gets if p.startswith("/history/")]) == 11
+
+
+def test_a_good_poll_resets_the_retry_budget(fake_comfy, no_sleep):
+    """10 failures, one "still running" answer, 10 more failures, then done. Twice the budget
+    in total slept, but never 11 consecutive failures - so the job is never abandoned."""
+    fail = requests.exceptions.ConnectionError("down")
+    in_progress = FakeResponse(body={})  # a real answer, just not a finished job
+    fake_comfy.get_failures["/history/"] = [fail] * 10 + [in_progress] + [fail] * 10
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    path = _real_submit_and_wait({"3": {}}, timeout_seconds=600)
+
+    assert os.path.basename(path) == "out.png"
+    assert sum(no_sleep) > 2 * client.POLL_RETRY_BUDGET_SECONDS
+
+
+# -- E1: POST /prompt is NOT idempotent -------------------------------------------------------
+
+
+def test_read_timeout_on_post_prompt_raises_immediately(fake_comfy, no_sleep):
+    """The request was sent; ComfyUI may already be rendering it. Retrying would queue a
+    second generation on an 8GB card, so stop and tell the user to look at the queue."""
+    fake_comfy.post_failures["/prompt"] = [requests.exceptions.ReadTimeout("read timed out")]
+
+    with pytest.raises(RuntimeError, match="佇列"):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert fake_comfy.paths("post").count("/prompt") == 1
+    assert no_sleep == []
+
+
+def test_refused_connection_on_post_prompt_is_retried(fake_comfy, no_sleep):
+    """Connection refused = nothing reached ComfyUI, so resending cannot double-queue."""
+    fake_comfy.post_failures["/prompt"] = [FakeComfy.refused(), FakeComfy.refused()]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    path = _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert os.path.basename(path) == "out.png"
+    assert fake_comfy.paths("post").count("/prompt") == 3
+    assert no_sleep == [2, 4]
+    polled = {p for p, _ in fake_comfy.gets if p.startswith("/history/")}
+    assert polled == {f"/history/{fake_comfy.prompt_id}"}  # one prompt id, one generation
+
+
+def test_connect_timeout_on_post_prompt_is_retried(fake_comfy, no_sleep):
+    fake_comfy.post_failures["/prompt"] = [requests.exceptions.ConnectTimeout("connect timed out")]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert fake_comfy.paths("post").count("/prompt") == 2
+
+
+def test_post_prompt_gives_up_after_three_attempts(fake_comfy, no_sleep):
+    fake_comfy.post_failures["/prompt"] = [FakeComfy.refused()] * 5
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert fake_comfy.paths("post").count("/prompt") == client.PROMPT_POST_MAX_ATTEMPTS
+
+
+def test_a_plain_connection_error_is_not_treated_as_refused():
+    """ "Connection aborted" mid-body could mean the request landed - not retriable."""
+    assert client._is_connection_refused(requests.exceptions.ConnectionError("Connection aborted")) is False
+    assert client._is_connection_refused(FakeComfy.refused()) is True
+
+
+# -- E1: orphan cleanup -----------------------------------------------------------------------
+
+
+def _cleanup_posts(fake_comfy):
+    return [(p, payload) for p, payload in fake_comfy.posted if p in ("/queue", "/interrupt")]
+
+
+def test_timeout_dequeues_our_pending_prompt(fake_comfy, no_sleep):
+    fake_comfy.queue_pending = ["p1"]
+
+    with pytest.raises(TimeoutError):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=0)
+
+    assert _cleanup_posts(fake_comfy) == [("/queue", {"delete": ["p1"]})]  # queued, not running
+
+
+def test_timeout_interrupts_only_when_our_prompt_is_the_running_one(fake_comfy, no_sleep):
+    fake_comfy.queue_running = ["p1"]
+
+    with pytest.raises(TimeoutError):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=0)
+
+    assert _cleanup_posts(fake_comfy) == [
+        ("/queue", {"delete": ["p1"]}),
+        ("/interrupt", {"prompt_id": "p1"}),
+    ]
+
+
+def test_no_interrupt_when_a_different_prompt_is_running(fake_comfy, no_sleep):
+    """Never kill somebody else's job while tidying up after ours - older ComfyUI builds
+    ignore the prompt_id in the body and interrupt whatever is executing."""
+    fake_comfy.queue_running = ["another-clients-job"]
+
+    with pytest.raises(TimeoutError):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=0)
+
+    assert "/interrupt" not in fake_comfy.paths("post")
+
+
+def test_keyboard_interrupt_cleans_up_and_still_propagates(fake_comfy, no_sleep):
+    fake_comfy.queue_running = ["p1"]
+    fake_comfy.get_failures["/history/"] = [KeyboardInterrupt]
+
+    with pytest.raises(KeyboardInterrupt):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert [p for p, _ in _cleanup_posts(fake_comfy)] == ["/queue", "/interrupt"]
+
+
+def test_a_failing_cleanup_never_masks_the_original_error(fake_comfy, no_sleep):
+    fake_comfy.queue_running = ["p1"]
+    fake_comfy.post_failures["/queue"] = [RuntimeError("cleanup exploded")]
+    fake_comfy.post_failures["/interrupt"] = [RuntimeError("interrupt exploded")]
+    fake_comfy.get_failures["/queue"] = [requests.exceptions.ConnectionError("queue unreachable")]
+
+    with pytest.raises(TimeoutError, match="p1"):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=0)
+
+
+def test_no_cleanup_when_the_job_simply_fails(fake_comfy):
+    """A node error is the server's final word - nothing is left queued to clean up."""
+    fake_comfy.history_sequence = [FakeComfy.failed("KSampler", "3", "boom")]
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    assert _cleanup_posts(fake_comfy) == []
+
+
+# -- E1: the same bounded retry on the other two idempotent calls -------------------------------
+
+
+def test_view_download_is_retried(fake_comfy, no_sleep):
+    fake_comfy.get_failures["/view"] = [requests.exceptions.ReadTimeout("read timed out")]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    path = _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+
+    with open(path, "rb") as f:
+        assert f.read() == b"PNGDATA"
+
+
+def test_upload_reference_image_is_retried(fake_comfy, no_sleep, tmp_path):
+    ref = tmp_path / "anchor.png"
+    ref.write_bytes(b"IMG")
+    fake_comfy.post_failures["/upload/image"] = [FakeComfy.refused()]
+
+    assert client.upload_reference_image(str(ref)) == "uploaded.png"
+    assert fake_comfy.paths("post").count("/upload/image") == 2
+
+
+# -- E2: one generation at a time ---------------------------------------------------------------
+
+
+def test_two_threads_do_not_interleave_their_submissions(fake_comfy, monkeypatch):
+    """Drives the real _CLIENT_LOCK: the fake holds POST /prompt open long enough that an
+    unlocked _submit_and_wait would let the second thread's POST land inside the first one's."""
+    events = []
+
+    class SlowPromptComfy(FakeComfy):
+        def post(self, url, json=None, files=None, data=None, timeout=None):
+            if urlparse(url).path == "/prompt":
+                events.append(("enter", threading.current_thread().name))
+                _real_sleep(0.05)
+                events.append(("leave", threading.current_thread().name))
+            return super().post(url, json=json, files=files, data=data, timeout=timeout)
+
+    slow = SlowPromptComfy(history_sequence=[FakeComfy.done("9", "out.png")] * 2)
+    monkeypatch.setattr(client, "requests", slow)
+
+    threads = [
+        threading.Thread(target=_real_submit_and_wait, args=({"3": {}},), kwargs={"timeout_seconds": 60}, name=name)
+        for name in ("first", "second")
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads)
+
+    assert len(events) == 4
+    assert events[0][1] == events[1][1], f"the two POSTs interleaved: {events}"
+    assert events[2][1] == events[3][1], f"the two POSTs interleaved: {events}"
+    assert events[0][1] != events[2][1]
+
+
+def test_submit_and_wait_is_reentrant_for_one_thread():
+    """RLock, not Lock: a nested call on the same thread must not self-deadlock."""
+    assert client._CLIENT_LOCK.acquire(blocking=False)
+    try:
+        assert client._CLIENT_LOCK.acquire(blocking=False)
+        client._CLIENT_LOCK.release()
+    finally:
+        client._CLIENT_LOCK.release()
 
 
 # -- _is_lcm_workflow detectors ---------------------------------------------------------------

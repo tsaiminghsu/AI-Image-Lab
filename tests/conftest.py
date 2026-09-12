@@ -62,6 +62,19 @@ def captured_submit(monkeypatch):
 
 
 @pytest.fixture
+def no_sleep(monkeypatch):
+    """Make comfyui_client's retry backoff instant and recorded instead of real.
+
+    The retry budget is bounded by max(wall clock, seconds slept), so with sleep stubbed out
+    the "seconds slept" half is what decides when a test's retry loop gives up - the returned
+    list is therefore both the assertion surface and the thing that keeps the suite at ~2s.
+    """
+    slept = []
+    monkeypatch.setattr(client.time, "sleep", slept.append)
+    return slept
+
+
+@pytest.fixture
 def fake_comfy(monkeypatch, tmp_path):
     """Swap comfyui_client's `requests` for a fake ComfyUI server, and make polling instant."""
     from helpers import FakeComfy
