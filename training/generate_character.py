@@ -21,6 +21,7 @@ import argparse
 import os
 import random
 import shutil
+from types import SimpleNamespace
 
 import comfyui_client as client
 import pose_skeletons
@@ -667,6 +668,122 @@ def _run_hq(full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose
     )
 
 
+def _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facedetailer,
+                 checkpoint, hq, width, height, lora_strength):
+    """Resolve gen_custom's flag combinations into one settled plan, or raise UsageError.
+
+    Lifted verbatim out of gen_custom, which had grown to ~275 lines of interleaved
+    validation and dispatch across five workflow paths (HQ / pose / facedetailer / SD1.5 /
+    Z-Image). Pure apart from reading the pose library off disk, so every combination of
+    flags is testable without a GPU or a running ComfyUI - previously the only way to find
+    out what a given combination resolved to was to run a generation.
+
+    Returns the settled values the dispatch below needs; the caller replaces its own
+    locals with these, since several are rewritten here (prompt gains the skeleton's camera
+    hint, pose_reference_path becomes the resolved skeleton file, width/height get their
+    per-family defaults).
+    """
+    if checkpoint and checkpoint not in client.CHECKPOINTS and checkpoint not in client.ZIMAGE_MODELS:
+        raise UsageError(f"unknown checkpoint {checkpoint!r} - choices: "
+                         f"{sorted(client.CHECKPOINTS) + sorted(client.ZIMAGE_MODELS)}")
+    is_sd15 = checkpoint in client.SD15_CHECKPOINTS
+    is_zimage = checkpoint in client.ZIMAGE_MODELS
+    if is_zimage and (anchor_path or pose_reference_path or pose_name or use_facedetailer):
+        raise UsageError(f"checkpoint {checkpoint!r} is Z-Image - only plain txt2img is wired up (anchor/FaceID, "
+                         "pose reference / skeleton ControlNet and FaceDetailer all need SDXL- or SD1.5-specific "
+                         "adapter files; --character still works as a text description)")
+
+    # pose_name selects a pre-built skeleton from the training/poses/ library
+    # (fed to ControlNet directly, no preprocessor) - distinct from
+    # pose_reference_path, which is a photo the OpenposePreprocessor turns into
+    # a skeleton. The library exists because Pony checkpoints ignore pose tags
+    # like "lying on ..." from text alone (see pose_skeletons.py). Its camera
+    # hint is appended to the prompt so the 2D skeleton isn't ambiguous.
+    pose_is_skeleton = False
+    if pose_name:
+        if pose_reference_path:
+            raise UsageError("pass either pose_name (library skeleton) or pose_reference_path (photo), not both")
+        skel = pose_skeletons.resolve(pose_name)
+        if not skel:
+            raise UsageError(f"unknown pose {pose_name!r} - choices: {pose_skeletons.list_names()}")
+        pose_reference_path = skel
+        pose_is_skeleton = True
+        hint = pose_skeletons.load_meta(pose_name).get("prompt_hint")
+        if hint:
+            prompt = f"{prompt}, {hint}"
+
+    # HQ two-pass path is the default for SDXL/Pony. It combines the FaceID,
+    # ControlNet and FaceDetailer chains into one workflow, so the old "can't
+    # combine" restrictions only apply to the legacy (hq=False) path. SD1.5
+    # has no HQ path (no SDXL-family adapter/upscale wiring), so it falls back.
+    use_hq = hq and not is_sd15 and not is_zimage
+
+    if pose_is_skeleton and not use_hq:
+        raise UsageError("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
+                         "directly, which only the HQ template wires up (drop --no-hq)")
+
+    if use_facedetailer is None:
+        use_facedetailer = use_hq  # HQ defaults FaceDetailer on; legacy defaults off
+
+    if not use_hq:
+        if pose_reference_path and not anchor_path:
+            raise UsageError("pose_reference requires anchor_path (ControlNet workflow still needs a face anchor for IP-Adapter)")
+        if use_facedetailer and pose_reference_path:
+            raise UsageError("use_facedetailer and pose_reference are on separate workflow templates and can't be combined yet (turn on hq to combine them)")
+        if use_facedetailer and not anchor_path:
+            raise UsageError("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
+    if is_sd15 and (anchor_path or pose_reference_path):
+        raise UsageError(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up "
+                          "(anchor/IP-Adapter and pose_reference/ControlNet need the SDXL-family "
+                          "adapter files, which don't match SD1.5's UNet/CLIP shape)")
+
+    # HQ custom generation defaults to the Pony-family photoreal checkpoint when
+    # the caller didn't pick one (matches the GUI default). Dataset stages
+    # (gen_anchors/gen_variations) keep client.CHECKPOINT (juggernaut) - separate.
+    effective_checkpoint = checkpoint
+    if effective_checkpoint is None and use_hq:
+        effective_checkpoint = DEFAULT_CUSTOM_CHECKPOINT
+
+    if width is None or height is None:
+        if is_sd15:
+            width, height = client.SD15_WIDTH, client.SD15_HEIGHT
+        elif is_zimage:
+            width, height = client.ZIMAGE_WIDTH, client.ZIMAGE_HEIGHT
+        elif pose_is_skeleton:
+            # match the skeleton's own canvas so ControlNet has nothing to crop
+            width, height = pose_skeletons.canvas_for(pose_name)
+        else:
+            width, height = FULL_BODY_RESOLUTION if pose_reference_path else (client.WIDTH, client.HEIGHT)
+
+    if pose_is_skeleton:
+        # An explicit mismatching size is silently destructive otherwise: the hint
+        # is center-cropped to the canvas aspect, not letterboxed.
+        try:
+            pose_skeletons.check_canvas(pose_name, width, height)
+        except ValueError as exc:
+            raise UsageError(str(exc))
+
+    ckpt_kwargs = {}
+    if checkpoint and not is_zimage:
+        ckpt_kwargs["checkpoint"] = client.CHECKPOINTS[checkpoint]
+    if lora_strength is not None:
+        ckpt_kwargs["lora_strength"] = lora_strength
+
+    return SimpleNamespace(
+        prompt=prompt,
+        is_sd15=is_sd15,
+        is_zimage=is_zimage,
+        use_hq=use_hq,
+        use_facedetailer=use_facedetailer,
+        pose_reference_path=pose_reference_path,
+        pose_is_skeleton=pose_is_skeleton,
+        width=width,
+        height=height,
+        effective_checkpoint=effective_checkpoint,
+        ckpt_kwargs=ckpt_kwargs,
+    )
+
+
 def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_adapter_weight,
                 pose_reference_path=None, controlnet_strength=None, width=None, height=None,
                 use_facedetailer=None, facedetailer_denoise=None, facedetailer_backend="yolo",
@@ -757,91 +874,14 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     same issue that build_variation_prompt's pick_angle() works around for
     the batch generators. Explicit width/height always wins over that
     default. Plain 1024x1024 stays the default with no pose reference."""
-    if checkpoint and checkpoint not in client.CHECKPOINTS and checkpoint not in client.ZIMAGE_MODELS:
-        raise UsageError(f"unknown checkpoint {checkpoint!r} - choices: "
-                         f"{sorted(client.CHECKPOINTS) + sorted(client.ZIMAGE_MODELS)}")
-    is_sd15 = checkpoint in client.SD15_CHECKPOINTS
-    is_zimage = checkpoint in client.ZIMAGE_MODELS
-    if is_zimage and (anchor_path or pose_reference_path or pose_name or use_facedetailer):
-        raise UsageError(f"checkpoint {checkpoint!r} is Z-Image - only plain txt2img is wired up (anchor/FaceID, "
-                         "pose reference / skeleton ControlNet and FaceDetailer all need SDXL- or SD1.5-specific "
-                         "adapter files; --character still works as a text description)")
-
-    # pose_name selects a pre-built skeleton from the training/poses/ library
-    # (fed to ControlNet directly, no preprocessor) - distinct from
-    # pose_reference_path, which is a photo the OpenposePreprocessor turns into
-    # a skeleton. The library exists because Pony checkpoints ignore pose tags
-    # like "lying on ..." from text alone (see pose_skeletons.py). Its camera
-    # hint is appended to the prompt so the 2D skeleton isn't ambiguous.
-    pose_is_skeleton = False
-    if pose_name:
-        if pose_reference_path:
-            raise UsageError("pass either pose_name (library skeleton) or pose_reference_path (photo), not both")
-        skel = pose_skeletons.resolve(pose_name)
-        if not skel:
-            raise UsageError(f"unknown pose {pose_name!r} - choices: {pose_skeletons.list_names()}")
-        pose_reference_path = skel
-        pose_is_skeleton = True
-        hint = pose_skeletons.load_meta(pose_name).get("prompt_hint")
-        if hint:
-            prompt = f"{prompt}, {hint}"
-
-    # HQ two-pass path is the default for SDXL/Pony. It combines the FaceID,
-    # ControlNet and FaceDetailer chains into one workflow, so the old "can't
-    # combine" restrictions only apply to the legacy (hq=False) path. SD1.5
-    # has no HQ path (no SDXL-family adapter/upscale wiring), so it falls back.
-    use_hq = hq and not is_sd15 and not is_zimage
-
-    if pose_is_skeleton and not use_hq:
-        raise UsageError("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
-                         "directly, which only the HQ template wires up (drop --no-hq)")
-
-    if use_facedetailer is None:
-        use_facedetailer = use_hq  # HQ defaults FaceDetailer on; legacy defaults off
-
-    if not use_hq:
-        if pose_reference_path and not anchor_path:
-            raise UsageError("pose_reference requires anchor_path (ControlNet workflow still needs a face anchor for IP-Adapter)")
-        if use_facedetailer and pose_reference_path:
-            raise UsageError("use_facedetailer and pose_reference are on separate workflow templates and can't be combined yet (turn on hq to combine them)")
-        if use_facedetailer and not anchor_path:
-            raise UsageError("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
-    if is_sd15 and (anchor_path or pose_reference_path):
-        raise UsageError(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up "
-                          "(anchor/IP-Adapter and pose_reference/ControlNet need the SDXL-family "
-                          "adapter files, which don't match SD1.5's UNet/CLIP shape)")
-
-    # HQ custom generation defaults to the Pony-family photoreal checkpoint when
-    # the caller didn't pick one (matches the GUI default). Dataset stages
-    # (gen_anchors/gen_variations) keep client.CHECKPOINT (juggernaut) - separate.
-    effective_checkpoint = checkpoint
-    if effective_checkpoint is None and use_hq:
-        effective_checkpoint = DEFAULT_CUSTOM_CHECKPOINT
-
-    if width is None or height is None:
-        if is_sd15:
-            width, height = client.SD15_WIDTH, client.SD15_HEIGHT
-        elif is_zimage:
-            width, height = client.ZIMAGE_WIDTH, client.ZIMAGE_HEIGHT
-        elif pose_is_skeleton:
-            # match the skeleton's own canvas so ControlNet has nothing to crop
-            width, height = pose_skeletons.canvas_for(pose_name)
-        else:
-            width, height = FULL_BODY_RESOLUTION if pose_reference_path else (client.WIDTH, client.HEIGHT)
-
-    if pose_is_skeleton:
-        # An explicit mismatching size is silently destructive otherwise: the hint
-        # is center-cropped to the canvas aspect, not letterboxed.
-        try:
-            pose_skeletons.check_canvas(pose_name, width, height)
-        except ValueError as exc:
-            raise UsageError(str(exc))
-
-    ckpt_kwargs = {}
-    if checkpoint and not is_zimage:
-        ckpt_kwargs["checkpoint"] = client.CHECKPOINTS[checkpoint]
-    if lora_strength is not None:
-        ckpt_kwargs["lora_strength"] = lora_strength
+    plan = _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facedetailer,
+                        checkpoint, hq, width, height, lora_strength)
+    prompt = plan.prompt
+    is_sd15, is_zimage, use_hq = plan.is_sd15, plan.is_zimage, plan.use_hq
+    use_facedetailer = plan.use_facedetailer
+    pose_reference_path, pose_is_skeleton = plan.pose_reference_path, plan.pose_is_skeleton
+    width, height = plan.width, plan.height
+    effective_checkpoint, ckpt_kwargs = plan.effective_checkpoint, plan.ckpt_kwargs
 
     os.makedirs(out_dir, exist_ok=True)
     stem = filename or f"custom_seed{seed}"

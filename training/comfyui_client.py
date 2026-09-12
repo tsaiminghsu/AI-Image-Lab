@@ -703,9 +703,20 @@ def start_server(startup_timeout: float = 120) -> subprocess.Popen:
 
 
 def log_gpu_memory(stage: str):
-    r = requests.get(f"{COMFYUI_URL}/system_stats", timeout=10)
-    r.raise_for_status()
-    device = r.json()["devices"][0]
+    """VRAM used/total at a named point, or (nan, nan) if the server cannot answer.
+
+    Callers use this purely as instrumentation, and some run it AFTER the output file is
+    already saved (generate_character's video path). An unguarded raise there would throw away
+    a finished render over a telemetry call. nan rather than 0 so benchmark.py's arithmetic
+    comes out visibly broken instead of quietly reporting a plausible-looking zero.
+    """
+    try:
+        r = requests.get(f"{COMFYUI_URL}/system_stats", timeout=10)
+        r.raise_for_status()
+        device = r.json()["devices"][0]
+    except (requests.exceptions.RequestException, ValueError, KeyError, IndexError) as exc:
+        print(f"[MEMORY] {stage}: 讀不到 VRAM 用量（{type(exc).__name__}: {exc}）", flush=True)
+        return float("nan"), float("nan")
     total = device["vram_total"] / (1024 ** 2)
     free = device["vram_free"] / (1024 ** 2)
     used = total - free
@@ -1810,7 +1821,10 @@ def _download_output(image_info: dict) -> str:
         os.path.join(os.path.dirname(__file__), "..", "outputs", "_comfyui_raw"),
     )
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, image_info["filename"])
+    # basename: the filename comes back from ComfyUI's own response, but it is still untrusted
+    # input being joined into a local path - a subfolder or traversal component in it would
+    # write outside out_dir.
+    out_path = os.path.join(out_dir, os.path.basename(image_info["filename"]))
     with open(out_path, "wb") as f:
         f.write(r.content)
     return out_path

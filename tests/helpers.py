@@ -60,6 +60,8 @@ class FakeComfy:
         self.history_sequence = list(history_sequence or [])
         self.object_info = object_info or {}
         self.view_bytes = view_bytes
+        # /system_stats body; log_gpu_memory reads devices[0].vram_total/vram_free out of it.
+        self.system_stats = {}
         self.last_history = last_history or {}
         self.down = False
         # Prompt ids GET /queue reports as running / pending (see queue_entry below).
@@ -151,7 +153,7 @@ class FakeComfy:
         if injected is not None:
             return injected
         if path == "/system_stats":
-            return FakeResponse(body={})
+            return FakeResponse(body=self.system_stats)
         if path == "/queue":
             return FakeResponse(
                 body={

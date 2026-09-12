@@ -493,3 +493,32 @@ def test_loader_options_malformed_spec_returns_none(fake_comfy):
 
 def test_loader_options_missing_node_returns_none(fake_comfy):
     assert client._loader_options("DoesNotExist", "field") is None
+
+
+# --- instrumentation and path handling must not be able to lose a finished render --------------
+
+
+def test_log_gpu_memory_returns_nan_instead_of_raising(fake_comfy, capsys):
+    """generate_character's video path calls this AFTER the mp4 is saved. An unguarded raise
+    there would throw away a finished render over a telemetry call."""
+    fake_comfy.down = True
+    used, total = client.log_gpu_memory("after_video")
+    assert used != used and total != total, "expected nan, nan"  # nan is the only value != itself
+    assert "after_video" in capsys.readouterr().out
+
+
+def test_log_gpu_memory_reports_real_numbers_when_the_server_answers(fake_comfy):
+    fake_comfy.system_stats = {"devices": [{"vram_total": 8 * 1024**3, "vram_free": 2 * 1024**3}]}
+    used, total = client.log_gpu_memory("warm")
+    assert round(total) == 8192
+    assert round(used) == 6144
+
+
+def test_download_output_cannot_be_written_outside_the_output_dir(fake_comfy, tmp_path, monkeypatch):
+    """The filename comes from ComfyUI's own response, but it is still untrusted input being
+    joined into a local path: a traversal component in it would write outside out_dir."""
+    out_dir = tmp_path / "raw"
+    monkeypatch.setenv("COMFYUI_RAW_OUTPUT_DIR", str(out_dir))
+    path = client._download_output({"filename": "../../escaped.png", "subfolder": "", "type": "output"})
+    assert os.path.dirname(os.path.abspath(path)) == str(out_dir)
+    assert os.path.basename(path) == "escaped.png"
