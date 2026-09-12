@@ -698,6 +698,63 @@ def _reset_if_mode_switch(wf: dict) -> bool:
     return True
 
 
+# Z-Image's UNet (5.9GB) and text encoder (5.24GB) together exceed this card's 8GB VRAM (see
+# README "Z-Image Turbo"), so the two can never both sit resident - whichever one a prompt
+# doesn't need gets swapped out. A same-prompt re-run (new seed) only touches the already-loaded
+# UNet, but a NEW prompt needs the text encoder pulled back into VRAM alongside it. Measured: this
+# can transiently need more than 8GB and either OOM or spill into slow shared/system memory over
+# the PCIe x1 link, instead of the clean ~2-4 minute reload the README describes. Same fix and
+# same race avoided as _reset_if_mode_switch above (only /free when no other client's job is
+# running or queued) - kept as a separate function rather than merged with it because the
+# condition that triggers a reset is unrelated (LCM-vs-not there, prompt text here) and Z-Image
+# never runs in LCM mode, so the two conditions can't both fire on the same submission anyway.
+ZIMAGE_PROMPT_RESET_WAIT_SECONDS = 3
+
+
+def _is_zimage_workflow(wf: dict) -> bool:
+    """True if this workflow is Z-Image Turbo's pipeline (see workflow_template_txt2img_zimage.json)
+    rather than an SDXL/SD1.5 checkpoint. Checked by class_type (ModelSamplingAuraFlow is unique to
+    this workflow), not by unet_name, so it still matches if ZIMAGE_MODELS grows a second entry."""
+    return any(isinstance(n, dict) and n.get("class_type") == "ModelSamplingAuraFlow" for n in wf.values())
+
+
+def _zimage_prompt_texts(wf: dict) -> frozenset:
+    """The set of CLIPTextEncode text inputs (positive + negative) - used to tell whether a Z-Image
+    submission is a genuinely new prompt or just a re-run with a different seed."""
+    return frozenset(
+        n["inputs"]["text"] for n in wf.values()
+        if isinstance(n, dict) and n.get("class_type") == "CLIPTextEncode"
+    )
+
+
+def _reset_if_zimage_prompt_changed(wf: dict) -> bool:
+    """Reset ComfyUI's model cache before a Z-Image prompt that differs from the last one the
+    server ran (see the comment above ZIMAGE_PROMPT_RESET_WAIT_SECONDS). Returns True if it reset."""
+    last = _last_executed_workflow()
+    if last is None or not _is_zimage_workflow(last) or not _is_zimage_workflow(wf):
+        return False
+    if _zimage_prompt_texts(last) == _zimage_prompt_texts(wf):
+        return False  # same prompt (e.g. only the seed changed) - the resident text encoder is still valid
+    try:
+        running, pending = _queue_ids()
+    except Exception:
+        running, pending = [], []
+    if running or pending:
+        print(f"[comfyui] Z-Image 換了 prompt，但 ComfyUI 佇列上還有別的工作"
+              f"（執行中 {len(running)}、排隊中 {len(pending)}），這次跳過模型快取重置 - "
+              f"文字編碼器要跟主模型擠 8GB VRAM，這次如果很慢或失敗屬預期，等佇列空了再重跑一次。",
+              flush=True)
+        return False
+    print("[comfyui] Z-Image 換了 prompt - 主模型 + 文字編碼器加起來放不進 8GB VRAM，"
+          "先重置模型快取，讓文字編碼器乾淨地重新載入", flush=True)
+    try:
+        requests.post(f"{COMFYUI_URL}/free", json={"unload_models": True, "free_memory": True}, timeout=30)
+    except requests.exceptions.RequestException:
+        return False
+    time.sleep(ZIMAGE_PROMPT_RESET_WAIT_SECONDS)
+    return True
+
+
 def start_server(startup_timeout: float = 120) -> subprocess.Popen:
     """Launch the ComfyUI server as a background process and block until it
     responds. Assumes this repo's local layout (COMFYUI_DIR) - not used by
@@ -1756,6 +1813,7 @@ def _submit_and_wait_locked(wf: dict, output_node_id: str, timeout_seconds: int,
     apply_model_variants(wf)
     enforce_min_cfg(wf)
     _reset_if_mode_switch(wf)
+    _reset_if_zimage_prompt_changed(wf)
     payload = {"prompt": wf}
     if client_id:
         payload["client_id"] = client_id

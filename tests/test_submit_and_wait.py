@@ -566,3 +566,102 @@ def test_exhausted_poll_budget_raises_unavailable(fake_comfy, no_sleep):
     with pytest.raises(client.ComfyUIUnavailable) as excinfo:
         client._submit_and_wait({"9": {"class_type": "SaveImage", "inputs": {}}}, timeout_seconds=600)
     assert client.COMFYUI_URL in str(excinfo.value)
+
+
+# -- Z-Image prompt-change reset (_reset_if_zimage_prompt_changed) ----------------------------
+# Z-Image's UNet + text encoder don't both fit in 8GB VRAM (see the comment above
+# ZIMAGE_PROMPT_RESET_WAIT_SECONDS in comfyui_client.py), so a genuinely new prompt needs a
+# /free first; a same-prompt re-run (new seed) does not, since the resident text encoder is
+# still the right one.
+
+
+def _zimage_wf(positive="p", negative="n"):
+    """Minimal Z-Image-shaped workflow - only the two class_types _is_zimage_workflow and
+    _zimage_prompt_texts key off (see workflow_template_txt2img_zimage.json for the real shape)."""
+    return {
+        "13": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["10", 0], "shift": 3.0}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": positive, "clip": ["11", 0]}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["11", 0]}},
+    }
+
+
+def test_zimage_new_prompt_frees_before_prompt(fake_comfy):
+    fake_comfy.last_history = _history_with_last_prompt(_zimage_wf("old prompt", "neg"))
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait(_zimage_wf("new prompt", "neg"), timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/free", "/prompt"]
+
+
+def test_zimage_same_prompt_new_seed_does_not_free(fake_comfy):
+    """The seed lives elsewhere in the real workflow (the KSampler node) - CLIPTextEncode's text
+    is unchanged, so no text-encoder swap is coming and there is nothing to free for."""
+    fake_comfy.last_history = _history_with_last_prompt(_zimage_wf("same prompt", "neg"))
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait(_zimage_wf("same prompt", "neg"), timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_zimage_fresh_server_does_not_free(fake_comfy):
+    fake_comfy.last_history = {}  # no prior prompt at all
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait(_zimage_wf("prompt", "neg"), timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_zimage_prompt_change_skips_free_when_queue_busy(fake_comfy):
+    """Another client's job is running - /free would unload the models it is sampling with, so
+    the reset is skipped even though the prompt changed."""
+    fake_comfy.last_history = _history_with_last_prompt(_zimage_wf("old", "neg"))
+    fake_comfy.queue_running = ["someone-elses-job"]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait(_zimage_wf("new", "neg"), timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_zimage_prompt_change_skips_free_when_something_is_merely_pending(fake_comfy):
+    fake_comfy.last_history = _history_with_last_prompt(_zimage_wf("old", "neg"))
+    fake_comfy.queue_pending = ["someone-elses-queued-job"]
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait(_zimage_wf("new", "neg"), timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+def test_zimage_reset_ignored_when_last_workflow_was_not_zimage(fake_comfy):
+    """A prior AnimateDiff/SDXL workflow must not trigger the Z-Image reset just because it also
+    has CLIPTextEncode nodes with different text - _is_zimage_workflow gates both sides on
+    ModelSamplingAuraFlow, which only Z-Image's workflow carries."""
+    non_zimage_wf = {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "unrelated"}}}
+    fake_comfy.last_history = _history_with_last_prompt(non_zimage_wf)
+    fake_comfy.history_sequence = [FakeComfy.done("9", "out.png")]
+
+    _real_submit_and_wait(_zimage_wf("prompt", "neg"), timeout_seconds=5)
+
+    assert fake_comfy.paths("post") == ["/prompt"]
+
+
+# -- _is_zimage_workflow / _zimage_prompt_texts detectors -------------------------------------
+
+
+def test_is_zimage_workflow_true_for_zimage_shape():
+    assert client._is_zimage_workflow(_zimage_wf()) is True
+
+
+def test_is_zimage_workflow_false_otherwise():
+    wf = {"3": {"class_type": "KSampler", "inputs": {"sampler_name": "dpmpp_2m"}}}
+    assert client._is_zimage_workflow(wf) is False
+    assert client._is_zimage_workflow({}) is False
+
+
+def test_zimage_prompt_texts_collects_both_positive_and_negative():
+    texts = client._zimage_prompt_texts(_zimage_wf("pos text", "neg text"))
+    assert texts == frozenset({"pos text", "neg text"})
