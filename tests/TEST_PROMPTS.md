@@ -2,6 +2,16 @@
 
 測試和手動驗證用的提示詞集，按 checkpoint 類型組織。每種類型的提示詞都設計用來驗證對應模型的特性。
 
+## 中文提示詞支援總覽
+
+| Checkpoint 類型 | 中文支援 | 說明 |
+|---|---|---|
+| Z-Image Turbo | ✅ 原生支援，**不需翻譯** | 底層模型本身理解中文，Prompt 可以直接打中文，連畫面裡的中文字都寫得出來 |
+| Pony 系列 / SDXL / SD1.5 / AnimateDiff / GIF | ⚠️ 技術上能輸入，但**建議先翻譯** | CLIP tokenizer 對中文支援不佳，中文 prompt 容易被模型忽略；GUI 每個 prompt 欄位下方都有「翻譯成英文」按鈕（呼叫 Google Translate 公開端點，`training/translate_prompt.py`），自動偵測來源語言，已經是英文的話按下去內容不變 |
+| SVD 圖生影片 | 不適用 | 沒有 prompt 欄位，靠已有圖片 + 動作強度滑桿控制，中文/英文都無影響 |
+
+**實測建議**：測試「中文 prompt 直接可用」時只需要測 Z-Image；測其他路徑的中文輸入時，重點是驗證「翻譯成英文」按鈕本身有沒有正常運作，而不是驗證中文被模型正確理解（CLIP 本來就理解不了）。
+
 ## Checkpoint 類型
 
 ### 1. Pony 系列 (SDXL-shaped)
@@ -46,6 +56,13 @@ landscape photography, mountain range at sunset
 modern minimalist interior design
 ```
 
+#### 中文 prompt（⚠️ 建議先按「翻譯成英文」再送出）
+```
+一個女人穿著紅色洋裝的肖像
+坐在咖啡廳裡看書的女人
+公園裡陽光明媚的一天
+```
+
 ---
 
 ### 2. SDXL (非 Pony 系列)
@@ -77,6 +94,12 @@ woman sitting at a cafe table
 ```
 professional portrait photography, woman in elegant black dress, studio lighting, sharp focus, high detail
 person in modern minimalist interior, natural window light, cinematic composition
+```
+
+#### 中文 prompt（⚠️ 建議先按「翻譯成英文」再送出）
+```
+穿著休閒服裝站在戶外的人
+坐在咖啡廳桌前的女人
 ```
 
 ---
@@ -123,6 +146,12 @@ professional headshot, natural lighting, soft focus background, documentary phot
 person in cozy home setting, warm ambient light, intimate portrait
 ```
 
+#### 中文 prompt（⚠️ 建議先按「翻譯成英文」再送出，男性角色翻譯後仍要留意性別穩定性）
+```
+一個年輕女人的肖像，戶外自然光
+穿著連帽衫的年輕男人，友善的表情
+```
+
 ---
 
 ### 4. Z-Image Turbo
@@ -131,8 +160,8 @@ person in cozy home setting, warm ambient light, intimate portrait
 - 純文字生圖，無 FaceID / ControlNet / 精修
 - 極快（~3-4 秒）
 - 原生解析度約 512×768
-- 支援中文 prompt（會自動翻譯）
-- 手部和文字生成品質比 SDXL 好
+- **唯一原生理解中文的路徑，Prompt 可以直接打中文，不用翻譯**（其他所有 checkpoint 都建議先翻譯，見文檔開頭「中文提示詞支援總覽」）
+- 手部和文字生成品質比 SDXL 好，中文字也寫得出來
 
 **推薦測試提示詞**:
 
@@ -157,11 +186,18 @@ person holding a sign with text
 text-heavy scene with person in foreground
 ```
 
-#### 中文 prompt（會自動翻譯）
+#### 中文 prompt（✅ 直接打中文送出，不用按翻譯）
 ```
 穿著紅色裙子的女人的肖像
 穿著休閒服裝的男人
 舒適的咖啡館內景
+```
+
+#### 中文字渲染測試（Z-Image 專屬強項，其他 checkpoint 畫面裡的文字幾乎都是亂碼）
+```
+一張海報，上面用大字寫著「歡迎光臨」，背景有一個人
+一個人拿著寫有「生日快樂」的牌子
+街道上的招牌寫著「早安咖啡」，霓虹燈風格
 ```
 
 ---
@@ -206,6 +242,12 @@ sunset light moving across a wall
 water flowing in a stream
 ```
 
+#### 中文 prompt（⚠️ 建議先按「翻譯成英文」再送出）
+```
+女人坐在窗邊，轉頭看向鏡頭
+男人站在房間裡，環顧四周
+```
+
 ---
 
 ### 6. SVD 圖生影片
@@ -215,6 +257,7 @@ water flowing in a stream
 - 沒有 FaceID 鎖臉，動作幅度大時臉容易變形
 - 低解析度、低幀數，主要用來驗證構圖
 - 提示詞影響較小（主要是改動作）
+- **沒有 prompt 欄位，不涉及中文/英文問題**
 
 **推薦測試提示詞**:
 
@@ -283,8 +326,8 @@ man looking around the room
 - **Pony**: 不要手動加 `score_9` 前綴（會被重複加），直接寫自然語言
 - **SD1.5 男性**: 確保用的是 `realistic_vision` 或 `cyberrealistic` checkpoint（自動應用 gender weight）
 - **影片**: 避免在負面詞裡用 "symmetrical face"（已自動移除）
-- **Z-Image**: 支援中文 prompt，會自動翻譯，不用特別準備
-- **SVD**: 提示詞影響較小，動作強度靠 `motion_bucket_id` 滑桿控制
+- **中文 prompt**: 只有 Z-Image Turbo 原生理解中文，不用翻譯；其他所有 checkpoint（Pony/SDXL/SD1.5/AnimateDiff/GIF）都要先用「翻譯成英文」按鈕轉換，直接打中文送出會被 CLIP 忽略掉大半內容
+- **SVD**: 提示詞影響較小，動作強度靠 `motion_bucket_id` 滑桿控制，沒有語言問題
 
 ---
 
@@ -294,9 +337,11 @@ man looking around the room
 - **風格常數**: `training/generate_character.py` 中的 `REALISTIC_STYLE` 等（第 39-94 行）
 - **測試案例**: `tests/test_prompt_assembly.py` - 自動化測試用例
 - **Checkpoint 映射**: `training/comfyui_client.py` 中的 `CHECKPOINTS`、`PONY_CHECKPOINTS`、`SD15_CHECKPOINTS` 等
+- **翻譯功能**: `training/translate_prompt.py`（Google Translate 公開端點，GUI 各 prompt 欄位下方的「翻譯成英文」按鈕呼叫這裡）
 
 ---
 
 ## 更新記錄
 
 - **2026-09-12**: 初版，包含 6 種 checkpoint 類型的提示詞集
+- **2026-09-12**: 加入「中文提示詞支援總覽」，並在每個 checkpoint 章節補上中文範例——修正了 Z-Image 段落原本「支援中文 prompt（會自動翻譯）」的錯誤描述（Z-Image 其實是唯一**不需要**翻譯的路徑，其他 checkpoint 才需要翻譯）
