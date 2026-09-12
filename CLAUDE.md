@@ -21,10 +21,16 @@
 - **32 GB 系統 RAM**：高清流程單張就可能吃到 15 GB+，會開始用分頁檔
 - **過熱降頻**：GPU 到 84°C 會硬體降頻，同一個 session 裡後面的計時不能直接跟前面比；
   做效能比較一定要一起記溫度、註明是不是冷機
-- **只有一個 venv**：`ComfyUI\.venv`。所有 python 指令都用
-  `ComfyUI\.venv\Scripts\python.exe` 跑，torch / safetensors / insightface 只裝在那裡。
-  `comfyui_client.py` 刻意只用 `requests`、不 import torch，這樣才能在沒有 GPU 環境的
-  地方跑。
+- **執行環境只有一個**：`ComfyUI\.venv`（Python 3.11.15）。所有會碰到模型的 python 指令
+  都用 `ComfyUI\.venv\Scripts\python.exe` 跑，torch / safetensors / insightface 只裝在
+  那裡。`comfyui_client.py` 刻意只用 `requests`、不 import torch，這樣才能在沒有 GPU 環境
+  的地方跑。
+  其他 venv（別把 dev 工具裝進 ComfyUI\.venv）：
+  - `.venv-dev`：只有 pytest / ruff / requests / fastapi（無 torch），給 `check.ps1` 和 CI 用。
+    刻意分開是因為 `worker/Dockerfile` 從 `comfyui-requirements.lock.txt` 安裝，而那個 lock 是
+    `uv pip freeze` 產生的——dev 工具裝進去遲早會被 freeze 進 worker image。
+  - `SadTalker/.venv`、`MuseTalk/.venv`：第三方 clone 各自的 Python 3.10 環境（共約 13 GB），
+    跟上面兩個互不相容。
 
 ## 常用指令
 
@@ -54,13 +60,27 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
 - **workflow**：`training/workflow_template*.json`，程式用 node id 改參數。功能關掉時要
   把節點從 dict 移除，不是留著把權重設成 0。
 - **年齡安全**：`MINIMUM_AGE` 在 import 時檢查，不符合會直接 `raise`；
-  `AGE_SAFETY_NEGATIVE` 一定要留在負面詞裡。**cfg 1.0 時 ComfyUI 會跳過負面詞**，所以
-  每個取樣器的 cfg 都設了下限（Z-Image 1.5、影片 LCM 1.5），不要為了省時間把它降到 1.0。
+  `AGE_SAFETY_NEGATIVE` 一定要留在負面詞裡。**cfg 1.0 時 ComfyUI 會跳過負面詞**，所以有
+  `comfyui_client.SAFETY_MIN_CFG = 1.5` 這個下限（`ZIMAGE_MIN_CFG` / `LCM_MIN_CFG` 都是它的
+  別名），並由 `enforce_min_cfg()` 在 `_submit_and_wait` 統一套用，不要為了省時間降到 1.0。
+- **錯誤型別**：library 層用 `generate_character.UsageError` 表示呼叫端參數錯誤，**不要用
+  `SystemExit`**（它是 `BaseException`，`except Exception` 接不到，這正是 image_api 和 GUI
+  兩個邊界 bug 的成因）。只有 CLI 的 `__main__` 把它轉回 `SystemExit`。
 
 ## 驗證慣例
 
-- 先做離線檢查（改寫邏輯、拒絕條件、參數數量），再實機跑。GUI 改動要做 build 檢查：
-  `generate()` 的參數數量必須等於按鈕的 inputs 數量。
+- **離線檢查就是一行**：`powershell -ExecutionPolicy Bypass -File check.ps1`
+  （ruff → `ruff format --check tests` → pytest → 換行稽核，約 2 秒，不需要 GPU 也不需要
+  ComfyUI）。改完先跑它再實機跑。這些以前要人眼複查的事現在都有測試守著：
+  - GUI 每個 handler 的參數數量 vs 按鈕 `inputs` 長度（用 AST，不 import `gui.py`）
+  - workflow JSON 的 node id ↔ class_type 契約（`training/workflow_contracts.py` 是單一真相，
+    `_load_template` 也會檢查，模板被重新匯出會立刻報錯）
+  - 年齡／內容安全負面詞在每條組裝路徑上都存活，**而且常數本身的內容也被釘住**
+    （只檢查「有沒有傳下去」是自我指涉的：把常數清空，所有斷言都會變成恆真）
+  - fp8 變體選擇優先序，以及 ControlNet control-lora 一律強制完整版的規則
+  - CLI 子指令與旗標（`tests/test_cli_surface.py` 的 `FROZEN_CLI` 就是簽核點）
+- CI（`.github/workflows/checks.yml`）在 ubuntu 與 windows 兩個 runner 上跑同一套，
+  worker image 的 build 有 `needs: checks` 擋著。
 - 臉／身分比較用 `training/face_similarity.py`（InsightFace `buffalo_l`，跟 FaceID 同一個
   模型）。它只判「是不是同一個人」，**對臉部形變不敏感**——形變問題要看逐幀拼圖，分數
   只能用來確認沒有換臉。
@@ -87,4 +107,7 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   角色 LoRA」）。
 - 4 個 SDXL / Pony checkpoint 都有 fp8 量化版可選，預設仍是完整版。
 - Z-Image Turbo 只支援純文字生圖，沒有 FaceID / ControlNet / 精修版本。
-- `web/`（Amplify 骨架）和 `WEB_DEPLOYMENT.md` 目前只是規劃，沒有對應實作。
+- `web/amplify/` 有 **737 行實際的 TypeScript 後端**（DynamoDB + API Gateway + 3 個 Lambda +
+  Replicate/RunPod provider + 兩個 webhook），不是骨架——但**從來沒有部署過、沒有整合測試過**
+  （這個環境沒有 AWS 帳號），而且**完全沒有前端程式碼**。`web/README.md` 是最準確的說明，
+  `WEB_DEPLOYMENT.md` 是更早的規劃文件。

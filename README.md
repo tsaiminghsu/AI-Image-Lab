@@ -1764,15 +1764,43 @@ AI-Image-Lab/
 ├── outputs/_comfyui_raw/     # ComfyUI 原始輸出暫存，不進 repo
 ├── outputs/sadtalker/_raw/   # SadTalker 每次執行的暫存資料夾（跑完自動刪除），不進 repo
 ├── captions/ evaluation/ samples/  # 保留給 kohya_ss LoRA 訓練階段用，目前都是空的
-├── web/                      # AWS Amplify Gen 2 前端骨架（見 WEB_DEPLOYMENT.md）
+├── web/amplify/              # AWS Amplify Gen 2 後端實作（Lambda + DynamoDB + Replicate/RunPod），從未部署過；沒有前端（見 web/README.md）
 ├── worker/                   # RunPod serverless worker（Dockerfile + handler）
 ├── comfyui-requirements.lock.txt   # ComfyUI 本體套件凍結版本清單
 ├── comfyui-requirements-extra.lock.txt   # 網頁 GUI + 所有選用功能（ControlNet/ADetailer/mediapipe）套件凍結版本清單
 ├── CHANGELOG.md               # 每次改動的結論與實測數字
 ├── CLAUDE.md                  # 給 Claude Code 的專案速覽（硬體限制、常用指令、慣例）
 ├── CLOUD_GPU.md               # 本地顯卡不夠力時的雲端 GPU 參考（Replicate/RunPod）
-└── WEB_DEPLOYMENT.md          # 網頁部署規劃（AWS Amplify + Replicate/RunPod，尚無實作）
+├── tests/                     # 離線測試（不需要 GPU / ComfyUI / 模型權重），用 check.ps1 跑
+├── check.ps1                  # 提交前的一鍵檢查：ruff + pytest + 換行稽核
+├── pyproject.toml             # 只有 pytest / ruff 設定（這個 repo 不是 python 套件）
+├── requirements-dev.txt       # dev 工具，裝在獨立的 .venv-dev，不進 ComfyUI\.venv
+└── WEB_DEPLOYMENT.md          # 早期的網頁部署規劃（實際進度以 web/README.md 為準）
 ```
+
+## 改程式之前：跑一次檢查
+
+測試不需要 GPU、不需要 ComfyUI、不需要模型權重，整套跑完約 2 秒。它們守著幾件以前只能靠
+人眼複查的事：GUI 每個按鈕的參數數量、workflow JSON 的 node id、年齡／內容安全負面詞、
+fp8 變體的選擇規則、CLI 的子指令與旗標。
+
+第一次要先建 dev 環境（**刻意跟 `ComfyUI\.venv` 分開**：`worker/Dockerfile` 是從
+`comfyui-requirements.lock.txt` 安裝的，而那個 lock 是 `uv pip freeze` 產生的，dev 工具
+裝進去遲早會被 freeze 進 worker image）：
+
+```powershell
+uv venv .venv-dev --python 3.11
+uv pip install --python .venv-dev\Scripts\python.exe -r requirements-dev.txt
+```
+
+之後每次改完程式：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File check.ps1
+```
+
+`-Fix` 會先讓 ruff 自動修可以修的東西，`-Live` 會額外跑需要 ComfyUI 在線的測試。
+同一套檢查也在 GitHub Actions 上跑（ubuntu + windows），worker image 的 build 要等它綠燈。
 
 ## 疑難排解
 

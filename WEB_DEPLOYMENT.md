@@ -1,6 +1,12 @@
 # 網頁部署規劃：AWS Amplify + Replicate/RunPod
 
-規劃文件，還沒有對應的程式碼實作。目標架構：前端放 AWS Amplify，實際 GPU
+> **狀態（2026-09-12）**：這份規劃後來大致實作了——`web/amplify/` 有 737 行 TypeScript
+> （job queue、Replicate/RunPod 兩個 provider、兩個 webhook、DynamoDB + API Gateway 的 CDK
+> 定義），可以通過 `tsc --noEmit`，但**從來沒有真的部署過、沒有整合測試過**，而且**還沒有
+> 任何前端程式碼**。實際進度以 [web/README.md](web/README.md) 為準；這份文件保留當初的設計
+> 理由。
+
+目標架構：前端放 AWS Amplify，實際 GPU
 運算外包給 Replicate 或 RunPod（見 [CLOUD_GPU.md](CLOUD_GPU.md) 了解這兩個
 服務本身的計費/使用方式）。**現階段只給自己/內部用**，先不做會員系統。
 

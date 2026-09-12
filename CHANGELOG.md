@@ -5,6 +5,49 @@
 
 ## 2026-09-12
 
+### 補上測試、CI 與例外邊界；安全關鍵邏輯去重 `67cda27`..`f11e915`
+
+- **問題**：功能面相當完整，工程面幾乎是裸的。**零自動化測試**，唯一的 CI 只 build worker
+  image。好幾個「壞掉才會知道」的隱性契約全靠人眼複查（CLAUDE.md 的「驗證慣例」就是在描述
+  這件事）：GUI handler 的參數數量 vs 按鈕 `inputs` 長度、workflow JSON 的 node id ↔
+  class_type、fp8 變體規則、年齡／內容安全負面詞。
+- **一個真 bug**：`image_api._run_job` 用 `except Exception` 接 `gen_custom()`，但
+  `generate_character` 有 18 處用 `raise SystemExit` 表示參數錯誤，而 `SystemExit` 是
+  `BaseException`——接不到。驗證失敗會靜靜殺掉 worker thread，job 永遠停在 `pending`，
+  輪詢端永遠等不到錯誤。`gui.py` 有同樣的洞（只有 AnimateDiff 那條有 inline try）。
+  `worker/handler.py` 早就用 `except BaseException`，正是因為踩過。
+  現在 library 層改用 `UsageError`（一般 `Exception`），只有 CLI 的 `__main__` 轉回
+  `SystemExit`——實測 stderr 與 exit code 逐位元組不變。
+- **安全關鍵邏輯去重**：`gen_video_animatediff` 自己重抄了一份負面詞組裝，而
+  `_build_prompt_and_negative` 的 docstring 明講它存在就是為了避免這件事。改成呼叫共用
+  builder，但**不能天真地直接換**：AnimateDiff 的 checkpoint key（`sd15_base`）不在
+  `SD15_CHECKPOINTS` 裡，直接轉會默默失去 SD1.5 gender weight，所以加了 keyword-only 的
+  `gender_weight`。cfg 下限也從兩份副本收斂成 `SAFETY_MIN_CFG`，由 `enforce_min_cfg()` 在
+  `_submit_and_wait` 統一套用（11 個模板現有 cfg 全部 ≥ 2.0，今天不改變任何輸出）。
+- **測試自己的漏洞**：原本所有年齡安全斷言都是 `AGE_SAFETY_NEGATIVE in negative`，這是
+  自我指涉的。**實測：把那個常數清空，628 個測試全部照樣通過**（`"" in 任何字串` 恆真）。
+  現在常數的內容本身也被釘住。
+- **韌性**：client 原本沒有任何重試，一次暫時性的 `ConnectionError` 就會殺掉一個可能已經跑
+  了好幾分鐘、而且伺服器端還在正常算的工作。現在依「重送會不會多花一次生成」分流：冪等的
+  讀取（`GET /history`、`/view`、`overwrite=true` 上傳）退避重試 2/4/8/16 秒、連續失敗
+  120 秒才放棄；**`POST /prompt` 不冪等**，只在連線被拒／ConnectTimeout（請求證實沒送出）
+  時重送，`ReadTimeout` 直接報錯並要使用者先看佇列。逾時與 Ctrl-C 會把孤兒 prompt 從佇列
+  移除，只有在 `GET /queue` 證實是自己的 prompt 在跑時才 `/interrupt`（API 形狀是讀
+  ComfyUI 原始碼確認的，不是猜的）。
+- **併發**：`_submit_and_wait` 全段在 module RLock 內（那段正是非可重入的 module globals
+  會變動、以及 LCM 模式切換檢查會 race 的區間）；GUI 五個生成按鈕共用
+  `concurrency_id="gpu"`（Gradio 的 `concurrency_limit=1` 是**每個 listener** 各算的，
+  兩個分頁本來會同時打同一張卡）。
+- **數字**：654 → 903 個離線測試，整套 2.3 秒，不需要 GPU、不需要 ComfyUI、不需要模型權重、
+  不需要 torch。CI 在 ubuntu + windows 兩個 runner 上跑同一套，worker image 的 build 有
+  `needs: checks` 擋著。graph surgery 那組做過 mutation check：把 `_rewire` 改成 no-op，
+  278 個組合中 232 個變紅。
+- **注意**：dev 工具（pytest/ruff）裝在**獨立的 `.venv-dev`**，不要裝進 `ComfyUI\.venv`——
+  `worker/Dockerfile` 是從 `comfyui-requirements.lock.txt` 安裝的，而那個 lock 是
+  `uv pip freeze` 產生的。
+- **文件**：README「改程式之前：跑一次檢查」、CLAUDE.md「驗證慣例」
+
+
 ### SDXL / Pony 模型可切換完整版 / 量化版 fp8（選用） `707cb23`
 
 - **問題**：8 GB VRAM + PCIe gen3 x1，模型搬移是主要瓶頸；高清流程連系統 RAM 都會吃緊。
