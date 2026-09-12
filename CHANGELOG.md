@@ -5,6 +5,25 @@
 
 ## 2026-09-12
 
+### Z-Image 換 prompt 會爆 VRAM，補上跟 LCM 切換一樣的自動 `/free` `b6043ca`
+
+- **問題**：Z-Image 的主模型（5.9 GB）跟文字編碼器（5.24 GB）加起來超過這張卡的 8 GB
+  VRAM，兩個沒辦法同時常駐。同一個 prompt 換 seed 只會用到已經常駐的主模型沒事，但一換
+  **不同的** prompt，文字編碼器就要搬回 VRAM 跟主模型擠——沒有先騰出空間的話，這個瞬間疊加
+  可能超過 8 GB，直接爆掉或掉到走 PCIe x1 的龜速共享記憶體，而不是 README「Z-Image Turbo」
+  章節原本記錄的乾淨換模型。
+- **解法**：仿照既有的 LCM ↔ 一般取樣切換保護（`_reset_if_mode_switch`），加了
+  `_reset_if_zimage_prompt_changed()`：比對這次送出的 workflow 跟上次執行的
+  `CLIPTextEncode` 文字內容，兩者都是 Z-Image、而且 prompt 真的變了才觸發 `/free`；佇列上
+  還有別人的工作在跑就跳過（避免把別人正在取樣用的模型卸載掉）。掛在 `_submit_and_wait`
+  這個所有流程共用的單一改寫點，跟 `apply_model_variants`、`_reset_if_mode_switch` 同一個
+  位置。
+- **驗證**：離線加了 9 個測試（觸發／不觸發／同 prompt 換 seed／佇列忙碌時跳過／不會跟
+  非 Z-Image workflow 搞混），`check.ps1` 全過（916 passed）。實機冷開 ComfyUI，第一張
+  212 秒（完成後 69°C、3595 MB 常駐）；換成不同 prompt 的第二張，log 印出
+  `[comfyui] Z-Image 換了 prompt...`（確認真的觸發了），124 秒完成（75°C、3704 MB），
+  兩張都沒有 OOM。
+
 ### 補上測試、CI 與例外邊界；安全關鍵邏輯去重 `67cda27`..`f11e915`
 
 - **問題**：功能面相當完整，工程面幾乎是裸的。**零自動化測試**，唯一的 CI 只 build worker
