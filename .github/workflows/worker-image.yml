@@ -16,7 +16,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Never push an image built from code that does not pass the offline suite. Two workflow
+  # files cannot `needs:` each other directly, so checks.yml is reused via workflow_call.
+  checks:
+    uses: ./.github/workflows/checks.yml
+
   build:
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: read

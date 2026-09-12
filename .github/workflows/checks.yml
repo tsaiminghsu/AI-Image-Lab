@@ -1,0 +1,61 @@
+name: Checks
+
+# Offline verification: ruff, the pytest suite, and the line-ending audit.
+#
+# Everything here runs WITHOUT a GPU, without ComfyUI, without the model weights and
+# without torch. The tested modules import nothing heavier than `requests` at module
+# scope (gui.py is inspected via AST rather than imported, because gradio builds its
+# Blocks at import time and is not installable cheaply here), so requirements-dev.txt
+# - pytest, ruff, requests - is the whole dependency set.
+on:
+  push:
+  pull_request:
+  workflow_call: # worker-image.yml gates the Docker build on this
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows is the real target platform (backslash paths in convert_command() and
+        # friends); ubuntu matches the RunPod worker image the same training/*.py runs in.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # matches ComfyUI\.venv (3.11.15)
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dev tools
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Lint
+        run: python -m ruff check training tests worker
+
+      - name: Format (tests only)
+        run: python -m ruff format --check tests
+
+      - name: Tests
+        run: python -m pytest
+
+      # Mirrors the audit in check.ps1. .gitattributes marks the CRLF files as -text so
+      # git never converts them; that preserves their bytes but means nothing stops a
+      # careless editor from flipping them, hence this check.
+      - name: Line endings match the convention
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          allowed='^(README\.md|training/poses/[^/]+\.json|training/reference_candidates/model_test/REPORT\.md)$'
+          required='^(README\.md|training/poses/[^/]+\.json)$'
+          bad=$(git ls-files --eol | awk '$1=="i/crlf"{print $4}' | grep -vE "$allowed" || true)
+          if [ -n "$bad" ]; then echo "unexpected CRLF in the index:"; echo "$bad"; exit 1; fi
+          bad=$(git ls-files --eol | awk '$1=="i/lf"{print $4}' | grep -E "$required" || true)
+          if [ -n "$bad" ]; then echo "expected CRLF but found LF:"; echo "$bad"; exit 1; fi
