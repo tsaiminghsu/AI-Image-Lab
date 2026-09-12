@@ -284,6 +284,45 @@ man looking around the room
 
 ---
 
+### 7. 圖片選擇生圖分頁（點縮圖，不打字）
+
+**分頁**：GUI 的「🎯 圖片選擇生圖」，跟前面 6 種不一樣——這裡**不是測 prompt 文字**，是測「點選組合」在不同
+checkpoint 家族下會不會被正確翻譯。核心邏輯在 `gc.plan_picker()`（`generate_character.py`），對應的自動化測試在
+`tests/test_picker_plan.py`（42 個案例，離線）。手動測試時真正要核對的是**預覽欄的文字**跟**降級提示有沒有出現**，
+而不是最後生成的畫面像不像——像不像是另一件事，這裡先確認「送對東西」。
+
+**測試矩陣**：人物 × 姿勢 × 場景，各家族至少跑一組
+
+| Checkpoint 家族 | 人物 | 姿勢 | 場景 | 預期行為 |
+|---|---|---|---|---|
+| Pony（`cyberrealistic_pony`） | xinyi | hands on hips | 溫馨咖啡廳 | 預覽以 `score_9, score_8_up, score_7_up` 開頭；提示區顯示「✅ 這個 checkpoint 會真的鎖住：臉（FaceID anchor）、姿勢（ControlNet 骨架）」；姿勢的 `prompt_hint` 只出現在預覽（`_plan_custom` 加的），不在點選組出的 `prompt_body` 裡 |
+| SDXL（`juggernaut`） | ruoxi | walking | 城市街道 | 同上但沒有 `score_9` 標籤 |
+| SD1.5（`realistic_vision`） | minjun（男性） | arms crossed | 公園綠地 | 預覽含 `(man:1.3)`；提示區出現兩則「⚠️ realistic_vision 沒有 ControlNet／FaceID」；anchor/pose_name 都是 None |
+| Z-Image（`z_image_turbo`） | mei | standing straight | 書店 | 預覽含姿勢的 `prompt_hint` + `camera` 文字（例如「standing upright, arms relaxed at the sides, front view, eye level」）；同樣兩則降級警告 |
+
+**邊界案例**（對應 `test_picker_plan.py` 的具體測試名）：
+
+```
+只選人物，不選姿勢/場景 → 生成按鈕應該擋下（"至少要選一個場景或姿勢，或在「補充描述」填點東西"）
+角色沒有 anchor 圖（例如 mylora）+ SDXL → 提示「還沒有 anchor 圖」，不能送出
+只填補充描述，不選任何縮圖 → 可以生成（純文字路徑）
+suggestive 分級下選海灘場景 → 安全負面詞（AGE_SAFETY_NEGATIVE、pornographic 等）仍要出現在預覽的負面欄
+切回 safe 分級 → 場景選取要被清空（不能讓已選的海灘場景「隱形地」留著送出去）
+```
+
+**中文補充描述**：「補充描述」欄位可以直接打中文，送出前會自動翻成英文（複用
+`translate_prompt.translate_to_english`，見「中文提示詞支援總覽」的 Google→MyMemory 備援鏈）。手動測試時可以打
+「手上拿著紙杯」，確認生成按鈕按下去後有跑翻譯（不用先按翻譯鍵）。
+
+**已知的資料完整性檢查**（避免縮圖庫本身跟測試脫節）：
+
+```bash
+ComfyUI\.venv\Scripts\python.exe training\scene_library.py list      # 場景庫 + 縮圖有沒有缺
+python -m pytest tests/test_scene_library.py tests/test_picker_plan.py tests/test_pose_library_meta.py -q
+```
+
+---
+
 ## 使用指南
 
 ### 測試場景的選擇
@@ -328,6 +367,8 @@ man looking around the room
 - **影片**: 避免在負面詞裡用 "symmetrical face"（已自動移除）
 - **中文 prompt**: 只有 Z-Image Turbo 原生理解中文，不用翻譯；其他所有 checkpoint（Pony/SDXL/SD1.5/AnimateDiff/GIF）都要先用「翻譯成英文」按鈕轉換，直接打中文送出會被 CLIP 忽略掉大半內容
 - **SVD**: 提示詞影響較小，動作強度靠 `motion_bucket_id` 滑桿控制，沒有語言問題
+- **圖片選擇生圖**: 不用打字，但選了角色卻沒 anchor 圖、或只選人物沒選姿勢/場景時會被擋下——這些是設計行為，
+  不是 bug；驗證重點是預覽欄文字有沒有跟著 checkpoint 換，不是打字技巧
 
 ---
 
@@ -338,6 +379,10 @@ man looking around the room
 - **測試案例**: `tests/test_prompt_assembly.py` - 自動化測試用例
 - **Checkpoint 映射**: `training/comfyui_client.py` 中的 `CHECKPOINTS`、`PONY_CHECKPOINTS`、`SD15_CHECKPOINTS` 等
 - **翻譯功能**: `training/translate_prompt.py`（Google Translate 公開端點，GUI 各 prompt 欄位下方的「翻譯成英文」按鈕呼叫這裡）
+- **圖片選擇生圖**: `training/generate_character.py` 中的 `plan_picker()`／`picker_anchor_path()`；場景庫在
+  `training/scene_library.py` + `training/scenes/scenes.json`；姿勢庫在 `training/pose_skeletons.py` +
+  `training/poses/*.json`；測試在 `tests/test_picker_plan.py`、`tests/test_scene_library.py`、
+  `tests/test_pose_library_meta.py`
 
 ---
 
@@ -345,3 +390,5 @@ man looking around the room
 
 - **2026-09-12**: 初版，包含 6 種 checkpoint 類型的提示詞集
 - **2026-09-12**: 加入「中文提示詞支援總覽」，並在每個 checkpoint 章節補上中文範例——修正了 Z-Image 段落原本「支援中文 prompt（會自動翻譯）」的錯誤描述（Z-Image 其實是唯一**不需要**翻譯的路徑，其他 checkpoint 才需要翻譯）
+- **2026-09-12**: 加入「圖片選擇生圖分頁」章節——這個分頁測的是「點選組合」而非文字，附測試矩陣（人物×姿勢×場景 ×
+  4 個 checkpoint 家族）跟邊界案例清單，對應到 `test_picker_plan.py` 的離線測試
