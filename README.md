@@ -3,6 +3,9 @@
 用 **ComfyUI + SDXL + IP-Adapter** 生成虛構（非真人）角色的多角度訓練圖片資料集，
 供之後用 [kohya_ss](https://github.com/bmaltais/kohya_ss) 訓練角色 LoRA。
 
+每次改動的結論和實測數字整理在 [CHANGELOG.md](CHANGELOG.md)；給 Claude Code 看的
+專案速覽在 [CLAUDE.md](CLAUDE.md)。
+
 ## 內容政策
 
 - 所有角色皆為**虛構人物**，非真人、非公眾人物、非任何真實個體的肖像
@@ -17,7 +20,9 @@
 
 | 項目 | 值 |
 |---|---|
-| GPU | NVIDIA RTX 2070, 8 GB VRAM |
+| GPU | NVIDIA RTX 2070, 8 GB VRAM（Turing sm_75：沒有 bf16、沒有 fp8 運算） |
+| 系統 RAM | 32 GB |
+| PCIe | 實測跑在 gen3 x1（不是 x16），模型載入／搬移特別慢，取樣本身不受影響 |
 | OS | Windows 10 Pro 10.0.19045 |
 | Python | 3.11.15（由 [uv](https://github.com/astral-sh/uv) 管理，隔離 venv） |
 
@@ -1730,7 +1735,17 @@ AI-Image-Lab/
 │   ├── translate_prompt.py   # Prompt 自動翻譯成英文（Google Translate 公開端點）
 │   ├── check_adetailer_models.py # ADetailer YOLO 模型自動檢查/下載腳本
 │   ├── benchmark.py          # VRAM/RAM 記憶體洩漏測試
+│   ├── quantize_models.py    # 把 SDXL/Pony checkpoint 轉成 fp8 量化版 + 版本設定 CLI（用 ComfyUI 的 venv 跑）
+│   ├── pose_skeletons.py     # OpenPose 骨架庫（poses/ 裡的 json/png）
+│   ├── pose_pack.py          # 姿勢/角度標籤參考包產生器（每個標籤一張圖）
+│   ├── model_prompt_test.py  # 各 checkpoint 的 prompt 語法探索腳本（手動跑，不在流程裡）
+│   ├── image_api.py          # FastAPI 包裝 gen_custom()，給外部專案用 HTTP 呼叫
+│   ├── runpod_bundle.py      # RunPod LoRA 訓練的 Windows 端打包/安裝工具
+│   ├── runpod_train.sh       # 在 RunPod pod 上跑的訓練腳本
 │   ├── workflow_template.json             # IP-Adapter workflow（variations 用）
+│   ├── workflow_template_hq.json          # HQ 兩段式 workflow（含 ControlNet 節點 20-23）
+│   ├── workflow_template_txt2img_sd15.json   # SD1.5 純 txt2img workflow
+│   ├── workflow_template_txt2img_zimage.json # Z-Image Turbo workflow（三個模型檔）
 │   ├── workflow_template_txt2img.json     # 純 txt2img workflow（anchor 用）
 │   ├── workflow_template_img2img.json     # IP-Adapter + img2img workflow（gif 指令的 wiggle 幀用）
 │   ├── workflow_template_controlnet.json  # IP-Adapter + ControlNet 骨架 workflow
@@ -1740,13 +1755,21 @@ AI-Image-Lab/
 │   ├── workflow_template_animatediff_facedetailer.json # SD1.5 AnimateDiff + FaceID + 影片臉部精修 + 高清/放大/補幀/mp4（video-animatediff 用）
 │   ├── talking_head.py       # SadTalker 對嘴影片包裝（subprocess 呼叫 SadTalker 自己的 venv，talk 指令/GUI 用）
 │   ├── face_similarity.py    # 影片逐幀臉部相似度 + 臉部拼圖（InsightFace，用 ComfyUI 的 venv 跑）
+│   ├── config/               # kohya_ss 訓練設定（mylora.toml 等，本地那次的產物）
+│   ├── logs/                 # kohya_ss 訓練 log（train_mylora.*.log）
+│   ├── poses/                # 骨架庫的 json + 預覽圖 + contact sheet
+│   ├── settings/             # 本機設定（model_variants.json），不進 repo
 │   └── reference_candidates/ # anchor 候選圖，不進 repo
 ├── datasets/<character>/     # 生成的訓練圖 + caption，不進 repo
 ├── outputs/_comfyui_raw/     # ComfyUI 原始輸出暫存，不進 repo
 ├── outputs/sadtalker/_raw/   # SadTalker 每次執行的暫存資料夾（跑完自動刪除），不進 repo
-├── captions/ evaluation/ samples/  # 保留給未來 kohya_ss LoRA 訓練階段用，目前空
+├── captions/ evaluation/ samples/  # 保留給 kohya_ss LoRA 訓練階段用，目前都是空的
+├── web/                      # AWS Amplify Gen 2 前端骨架（見 WEB_DEPLOYMENT.md）
+├── worker/                   # RunPod serverless worker（Dockerfile + handler）
 ├── comfyui-requirements.lock.txt   # ComfyUI 本體套件凍結版本清單
 ├── comfyui-requirements-extra.lock.txt   # 網頁 GUI + 所有選用功能（ControlNet/ADetailer/mediapipe）套件凍結版本清單
+├── CHANGELOG.md               # 每次改動的結論與實測數字
+├── CLAUDE.md                  # 給 Claude Code 的專案速覽（硬體限制、常用指令、慣例）
 ├── CLOUD_GPU.md               # 本地顯卡不夠力時的雲端 GPU 參考（Replicate/RunPod）
 └── WEB_DEPLOYMENT.md          # 網頁部署規劃（AWS Amplify + Replicate/RunPod，尚無實作）
 ```
@@ -1805,6 +1828,22 @@ RTX 2070 是 Turing 架構（compute capability 7.5），bf16 tensor core 要 Am
 一律搬到 RunPod 用有 bf16 的卡（RTX 4090 / A100）訓練，訓好把 `.safetensors`
 拉回本地，和 IP-Adapter FaceID **並用**（LoRA 扛身分、FaceID 只修飄移）。
 
+**目前狀態**：還沒有訓練出可用的角色 LoRA。11 個角色的 `lora` 欄位全部是 `None`，
+身分完全靠 IP-Adapter FaceID。`models/lora/` 現有兩個檔案，都沒有登記給任何角色、
+生圖流程不會用到：
+
+| 檔案 | 來源 | 內容 |
+|---|---|---|
+| `mylora-000001.safetensors` | 2026-08-15 本地那次失敗的訓練 | SDXL base 1.0、dim 32 / alpha 16、`datasets/character` 100 張、預定 10 epoch / 1000 步。只跑到 100 步（10 分 5 秒、6.05 秒/步）就中止，而且**整段 `avr_loss=nan`**，這個檔案是在 NaN 狀態下存的第 1 個 epoch 快照，不能用 |
+| `dsfutaba_pd6.safetensors` | 外部下載 | Pony V6 底模的風格 LoRA（2024-02-15、dim 16 / alpha 8、trigger `dsfutaba`），放著參考用 |
+
+那次的設定在 `training/config/`（`mylora.toml`、`dataset_mylora.toml`），log 在
+`training/logs/train_mylora.{out,err}.log`——`out.log` 可以看到當時是 fp16 mixed
+precision 再加 `enable fp8 training for U-Net / Text Encoder`。RunPod 上 bf16 +
+`--no_half_vae` 的組合到目前為止還沒有實際跑過，`models/lora/` 裡也沒有任何來自 RunPod
+的產出，所以下面的步驟是照 kohya 的已知解法寫的，第一次跑要照步驟 4 盯住前 20 步的
+`avr_loss`。
+
 底模用 **Pony V6 base**（`ponyDiffusionV6XL_v6StartWithThisOne.safetensors`），
 因為推論用的是 cyberrealistic_pony / pony_realism 等 Pony 系；Pony V6 重訓過
 text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給 Juggernaut 用
@@ -1812,7 +1851,8 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 
 步驟：
 
-1. **補資料集（若太少）**：`xinyi`/`yuqing`/`wanling`/`ruoxi` 目前只有個位數張，
+1. **補資料集（若太少）**：目前 `wanling` 10 張、`xinyi` 9 張、`yuqing` 9 張、
+   `ruoxi` 4 張（`datasets/character` 另有 100 張，是 `mylora` 那次用的），
    先在本地補到 40-60 張：
    ```powershell
    python generate_character.py variations --character xinyi --anchor <anchor.png> --count 60
@@ -1851,9 +1891,12 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 
 ### 生成中途卡住 / VRAM、RAM 用量偏低導致崩潰
 
-這台機器系統 RAM 只有 17GB，Chrome(多分頁)+ VS Code 背景就可能吃掉 8GB+，曾經
-兩次在批次生成到一半時因為系統記憶體被榨乾而讓 ComfyUI process 直接崩潰（不是
-單一個生成請求逾時，是整個 server process 消失，`curl /system_stats` 連不上）。
+這台機器現在有 32GB 系統 RAM。早期只有 17GB，Chrome（多分頁）+ VS Code 背景就可能吃掉
+8GB+，曾經兩次在批次生成到一半時因為系統記憶體被榨乾而讓 ComfyUI process 直接崩潰（不是
+單一個生成請求逾時，是整個 server process 消失，`curl /system_stats` 連不上）。加到 32GB
+之後沒再崩潰過，但還是會吃緊：跑 GUI 預設高清時完整版 checkpoint 就佔 15.5-15.8GB，系統
+只剩約 4GB 可用、開始用分頁檔，同一批的第三張因此從 167 秒變成 530 秒（量化版可以省下約
+3GB，見「3c. 量化版模型」）。
 `gen_variations`/`gen_suggestive_variations` 都是續傳邏輯（依已存在檔案數判斷
 從哪裡繼續），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
 繼續，不會重跑已完成的部分。長時間批次生成前，建議先關閉不必要的背景程式騰出
@@ -1884,7 +1927,9 @@ curl 指令手動下載。
 - **kohya_ss LoRA 訓練階段**：本地 fp16 會 NaN，已改為在 RunPod 用 bf16 +
   `--no_half_vae` 訓練（見「在 RunPod 訓練角色 LoRA」章節，`runpod_bundle.py` +
   `runpod_train.sh`）。訓好的 LoRA 與 FaceID 並用，`CHARACTERS` 的 `lora` 欄位
-  預設為 `None`，安裝後填入。`captions/` / `evaluation/` / `samples/` 仍是預留空資料夾
+  預設為 `None`，安裝後填入——目前 11 個角色全部還是 `None`，也還沒有成功的訓練產出
+  （見「在 RunPod 訓練角色 LoRA」的目前狀態）。`captions/` / `evaluation/`（下有
+  epoch01-10 空資料夾）/ `samples/` 仍是預留空資料夾
 - 早期用 `diffusers` 直接載入模型時曾發生過一次無 traceback 的批次崩潰
   （生成到第 37 張左右 exit code 1）。改用本 repo 現在的 ComfyUI + API 架構後
   未再重現（100+ 張連續生成、benchmark 皆無異常），但當時沒有做根因診斷，
