@@ -74,6 +74,13 @@ CHECKPOINTS_DIR = os.path.join(COMFYUI_DIR, "models", "checkpoints")
 # cast-to-fp8 file would not help here: CheckpointLoaderSimple upcasts it to fp16 when the GPU has no
 # fp8 compute and the model fits. Callers keep passing the FULL filename everywhere;
 # apply_model_variants() (called from _submit_and_wait) swaps in the chosen file per workflow.
+# Content-safety floor for classifier-free guidance. At cfg == 1.0 ComfyUI skips the negative
+# conditioning entirely, which would silently disable the mandatory age-safety / explicit-content
+# negative terms - so no sampler in any workflow may run below this. Two callers used to carry
+# their own copy of the value and their own max(); enforce_min_cfg() below is the single guard,
+# applied at the one choke point every generation goes through.
+SAFETY_MIN_CFG = 1.5
+
 QUANT_SUFFIX = ".fp8q.safetensors"
 QUANT_MODEL_KEYS = ("juggernaut", "pony", "cyberrealistic_pony", "pony_realism")
 VARIANT_CHOICES = ("full", "quant")
@@ -127,7 +134,7 @@ ZIMAGE_SHIFT = 3.0
 # the mandatory age-safety / explicit-content negatives would silently stop applying. cfg 2.0 looked
 # almost identical in the side-by-side test, at twice the time per step. Never go below the floor.
 ZIMAGE_CFG = 2.0
-ZIMAGE_MIN_CFG = 1.5
+ZIMAGE_MIN_CFG = SAFETY_MIN_CFG  # kept as a name because the Z-Image docstrings refer to it
 POLL_TIMEOUT_SECONDS_ZIMAGE = 1200  # first image after startup took up to ~7 min on the 2070
 WIDTH, HEIGHT = 1024, 1024   # switch to 768/832/896 as needed - not hardcoded elsewhere
 BATCH_SIZE = 1                # RTX 2070 8GB - always 1, no multi-image batches
@@ -354,9 +361,7 @@ ANIMATEDIFF_LCM_PRESETS = {
                      beta_schedule="lcm", steps=8, hires_steps=10, cfg=2.0, sampler="lcm",
                      scheduler="sgm_uniform", motion_lora_verified=True),
 }
-# Content-safety floor: at cfg == 1.0 ComfyUI skips the negative conditioning entirely, which
-# would silently disable the mandatory age-safety/explicit-content negative terms. Never go below.
-LCM_MIN_CFG = 1.5
+LCM_MIN_CFG = SAFETY_MIN_CFG  # see SAFETY_MIN_CFG; kept as a name for the LCM docstrings
 
 POLL_TIMEOUT_SECONDS_ANIMATEDIFF = 2400  # 16 frames x (base KSampler + hires pass + batched
 # video-detailer + ESRGAN + optional RIFE) on an 8GB card; first run also lazy-loads a new
@@ -1469,9 +1474,32 @@ def variant_status() -> list:
     return rows
 
 
+def enforce_min_cfg(wf: dict) -> list:
+    """Raise every sampler's cfg in the workflow to SAFETY_MIN_CFG. Returns the node ids changed.
+
+    Applied at _submit_and_wait rather than in each submit_* function, per the single-rewrite-point
+    convention: a caller passing cfg=1.0 to any path - including one added later - would otherwise
+    hand ComfyUI a workflow where the negative prompt, and with it the age-safety terms, is ignored.
+    Every template currently ships cfg >= 2.0, so this changes nothing today; it is the safety net.
+    """
+    changed = []
+    for nid, node in wf.items():
+        if not isinstance(node, dict):
+            continue
+        cfg = node.get("inputs", {}).get("cfg")
+        if isinstance(cfg, (int, float)) and not isinstance(cfg, bool) and cfg < SAFETY_MIN_CFG:
+            node["inputs"]["cfg"] = SAFETY_MIN_CFG
+            changed.append(nid)
+    if changed:
+        print(f"[safety] raised cfg to {SAFETY_MIN_CFG} on node(s) {', '.join(changed)} - at cfg 1.0 "
+              f"ComfyUI drops the negative prompt entirely", flush=True)
+    return changed
+
+
 def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
                      client_id: str = None) -> str:
     apply_model_variants(wf)
+    enforce_min_cfg(wf)
     _reset_if_mode_switch(wf)
     payload = {"prompt": wf}
     if client_id:

@@ -526,12 +526,19 @@ def gen_suggestive_variations(trigger, anchor_path, out_dir, count, ip_adapter_w
     client.log_gpu_memory("after_suggestive_variation_batch")
 
 
-def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_positive, style_negative, checkpoint):
-    """Shared by gen_custom() and gen_gif() so both compose the final
-    positive/negative prompt strings identically - character identity
-    prefix, style terms, safety negatives, and the Pony quality-tag
-    auto-prepend all live in exactly one place instead of two copies that
-    could drift out of sync."""
+def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_positive, style_negative, checkpoint,
+                               *, gender_weight="auto"):
+    """Shared by gen_custom(), gen_gif() and gen_video_animatediff() so they all compose the
+    final positive/negative prompt strings identically - character identity prefix, style
+    terms, safety negatives, and the Pony quality-tag auto-prepend all live in exactly one
+    place instead of copies that could drift out of sync.
+
+    gender_weight is keyword-only so every existing positional caller (pose_pack,
+    worker/handler, gen_custom, gen_gif) is untouched. "auto" applies the weight only for
+    SD1.5 checkpoints, which is the rule the still-image paths want. gen_video_animatediff
+    passes it explicitly instead: its checkpoint argument is an ANIMATEDIFF_CHECKPOINTS key
+    (e.g. "sd15_base") that is deliberately NOT in SD15_CHECKPOINTS, so "auto" would silently
+    drop the weight that path has always applied."""
     style_positive = REALISTIC_STYLE if style_positive is None else style_positive
     style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
 
@@ -543,7 +550,7 @@ def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_posi
 
     if trigger:
         profile = get_character(trigger)
-        weight = SD15_GENDER_WEIGHT if checkpoint in client.SD15_CHECKPOINTS else None
+        weight = (SD15_GENDER_WEIGHT if checkpoint in client.SD15_CHECKPOINTS else None)             if gender_weight == "auto" else gender_weight
         full_prompt = f"{character_base_prompt(trigger, profile, gender_weight=weight)}, {prompt}"
     else:
         full_prompt = prompt
@@ -1116,20 +1123,14 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
         print(f"[warn] camera motion LoRAs were trained for mm_sd_v15_v2 - their effect on the "
               f"{lcm_preset!r} motion module is unverified (use --lcm-preset lcm_lora if it does nothing)",
               flush=True)
-    style_positive = REALISTIC_STYLE if style_positive is None else style_positive
+    # Only the default style negative differs from the still-image paths; everything else -
+    # and in particular the age/tier safety negatives - must come from the one shared builder.
+    # checkpoint=None because this path is SD1.5 and must never get the Pony quality tags;
+    # the gender weight is forced for the same reason the docstring there explains.
     style_negative = VIDEO_REALISTIC_NEGATIVE if style_negative is None else style_negative
-
-    safety_negative = SAFE_SAFETY_NEGATIVE if tier == "safe" else SUGGESTIVE_NEGATIVE
-    base_negative = f"{safety_negative}, {style_negative}" if style_negative else safety_negative
-    negative_prompt = f"{base_negative}, {extra_negative}" if extra_negative else base_negative
-
-    if trigger:
-        profile = get_character(trigger)
-        full_prompt = f"{character_base_prompt(trigger, profile, gender_weight=SD15_GENDER_WEIGHT)}, {prompt}"
-    else:
-        full_prompt = prompt
-    if style_positive:
-        full_prompt = f"{full_prompt}, {style_positive}"
+    full_prompt, negative_prompt = _build_prompt_and_negative(
+        prompt, extra_negative, tier, trigger, style_positive, style_negative, None,
+        gender_weight=SD15_GENDER_WEIGHT)
 
     os.makedirs(out_dir, exist_ok=True)
     stem = f"animatediff_seed{seed}"

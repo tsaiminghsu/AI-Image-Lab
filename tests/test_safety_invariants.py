@@ -223,3 +223,60 @@ def test_animatediff_cfg_is_actually_floored_with_lcm_preset(captured_submit, lc
     wf = captured_submit[0]["wf"]
     for node_id in ("3", "34", "52"):
         assert wf[node_id]["inputs"]["cfg"] >= client.LCM_MIN_CFG
+
+
+# --- enforce_min_cfg: the choke-point guard -----------------------------------------------------
+# The per-path max(cfg, FLOOR) calls in submit_txt2img_generation_zimage and
+# submit_generation_animatediff only cover the paths that remember to make them. enforce_min_cfg
+# runs inside _submit_and_wait, which every generation goes through, so a path added later cannot
+# hand ComfyUI a cfg of 1.0 - which would make it drop the negative prompt, and the age-safety
+# terms with it - just by forgetting the floor.
+
+
+def test_all_templates_already_satisfy_the_floor():
+    """No shipped template needs correcting today; the guard is a net, not a fix."""
+    import glob
+    import json
+    import os
+
+    templates = glob.glob(os.path.join(os.path.dirname(client.__file__), "workflow_template*.json"))
+    assert templates
+    for path in templates:
+        with open(path, encoding="utf-8") as f:
+            wf = json.load(f)
+        assert client.enforce_min_cfg(wf) == [], f"{os.path.basename(path)} ships a cfg below the floor"
+
+
+def test_enforce_min_cfg_raises_and_reports_every_offending_node():
+    wf = {
+        "3": {"class_type": "KSampler", "inputs": {"cfg": 1.0}},
+        "34": {"class_type": "KSampler", "inputs": {"cfg": 7.0}},
+        "41": {"class_type": "FaceDetailer", "inputs": {"cfg": 0.5}},
+    }
+    assert sorted(client.enforce_min_cfg(wf)) == ["3", "41"]
+    assert wf["3"]["inputs"]["cfg"] == client.SAFETY_MIN_CFG
+    assert wf["41"]["inputs"]["cfg"] == client.SAFETY_MIN_CFG
+    assert wf["34"]["inputs"]["cfg"] == 7.0, "a cfg already above the floor must be left alone"
+
+
+def test_enforce_min_cfg_ignores_non_numeric_and_missing_cfg():
+    """Node inputs can be edge references (["6", 0]) or absent; neither is a cfg to floor."""
+    wf = {
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "x"}},
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0]}},
+        "9": {"class_type": "SaveImage", "inputs": {"cfg": ["3", 0]}},
+        "10": {"class_type": "Weird", "inputs": {"cfg": True}},
+    }
+    assert client.enforce_min_cfg(wf) == []
+
+
+def test_submit_and_wait_floors_cfg_before_posting(fake_comfy):
+    """The guard has to run on the way out, not just be available: a caller that sneaks a
+    cfg of 1.0 into a workflow must still have it corrected in the prompt ComfyUI receives."""
+    fake_comfy.history_sequence = [fake_comfy.done()]
+    wf = {
+        "3": {"class_type": "KSampler", "inputs": {"cfg": 1.0}},
+        "9": {"class_type": "SaveImage", "inputs": {"images": ["3", 0]}},
+    }
+    client._submit_and_wait(wf, timeout_seconds=5)
+    assert fake_comfy.posted_prompt()["3"]["inputs"]["cfg"] == client.SAFETY_MIN_CFG
