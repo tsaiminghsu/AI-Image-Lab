@@ -12,3 +12,10 @@
 pytest==8.4.2
 ruff==0.15.3
 requests==2.34.2
+
+# image_api.py is a FastAPI app, so testing its boundary behaviour needs the framework and a
+# transport for TestClient. Pinned to the exact versions ComfyUI\.venv runs, so the tests
+# exercise the same stack as production. Still no torch and no GPU.
+fastapi==0.141.1
+httpx==0.28.1
+pydantic==2.13.4  # pinned explicitly: it does the request validation the tests assert on

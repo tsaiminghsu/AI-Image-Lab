@@ -12,6 +12,7 @@ running for no reason.
 """
 
 import atexit
+import functools
 import glob
 import os
 
@@ -25,6 +26,28 @@ import talking_head
 import translate_prompt
 
 _comfyui_process = None  # only set when this GUI auto-started ComfyUI itself
+
+
+def _show_usage_errors(fn):
+    """Turn generate_character's caller-error signal into a Gradio toast.
+
+    generate_character raises SystemExit for invalid arguments (get_character on an unknown
+    trigger, gen_custom's flag-combination checks, ...). SystemExit derives from BaseException,
+    not Exception, so Gradio's queue - which only catches Exception - lets it escape and kills
+    the worker task instead of showing the message. Today the handlers below happen to
+    pre-check most of those cases in Traditional Chinese first, but nothing enforces that the
+    pre-checks stay exhaustive, and gen_custom keeps growing flags. worker/handler.py already
+    catches BaseException for exactly this reason; this is the GUI's equivalent.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except SystemExit as exc:
+            raise gr.Error(str(exc)) from exc
+
+    return wrapper
 
 
 def _ensure_comfyui():
@@ -154,6 +177,7 @@ def refresh_variant_status():
     return [gr.update(label=_variant_label(r), value=r["chosen"]) for r in rows] + [_variant_table()]
 
 
+@_show_usage_errors
 def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
              pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
              character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
@@ -247,6 +271,7 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     return os.path.join(out_dir, f"{stem}.png")
 
 
+@_show_usage_errors
 def generate_video_animatediff(character, face_ref, prompt, tier, negative_prompt, seed, ip_adapter_weight,
                                 facedetailer_denoise, frames, fps, width, height, style_positive, style_negative,
                                 checkpoint_choice, motion_lora_choice, motion_lora_strength,
@@ -262,20 +287,17 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
     motion_lora = None if motion_lora_choice == MOTION_LORA_NONE else motion_lora_choice
     upscale_to = 0 if upscale_choice == UPSCALE_OFF else int(upscale_choice.split()[1].rstrip("px"))
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", "videos")
-    try:
-        return gc.gen_video_animatediff(prompt, negative_prompt, tier, trigger, face_ref, out_dir, int(seed),
-                                        ip_adapter_weight=ip_adapter_weight,
-                                        facedetailer_denoise=facedetailer_denoise,
-                                        frames=int(frames), fps=int(fps) or None,
-                                        width=int(width), height=int(height),
-                                        style_positive=style_positive, style_negative=style_negative,
-                                        checkpoint=checkpoint,
-                                        motion_lora=motion_lora, motion_lora_strength=motion_lora_strength,
-                                        hires=hires, upscale_to=upscale_to, interp=int(interp),
-                                        use_facedetailer=use_facedetailer, lcm=lcm,
-                                        faceid_v2_weight=faceid_v2_weight, motion_scale=motion_scale)
-    except SystemExit as exc:  # gen_video_animatediff's validation errors
-        raise gr.Error(str(exc)) from exc
+    return gc.gen_video_animatediff(prompt, negative_prompt, tier, trigger, face_ref, out_dir, int(seed),
+                                    ip_adapter_weight=ip_adapter_weight,
+                                    facedetailer_denoise=facedetailer_denoise,
+                                    frames=int(frames), fps=int(fps) or None,
+                                    width=int(width), height=int(height),
+                                    style_positive=style_positive, style_negative=style_negative,
+                                    checkpoint=checkpoint,
+                                    motion_lora=motion_lora, motion_lora_strength=motion_lora_strength,
+                                    hires=hires, upscale_to=upscale_to, interp=int(interp),
+                                    use_facedetailer=use_facedetailer, lcm=lcm,
+                                    faceid_v2_weight=faceid_v2_weight, motion_scale=motion_scale)
 
 
 def generate_talking_head_ui(image, audio, size, preprocess, still, expression_scale, enhancer, pose_style):
@@ -302,6 +324,7 @@ def generate_talking_head_ui(image, audio, size, preprocess, still, expression_s
         raise gr.Error(f"SadTalker 生成失敗（完整 log 見終端機）：{str(exc)[-800:]}") from exc
 
 
+@_show_usage_errors
 def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_id):
     if not init_image:
         raise gr.Error("請上傳要配上動作的圖片")
@@ -311,6 +334,7 @@ def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_i
     return os.path.join(out_dir, f"video_seed{int(seed)}.webm")
 
 
+@_show_usage_errors
 def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_count, duration_ms, denoise,
                   ip_adapter_weight, style_positive, style_negative, checkpoint_choice, lora_strength):
     if not prompt.strip():
