@@ -3,6 +3,57 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-09-13
+
+### 生成進度改成顯示真實步數，不再顯示推估的百分比
+
+- **問題**：Gradio 的進度條是用「同一個 event 前幾次跑了多久」外推出來的 ETA。這在這裡沒有
+  參考價值——同一顆按鈕可能是 30 秒的純文字生圖，也可能是 150 秒以上的 hires + FaceDetailer，
+  差別只在幾個開關，所以那個百分比在大半個過程裡都是錯的。
+- **解法**：ComfyUI 只在 `/ws` 上送真實步數（`{"type":"progress","data":{"value","max","node"}}`），
+  `GET /history` 在完成前什麼都沒有，所以顯示步數非得走那個 socket。新增
+  `client.progress_reporter()` context manager，listener 掛在 `_submit_and_wait`——CLAUDE.md
+  指定的單一改寫點，所以每條流程都自動吃到。callback 是 **thread-local** 而不是模組全域，
+  因為 Gradio 每個請求各跑一條 thread，兩個瀏覽器分頁不能互相蓋掉。
+- **依賴用 aiohttp**：它已經是 ComfyUI 的依賴、**而且已經在 `comfyui-requirements.lock.txt` 裡**，
+  所以 worker image 不受影響（CLAUDE.md 警告過往 `ComfyUI\.venv` 加套件會被 `uv pip freeze`
+  進 worker）。**順帶發現**：`websockets` 套件其實沒安裝，所以 `benchmark.py` 的 `WsStageTimer`
+  一直靜默失效、從來沒產出過 per-stage 計時。這次沒有修它。
+- aiohttp 是**在 listener thread 裡 lazy import**，任何失敗都只是沒有進度、不會讓生成失敗：
+  這個模組刻意維持 import 時只依賴 `requests`，而測試用的 `.venv-dev` 根本沒有 aiohttp。
+- **階段名稱從 workflow 自己的 `class_type` 解析**，不維護節點 id 表——節點 id 在模板被重新
+  匯出時就會全部重編號（`workflow_contracts.py` 就是為這件事存在的，而且它已經點名
+  `benchmark.py` 的 `HQ_STAGE_NAMES` 是同一份知識的複製品）。同一種 sampler 出現多次時，
+  按**實際執行順序**編號，而不是按節點 id（後者跟執行順序無關）。
+- **實測一次完整 HQ 路徑**：`生成 24 步` → `放大 6 步` → `第 2 段生成 20 步` →
+  `臉部/手部精修 20 步`，共 70 個進度事件。這四段的性質和解析度都不同，FaceDetailer 的總步數
+  還取決於它找到幾張臉和幾隻手——所以進度條只綁在**當前階段**（ComfyUI 有告訴我們該段的總數），
+  步數則直接顯示在說明文字上，不假裝知道整個工作還剩多少。
+- `tests/test_gui_arity.py` 補上 Gradio 的真實規則：`gr.Progress` 是靠**預設值**偵測的
+  （`helpers.py` 的 `isinstance(param.default, Progress)`），不是靠註解，所以只看註解會把
+  `progress=gr.Progress()` 誤算成一個少接的 input。
+
+### WD14 Tagger：上傳圖片直接轉成 booru 標籤
+
+- **問題**：GUI 既有的「依圖片產生 Prompt」用 BLIP 出自然語言句子，但預設 checkpoint 是
+  `cyberrealistic_pony`，而 Pony 系是**用 booru 標籤訓練的**（CHECKPOINTS 的註解就寫著這件事）。
+  想少打字的人拿到的是最不對格式的那一種。
+- **解法**：裝 `ComfyUI-WD14-Tagger`，新增 `client.tag_image()`，GUI 在同一個 accordion 加第二顆
+  按鈕。**BLIP 保留**——juggernaut 和 SD1.5 要的就是自然語言，兩者是互補不是取代。
+- **沒有新增 Python 依賴**：節點只要 `onnxruntime`，而它跟 `huggingface_hub`、`pandas` 都已經
+  裝好了，所以 worker lock 同樣不受影響。
+- 模型 `wd-swinv2-tagger-v3`（446 MB，v3 中公認最準的中型模型）下載到節點自己的 `models/`。
+- `pysssss.user.json`（優先於 `pysssss.json`，所以 `git pull` 節點不會蓋掉）把 `ortProviders`
+  **釘死在 CPU**：節點預設 CUDA 優先，但這台只裝了 CPU 版 `onnxruntime`；而且
+  `caption_image.py` 當初就刻意跑 CPU，理由是不要讓第二個模型跟正在跑的生成搶 8 GB。
+- 走節點自己的 HTTP 路由 `/pysssss/wd14tagger/tag`，不必組 workflow，也就完全不經過
+  `_submit_and_wait` 的佇列／變體／cfg 機制。那個路由只讀 ComfyUI 自己的 input/output/temp
+  目錄，所以先用既有的 `upload_reference_image()` 上傳。回傳的是 JSON 字串，要用 `.json()`
+  取值，`.text` 會連引號一起拿到。
+- **實測**：CPU 上單張 3.3–3.5 秒。範例輸出
+  `1girl, solo, long hair, looking at viewer, standing, jacket, white shirt, full body, jeans, crossed arms`
+  ——連姿勢（`crossed arms`）和單人（`solo`）都抓得到。
+
 ## 2026-09-12
 
 ### 「圖片選擇生圖」分頁：點縮圖組 prompt，每個模型自動換成它聽得懂的敘述

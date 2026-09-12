@@ -9,12 +9,14 @@ Start the server once, separately, before using this client:
     D:\\AI-Image-Lab\\ComfyUI\\.venv\\Scripts\\python.exe D:\\AI-Image-Lab\\ComfyUI\\main.py --listen 127.0.0.1 --port 8188
 """
 
+import contextlib
 import copy
 import json
 import os
 import subprocess
 import threading
 import time
+import uuid
 
 import requests
 
@@ -819,6 +821,44 @@ def upload_reference_image(local_path: str) -> str:
         return r
 
     return _http_with_retry(attempt, f"上傳參考圖 {filename}").json()["name"]
+
+
+# Route added by ComfyUI/custom_nodes/ComfyUI-WD14-Tagger (pythongosssss). It reads the image
+# straight off disk and returns the tag string, so tagging needs no workflow submission and
+# none of _submit_and_wait's queue/variant/cfg machinery.
+WD14_TAG_ROUTE = "/pysssss/wd14tagger/tag"
+
+
+def tag_image(local_path: str, timeout: int = 300) -> str:
+    """Image -> comma-separated booru tags, via the WD14 Tagger custom node.
+
+    Complements caption_image.py's BLIP captioner instead of replacing it. BLIP writes
+    natural-language prose, which is what juggernaut and the SD1.5 checkpoints want; this
+    returns the booru tags the Pony-family checkpoints were actually trained on (see
+    PONY_CHECKPOINTS), which is the format that needs the least hand-written prompt.
+
+    Model and thresholds come from the node's own pysssss.user.json - wd-swinv2-tagger-v3
+    with ortProviders pinned to CPU, so the tagger never competes with an in-flight
+    generation for the 8GB card (same reasoning as caption_image.py running BLIP on CPU).
+    The HTTP route accepts no overrides for them, only which file to read.
+
+    The tagger runs inside ComfyUI's process and only reads ComfyUI's own input/output/temp
+    dirs, so the image is uploaded there first.
+    """
+    filename = upload_reference_image(local_path)
+    r = requests.get(f"{COMFYUI_URL}{WD14_TAG_ROUTE}",
+                     params={"filename": filename, "type": "input"}, timeout=timeout)
+    if r.status_code == 404:
+        # Either the route doesn't exist (node missing, or ComfyUI wasn't restarted after the
+        # install) or the upload vanished. The first is overwhelmingly the likely one here,
+        # since the upload above succeeded.
+        raise ComfyUIUnavailable(
+            "WD14 Tagger 沒有回應。確認 ComfyUI/custom_nodes/ComfyUI-WD14-Tagger 已安裝，"
+            "並且 ComfyUI 在安裝之後重新啟動過"
+        )
+    r.raise_for_status()
+    # The route returns a JSON string, so .text would keep the surrounding quotes.
+    return r.json()
 
 
 def submit_generation(
@@ -1803,10 +1843,165 @@ def enforce_min_cfg(wf: dict) -> list:
 _CLIENT_LOCK = threading.RLock()
 
 
+# --- live step progress -------------------------------------------------------------------
+# Gradio's own progress bar is an ETA extrapolated from how long previous runs of the same
+# event took, which is meaningless here: one generation is ~30s of plain txt2img and the next
+# is ~150s of hires + FaceDetailer, so the percentage is confidently wrong for most of the
+# run. ComfyUI publishes the real sampler step counter as
+# {"type":"progress","data":{"value":N,"max":M,"node":id}} on /ws, and nowhere else - GET
+# /history has nothing until the job finishes - so surfacing steps needs that socket.
+#
+# aiohttp is used for it because it is already a ComfyUI dependency AND already in
+# comfyui-requirements.lock.txt, so the worker image is unaffected. It is imported lazily
+# inside the listener thread for two reasons: this module deliberately keeps its import-time
+# dependencies to `requests` so it runs where torch/aiohttp are absent (.venv-dev, which the
+# tests use, has no aiohttp), and progress reporting is a nicety that must never be a reason
+# for a generation to fail.
+
+# class_type -> user-facing stage name. Keyed by CLASS rather than node id on purpose: node
+# ids are renumbered whenever a template is re-exported from the ComfyUI UI (the whole reason
+# workflow_contracts.py exists), and benchmark.py's HQ_STAGE_NAMES is already called out there
+# as a duplicated copy of that knowledge. Reading class_type off the workflow we are about to
+# submit needs no id table at all.
+_SAMPLER_STAGE = "生成"
+_STAGE_LABELS = {
+    "KSampler": _SAMPLER_STAGE,
+    "KSamplerAdvanced": _SAMPLER_STAGE,
+    "FaceDetailer": "臉部/手部精修",
+    "ImageUpscaleWithModel": "放大",
+    "OpenposePreprocessor": "抽取骨架",
+    "DWPreprocessor": "抽取骨架",
+    "VAEDecode": "解碼",
+    "VAEEncode": "編碼",
+}
+
+_progress_local = threading.local()
+
+
+def _stage_labeller(wf: dict):
+    """Returns node_id -> user-facing stage name, resolved from the workflow's own class_type."""
+    def label(node_id):
+        cls = (wf.get(str(node_id)) or {}).get("class_type", "")
+        return _STAGE_LABELS.get(cls, cls or "處理中")
+    return label
+
+
+@contextlib.contextmanager
+def progress_reporter(callback):
+    """Report real sampler steps for generations started in THIS thread.
+
+    `callback(stage, current, total)` is invoked from a listener thread while the job runs -
+    stage is a user-facing label like "生成", current/total are ComfyUI's own step counter.
+
+    Thread-local rather than a module global because Gradio serves each request on its own
+    thread, so two browser tabs must not overwrite each other's callback. _submit_and_wait
+    runs synchronously in the caller's thread, so it sees whatever this context manager set.
+    """
+    previous = getattr(_progress_local, "callback", None)
+    _progress_local.callback = callback
+    try:
+        yield
+    finally:
+        _progress_local.callback = previous
+
+
+class _StepProgressListener:
+    """Streams ComfyUI's /ws step counter to a callback for one generation."""
+
+    def __init__(self, client_id, callback, stage_label):
+        self.client_id = client_id
+        self.callback = callback
+        self.stage_label = stage_label
+        self._sampler_order = {}      # node id -> 1-based order of first progress message
+        self._stop = threading.Event()
+        self._connected = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thread.start()
+        # Connect before the prompt is posted, or the first node's steps are missed. Capped so
+        # a socket that never opens delays the generation by seconds, not indefinitely.
+        self._connected.wait(timeout=5)
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        try:
+            import asyncio
+
+            import aiohttp
+        except Exception:
+            self._connected.set()   # nothing will connect; let start() stop waiting
+            return
+        try:
+            asyncio.run(self._listen(asyncio, aiohttp))
+        except Exception:
+            pass
+        finally:
+            self._connected.set()
+
+    async def _listen(self, asyncio, aiohttp):
+        ws_url = (COMFYUI_URL.replace("https://", "wss://").replace("http://", "ws://")
+                  + f"/ws?clientId={self.client_id}")
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.ws_connect(ws_url) as ws:
+                self._connected.set()
+                while not self._stop.is_set():
+                    try:
+                        msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    if msg.type is not aiohttp.WSMsgType.TEXT:
+                        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR,
+                                        aiohttp.WSMsgType.CLOSING):
+                            return
+                        continue   # binary frames are ComfyUI's preview images
+                    try:
+                        self._handle(json.loads(msg.data))
+                    except Exception:
+                        pass
+
+    def _handle(self, msg):
+        if msg.get("type") != "progress":
+            return
+        data = msg.get("data") or {}
+        total = data.get("max")
+        if not total:
+            return
+        node = str(data.get("node"))
+        label = self.stage_label(node)
+        if label == _SAMPLER_STAGE:
+            # Several samplers run per job (the base pass, then the hires resample). Number
+            # them by the order they actually executed rather than by node id, which says
+            # nothing about execution order.
+            index = self._sampler_order.setdefault(node, len(self._sampler_order) + 1)
+            if index > 1:
+                label = f"第 {index} 段生成"
+        try:
+            self.callback(label, int(data.get("value") or 0), int(total))
+        except Exception:
+            pass   # a broken UI callback must not take the generation down with it
+
+
 def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
                      client_id: str = None) -> str:
+    callback = getattr(_progress_local, "callback", None)
+    listener = None
+    if callback is not None:
+        # ComfyUI only sends /ws messages to the client_id that submitted the prompt, so a
+        # reporting caller needs one even when it did not ask for a specific id.
+        client_id = client_id or uuid.uuid4().hex
+        listener = _StepProgressListener(client_id, callback, _stage_labeller(wf))
     with _CLIENT_LOCK:
-        return _submit_and_wait_locked(wf, output_node_id, timeout_seconds, client_id)
+        if listener is not None:
+            listener.start()
+        try:
+            return _submit_and_wait_locked(wf, output_node_id, timeout_seconds, client_id)
+        finally:
+            if listener is not None:
+                listener.stop()
 
 
 def _submit_and_wait_locked(wf: dict, output_node_id: str, timeout_seconds: int, client_id: str) -> str:

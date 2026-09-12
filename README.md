@@ -362,6 +362,95 @@ process 裡面下載，不是額外的手動步驟，但視網路速度可能要
 用法見下面「自由輸入 Prompt」章節的 `--pose-reference` 參數，或網頁 GUI 的
 「骨架姿勢控制」摺疊區塊。
 
+## WD14 Tagger 圖片轉標籤（選用安裝）
+
+上傳一張參考圖，直接得到 booru 標籤（`1girl, solo, long hair, standing, jeans, ...`），
+不用自己想 prompt。裝這個的理由是格式：預設的 `cyberrealistic_pony` 和其他 Pony 系
+checkpoint **都是用 booru 標籤訓練的**，而 GUI 原本的「產生描述」用 BLIP 出自然語言句子，
+那是 juggernaut 和 SD1.5 要的格式。兩個按鈕現在並存，依 checkpoint 選用即可。
+
+### 1. Clone custom node
+
+```powershell
+cd D:\AI-Image-Lab\ComfyUI\custom_nodes
+git clone https://github.com/pythongosssss/ComfyUI-WD14-Tagger.git
+```
+
+套件不用另外裝：它只需要 `onnxruntime`，基礎安裝已經有了。
+
+### 2. 下載 tagger 模型
+
+節點第一次被呼叫時會自己下載，但那是在 ComfyUI process 裡面下載、沒有進度可看，
+所以建議先手動抓（放到節點自己的 `models/` 目錄）：
+
+```powershell
+$d = "D:\AI-Image-Lab\ComfyUI\custom_nodes\ComfyUI-WD14-Tagger\models"
+New-Item -ItemType Directory -Force $d | Out-Null
+curl.exe -L -o "$d\wd-swinv2-tagger-v3.onnx" https://huggingface.co/SmilingWolf/wd-swinv2-tagger-v3/resolve/main/model.onnx
+curl.exe -L -o "$d\wd-swinv2-tagger-v3.csv" https://huggingface.co/SmilingWolf/wd-swinv2-tagger-v3/resolve/main/selected_tags.csv
+```
+
+| 模型 | 大小 | 備註 |
+|---|---|---|
+| `wd-swinv2-tagger-v3` | 446 MB | **本專案採用**，v3 中公認最準的中型模型 |
+| `wd-vit-tagger-v3` | 361 MB | v3 世代最小 |
+| `wd-convnext-tagger-v3` | 377 MB | v3 |
+| `wd-eva02-large-tagger-v3` | 1.2 GB | 最準，但 CPU 上明顯慢 |
+| `wd-v1-4-moat-tagger-v2` | 311 MB | 節點自己的預設值，v2 世代標籤集較舊 |
+
+換模型就改下面的 `pysssss.user.json` 並抓對應的兩個檔案（檔名要跟模型名一致）。
+
+### 3. 設定跑 CPU（重要）
+
+節點預設 `ortProviders` 是 CUDA 優先，但本專案只裝 CPU 版 `onnxruntime`，而且**刻意**
+不讓 tagger 上 GPU——理由跟 `caption_image.py` 的 BLIP 一樣：ComfyUI 已經把 checkpoint
+放在這張 8 GB 卡上，再塞第二個模型會有打斷正在跑的生成的風險。
+
+在 `ComfyUI\custom_nodes\ComfyUI-WD14-Tagger\` 建立 `pysssss.user.json`（它優先於節點
+內建的 `pysssss.json`，所以之後 `git pull` 節點不會蓋掉你的設定）。內容就是把
+`pysssss.json` 整份複製過來，改兩個欄位：
+
+```json
+"settings": {
+    "model": "wd-swinv2-tagger-v3",
+    "ortProviders": ["CPUExecutionProvider"]
+}
+```
+
+注意那個檔案是**整份取代**而不是合併，所以 `models` 那個字典也要一起帶過去。
+
+### 4. 重啟 ComfyUI
+
+```powershell
+powershell -ExecutionPolicy Bypass -File training\stop_comfyui.ps1
+```
+
+下次生成（或按 GUI 的「產生標籤」）時會自動重新啟動。啟動日誌裡會出現
+`... ComfyUI-WD14-Tagger`。
+
+### 用法
+
+網頁 GUI 的「依圖片產生 Prompt」摺疊區塊裡有兩顆按鈕：
+
+- **產生描述（自然語言）** — BLIP，在 GUI 自己的 process 跑，不需要 ComfyUI
+- **產生標籤（WD14，Pony 系適用）** — 需要 ComfyUI（第一次按會自動啟動），單張約 3 秒
+
+程式內用 `comfyui_client.tag_image(圖片路徑)`，回傳逗號分隔的標籤字串。它走節點的 HTTP
+路由 `/pysssss/wd14tagger/tag`，不組 workflow，所以完全不經過 `_submit_and_wait` 的
+佇列／量化變體／cfg 下限那套機制。
+
+## 生成進度顯示
+
+網頁 GUI 在生成時顯示的是 **ComfyUI 回報的真實步數**，例如 `生成 12/24 步`、
+`第 2 段生成 8/20 步`、`臉部/手部精修 15/20 步`，而不是一個百分比。
+
+原因是百分比在這條管線上沒有意義：一次完整 HQ 生成實測是
+`生成 24 步 → 放大 6 步 → 第 2 段生成 20 步 → 臉部/手部精修 20 步` 四個階段，彼此的
+解析度和單位成本都不同，FaceDetailer 的總步數還取決於它找到幾張臉和幾隻手。Gradio 內建
+的進度條是用同一顆按鈕前幾次的耗時外推 ETA，而同一顆按鈕可能是 30 秒的純文字生圖、也可能
+是 150 秒以上的 hires + 精修，所以那個百分比大半時間是錯的。進度條本身只綁在**當前階段**
+（ComfyUI 有告訴我們該段的總步數），跨階段的整體進度不做假設。
+
 ## ADetailer 臉部/手部精修（選用安裝）
 
 基礎安裝完成、確認可以正常生圖之後才需要裝這個——生成後自動偵測臉部/手部，

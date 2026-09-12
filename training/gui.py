@@ -58,6 +58,22 @@ def _show_usage_errors(fn):
     return wrapper
 
 
+def _step_reporter(progress):
+    """Feed ComfyUI's real step counter into a Gradio progress tracker.
+
+    Gradio's own bar is an ETA extrapolated from how long previous runs of the SAME event
+    took, so it is badly wrong here: one click on this button is a ~30s plain txt2img and the
+    next is a ~150s hires + FaceDetailer job, depending only on the toggles. Steps are the
+    honest unit, so the description carries ComfyUI's actual counter and the bar is scoped to
+    the current stage (whose total ComfyUI does tell us) rather than pretending to know how
+    much of the whole job is left - the job's stages have different, unknowable step totals
+    (FaceDetailer's depends on how many faces and hands it finds).
+    """
+    def report(stage, current, total):
+        progress((current, total), desc=f"{stage} {current}/{total} 步")
+    return report
+
+
 def _ensure_comfyui():
     """Start ComfyUI on first actual generation instead of requiring it
     pre-started just to open the GUI - keeps the ~2GB process off when the
@@ -119,6 +135,19 @@ def caption_uploaded_image(image_path):
         raise gr.Error("請先上傳圖片")
     caption = caption_image.caption_image(image_path)
     return caption, caption
+
+
+def tag_uploaded_image(image_path):
+    """Booru tags instead of prose - the format Pony-family checkpoints want.
+
+    Needs ComfyUI running (the tagger is a custom node inside it), unlike the BLIP captioner
+    which runs in this process, so start it the same way a generation would.
+    """
+    if not image_path:
+        raise gr.Error("請先上傳圖片")
+    _ensure_comfyui()
+    tags = client.tag_image(image_path)
+    return tags, tags
 
 
 def translate_prompt_to_english(prompt_text):
@@ -235,7 +264,8 @@ def refresh_variant_status():
 def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
              pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
              character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
-             style_positive, style_negative, checkpoint_choice, lora_strength):
+             style_positive, style_negative, checkpoint_choice, lora_strength,
+             progress=gr.Progress()):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
     _ensure_comfyui()
@@ -310,18 +340,19 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
     stem = f"gui_seed{int(seed)}"
     backend = "mediapipe" if facedetailer_backend == FACEDETAILER_BACKEND_MEDIAPIPE else "yolo"
-    gc.gen_custom(prompt, negative_prompt, tier, trigger, anchor_path, out_dir, int(seed), stem, ip_adapter_weight,
-                  pose_reference_path=pose_reference, pose_name=pose_name,
-                  controlnet_strength=controlnet_strength if (pose_reference or pose_name) else None,
-                  width=width, height=height,
-                  use_facedetailer=use_facedetailer,
-                  facedetailer_backend=backend,
-                  style_positive=style_positive, style_negative=style_negative,
-                  checkpoint=checkpoint, lora_strength=lora_strength,
-                  hq=use_hq, character_lora_strength=character_lora_strength,
-                  hires_denoise=hires_denoise if use_hq else None,
-                  facedetailer_face_denoise=face_denoise if use_facedetailer else None,
-                  facedetailer_hand_denoise=hand_denoise if use_facedetailer else None)
+    with client.progress_reporter(_step_reporter(progress)):
+        gc.gen_custom(prompt, negative_prompt, tier, trigger, anchor_path, out_dir, int(seed), stem, ip_adapter_weight,
+                      pose_reference_path=pose_reference, pose_name=pose_name,
+                      controlnet_strength=controlnet_strength if (pose_reference or pose_name) else None,
+                      width=width, height=height,
+                      use_facedetailer=use_facedetailer,
+                      facedetailer_backend=backend,
+                      style_positive=style_positive, style_negative=style_negative,
+                      checkpoint=checkpoint, lora_strength=lora_strength,
+                      hq=use_hq, character_lora_strength=character_lora_strength,
+                      hires_denoise=hires_denoise if use_hq else None,
+                      facedetailer_face_denoise=face_denoise if use_facedetailer else None,
+                      facedetailer_hand_denoise=hand_denoise if use_facedetailer else None)
     return os.path.join(out_dir, f"{stem}.png")
 
 
@@ -379,7 +410,8 @@ def update_picker_preview(character, pose_slug, scene_slug, checkpoint_choice, t
 
 
 @_show_usage_errors
-def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, tier, seed, extra_text):
+def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, tier, seed, extra_text,
+                         progress=gr.Progress()):
     """Run a generation from three thumbnail picks.
 
     Delegates to generate() rather than calling gc.gen_custom itself: that handler carries ~90
@@ -410,6 +442,7 @@ def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, ti
         RESOLUTION_AUTO, True, client.HIRES_DENOISE, client.CHARACTER_LORA_STRENGTH,
         True, client.FACEDETAILER_FACE_DENOISE, client.FACEDETAILER_HAND_DENOISE, FACEDETAILER_BACKEND_YOLO,
         gc.REALISTIC_STYLE, gc.REALISTIC_NEGATIVE, checkpoint_choice, 0.0,
+        progress,
     )
 
 
@@ -513,10 +546,18 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         label="或自行上傳身分參考圖（會覆蓋上面的 Anchor 選擇）— 僅限虛構/AI生成的角色照，禁止上傳真人照片",
                         type="filepath",
                     )
-                    with gr.Accordion("依圖片產生 Prompt（上傳一張圖，自動描述成英文 prompt）", open=False):
+                    with gr.Accordion("依圖片產生 Prompt（上傳一張圖，自動轉成英文 prompt）", open=False):
                         caption_upload = gr.Image(label="上傳圖片", type="filepath")
-                        caption_btn = gr.Button("產生 Prompt")
-                        caption_output = gr.Textbox(label="產生的描述（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
+                        with gr.Row():
+                            caption_btn = gr.Button("產生描述（自然語言）")
+                            tag_btn = gr.Button("產生標籤（WD14，Pony 系適用）")
+                        caption_output = gr.Textbox(label="結果（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
+                        gr.Markdown(
+                            "「描述」用 BLIP 出自然語言句子，juggernaut 和 SD1.5 吃這種。"
+                            "「標籤」用 WD14 出 booru 標籤（`1girl, solo, long hair, ...`），"
+                            "Pony 系 checkpoint 是用這種格式訓練的，通常不必再自己補太多字。"
+                            "標籤模式需要 ComfyUI（第一次按會自動啟動），單張約 3 秒。"
+                        )
                     with gr.Accordion("HQ 兩段式生成（預設開啟，5 分鐘內高品質）", open=True):
                         use_hq = gr.Checkbox(
                             value=True,
@@ -621,6 +662,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
             variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
             variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
             caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
+            tag_btn.click(tag_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
             translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
             # concurrency_id="gpu" on every generation button in this file: Gradio's default
             # concurrency_limit=1 is PER LISTENER, so without a shared id one browser tab could

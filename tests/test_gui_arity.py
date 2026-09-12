@@ -24,10 +24,11 @@ GUI_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 
 EVENT_METHODS = {"click", "change", "submit", "upload", "select", "input", "release", "then"}
 
-# Parameters Gradio fills in itself rather than from `inputs=`. It decides this by annotation
-# (utils.is_special_typed_parameter -> special_args, gradio/blocks.py), removing them from the
+# Parameters Gradio fills in itself rather than from `inputs=`, removing them from the
 # positional binding entirely - so `def f(evt: gr.SelectData)` with `inputs=None` is correct
-# and must not be counted as a missing input here.
+# and must not be counted as a missing input here. These ones are detected by ANNOTATION
+# (utils.is_special_typed_parameter -> special_args, gradio/blocks.py); `gr.Progress()` is
+# also injected but detected by default value instead, see _is_progress_default.
 SPECIAL_ANNOTATIONS = {"SelectData", "EventData", "Request", "OAuthProfile", "OAuthToken"}
 
 # The generation entry points every tab's primary button is wired to. If gui.py stops
@@ -145,19 +146,37 @@ def _handler_info(call, functions):
     else:
         return None
     positional = node_args.posonlyargs + node_args.args
-    arity = sum(1 for a in positional if not _is_special_param(a))
+    # ast puts defaults on the TAIL of the positional list, so left-pad to line them up
+    defaults = [None] * (len(positional) - len(node_args.defaults)) + list(node_args.defaults)
+    arity = sum(1 for a, d in zip(positional, defaults) if not _is_special_param(a, d))
     return label, arity, node_args.vararg is not None
 
 
-def _is_special_param(arg):
-    """True for a parameter Gradio injects by type (`evt: gr.SelectData`, `req: gr.Request`, ...)
-    rather than taking from `inputs=`."""
+def _is_special_param(arg, default=None):
+    """True for a parameter Gradio injects itself rather than taking from `inputs=`.
+
+    Two separate rules, because Gradio uses two: `gr.Request` / `gr.SelectData` / the OAuth
+    types are detected by ANNOTATION (utils.is_special_typed_parameter), while `gr.Progress`
+    is detected by DEFAULT VALUE - `isinstance(param.default, Progress)` in gradio/helpers.py
+    (~line 979), with no annotation involved. Checking only annotations would count
+    `progress=gr.Progress()` as a missing input and fail every handler that reports progress.
+    """
     ann = arg.annotation
-    if isinstance(ann, ast.Attribute):
-        return ann.attr in SPECIAL_ANNOTATIONS
-    if isinstance(ann, ast.Name):
-        return ann.id in SPECIAL_ANNOTATIONS
-    return False
+    if isinstance(ann, ast.Attribute) and ann.attr in SPECIAL_ANNOTATIONS:
+        return True
+    if isinstance(ann, ast.Name) and ann.id in SPECIAL_ANNOTATIONS:
+        return True
+    return _is_progress_default(default)
+
+
+def _is_progress_default(default):
+    """True for a `gr.Progress()` / `Progress()` default value."""
+    if not isinstance(default, ast.Call):
+        return False
+    fn = default.func
+    if isinstance(fn, ast.Attribute):
+        return fn.attr == "Progress"
+    return isinstance(fn, ast.Name) and fn.id == "Progress"
 
 
 def _collect_bindings():
