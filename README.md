@@ -945,15 +945,16 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
   送出生成前還可以再自行編輯
 - 自動偵測來源語言，不限中文——已經是英文的話按下去內容不變，其他語言
   （日文、韓文等）也可以直接翻
-- **不需要 API key**，但這是 Google Translate 網頁版翻譯小工具用的公開端點，
-  不是官方 Cloud Translation API，可能會被 rate-limit 或未來變動——翻譯失敗
-  時 GUI 會跳出明確的錯誤訊息（不會靜默失敗、也不會誤導你以為送出的是翻好的
-  英文），可以稍後重試或自己手動改打英文
-- 選這個方案是實測過的結果：本地小型翻譯模型（`opus-mt-zh-en`、
+- **不需要 API key**，但 Google Translate 這個公開端點不是官方 Cloud
+  Translation API，可能會被 rate-limit 或未來變動——**Google 失敗時會自動
+  改用 MyMemory 的免費翻譯 API 當備援**，兩個都失敗才會跳出錯誤訊息（附上
+  兩邊各自的失敗原因；不會靜默失敗、也不會誤導你以為送出的是翻好的英文），
+  可以稍後重試或自己手動改打英文
+- 選這兩個方案是實測過的結果：本地小型翻譯模型（`opus-mt-zh-en`、
   `NLLB-200-distilled-600M`）在這種逗號分隔短語（不是完整句子）的 prompt
   風格上表現很差——`opus-mt` 會翻錯個別詞彙（「蓬鬆的棉被」被翻成
   "loose tampons"），`NLLB` 則會自己腦補出原文沒有的敘事內容，兩個都不能用；
-  Google Translate 對這種短語輸入的處理正確得多
+  Google Translate 跟 MyMemory 對這種短語輸入的處理都正確得多
 - 靜態圖片區塊、AnimateDiff 動態影片區塊的 Prompt 欄位都各自有一個翻譯按鈕，
   互相獨立；額外負面詞欄位目前沒有這個功能
 
