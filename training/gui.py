@@ -334,320 +334,323 @@ def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_c
 
 
 with gr.Blocks(title="AI Image Lab") as demo:
-    gr.Markdown("# AI Image Lab - 自訂生圖\n先確定 ComfyUI server 已經在跑（127.0.0.1:8188）。")
-    with gr.Row():
-        with gr.Column():
-            character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
-            anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
-            anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
-            custom_anchor = gr.Image(
-                label="或自行上傳身分參考圖（會覆蓋上面的 Anchor 選擇）— 僅限虛構/AI生成的角色照，禁止上傳真人照片",
-                type="filepath",
-            )
-            with gr.Accordion("依圖片產生 Prompt（上傳一張圖，自動描述成英文 prompt）", open=False):
-                caption_upload = gr.Image(label="上傳圖片", type="filepath")
-                caption_btn = gr.Button("產生 Prompt")
-                caption_output = gr.Textbox(label="產生的描述（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
-            with gr.Accordion("HQ 兩段式生成（預設開啟，5 分鐘內高品質）", open=True):
-                use_hq = gr.Checkbox(
-                    value=True,
-                    label="兩段式：先低解析度生成 → ESRGAN 放大 → 低 denoise 重採樣補細節 → 臉部/手部精修。"
-                          "修正失真與「3D render」感，並在有訓練好的角色 LoRA 時自動套用。關掉則走舊的單段式",
-                )
-                hires_denoise = gr.Slider(0.2, 0.6, value=client.HIRES_DENOISE, step=0.05,
-                                          label="Hires 第二段 denoise（0.4 建議；太高會讓臉飄移，太低補不到細節）")
-                character_lora_strength = gr.Slider(0.0, 1.2, value=client.CHARACTER_LORA_STRENGTH, step=0.05,
-                                                     label="角色 LoRA 強度（僅在該角色有訓練好的 LoRA 時作用，否則忽略）")
-            with gr.Accordion("骨架姿勢控制（ControlNet，選填）", open=False):
-                pose_library = gr.Dropdown(
-                    [POSE_NONE] + pose_skeletons.list_names(), value=POSE_NONE,
-                    label="姿勢骨架庫（選一個內建姿勢；用來壓住 checkpoint 靠文字壓不住的姿勢，例如各種躺姿）。"
-                          "若同時上傳了下方的參考照片，以照片為準",
-                )
-                skeleton_preview = gr.Image(label="骨架預覽", interactive=False, height=200)
-                pose_reference = gr.Image(
-                    label="或：自訂姿勢參考照片（自動抽取骨架）。此圖只抽取關節骨架，"
-                          "不會保留臉部/身分資訊，可以是任何照片",
-                    type="filepath",
-                )
-                controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
-                                                 label="骨架控制強度（0=忽略骨架，1=嚴格鎖定姿勢）")
-                gr.Markdown("ℹ️ 內建骨架庫用預先畫好的骨架直接餵 ControlNet（跳過 preprocessor），"
-                            "不掛 FaceID 時單張約 60-90 秒。上傳照片則多一道骨架抽取。")
-                pose_library.change(_pose_preview, inputs=pose_library, outputs=skeleton_preview)
-            with gr.Accordion("臉部/手部精修（ADetailer，HQ 模式預設開啟）", open=True):
-                use_facedetailer = gr.Checkbox(
-                    value=True,
-                    label="生成後自動偵測臉部+手部，各自裁切放大重繪一次，修正常見的臉部/手指小瑕疵。"
-                          "HQ 模式可與骨架姿勢控制同時使用",
-                )
-                face_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_FACE_DENOISE, step=0.05,
-                                         label="臉部精修強度（0=不變，1=該區域完全重畫）")
-                hand_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_HAND_DENOISE, step=0.05,
-                                         label="手部精修強度（手部通常用比臉部略低的值，避免重畫出更糟的手）")
-                facedetailer_backend = gr.Radio(
-                    FACEDETAILER_BACKEND_CHOICES, value=FACEDETAILER_BACKEND_YOLO,
-                    label="臉部偵測方式（HQ 模式一律用 YOLO；MediaPipe 只在關掉 HQ 的舊單段式路徑有作用）",
-                )
-            resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（HQ 最終尺寸：正方形→1248×1248、直式→1056×1536、橫式→1536×1056；正方形沒有足夠垂直空間放全身，會被裁成上半身）")
-            prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting in a cozy library, reading a book, warm afternoon light")
-            translate_btn = gr.Button("翻譯成英文（CLIP 對中文支援不佳，建議先翻譯再送出；已經是英文按下去不會被改動）")
-            negative_prompt = gr.Textbox(label="額外負面詞（選填，一次性追加，不影響下面的風格詞預設值）", lines=1)
-            with gr.Accordion("風格正/負面詞（進階 - 可直接在這裡調整寫實感等風格用詞，不用改程式碼）", open=False):
-                gr.Markdown(
-                    "下面兩欄會自動接在 prompt/negative prompt 後面，預設值就是目前程式碼裡用的寫實化詞彙。"
-                    "**這裡改不到年齡保護詞、露骨內容封鎖詞**，那些永遠固定套用、不會因為這裡的設定被移除或減弱。"
-                )
-                style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+    gr.Markdown("# AI Image Lab\n先確定 ComfyUI server 已經在跑（127.0.0.1:8188）。")
+
+    with gr.Tabs():
+        with gr.Tab("🖼️ 自訂生圖"):
+            with gr.Row():
+                with gr.Column():
+                    character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
+                    anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
+                    anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
+                    custom_anchor = gr.Image(
+                        label="或自行上傳身分參考圖（會覆蓋上面的 Anchor 選擇）— 僅限虛構/AI生成的角色照，禁止上傳真人照片",
+                        type="filepath",
+                    )
+                    with gr.Accordion("依圖片產生 Prompt（上傳一張圖，自動描述成英文 prompt）", open=False):
+                        caption_upload = gr.Image(label="上傳圖片", type="filepath")
+                        caption_btn = gr.Button("產生 Prompt")
+                        caption_output = gr.Textbox(label="產生的描述（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
+                    with gr.Accordion("HQ 兩段式生成（預設開啟，5 分鐘內高品質）", open=True):
+                        use_hq = gr.Checkbox(
+                            value=True,
+                            label="兩段式：先低解析度生成 → ESRGAN 放大 → 低 denoise 重採樣補細節 → 臉部/手部精修。"
+                                  "修正失真與「3D render」感，並在有訓練好的角色 LoRA 時自動套用。關掉則走舊的單段式",
+                        )
+                        hires_denoise = gr.Slider(0.2, 0.6, value=client.HIRES_DENOISE, step=0.05,
+                                                  label="Hires 第二段 denoise（0.4 建議；太高會讓臉飄移，太低補不到細節）")
+                        character_lora_strength = gr.Slider(0.0, 1.2, value=client.CHARACTER_LORA_STRENGTH, step=0.05,
+                                                             label="角色 LoRA 強度（僅在該角色有訓練好的 LoRA 時作用，否則忽略）")
+                    with gr.Accordion("骨架姿勢控制（ControlNet，選填）", open=False):
+                        pose_library = gr.Dropdown(
+                            [POSE_NONE] + pose_skeletons.list_names(), value=POSE_NONE,
+                            label="姿勢骨架庫（選一個內建姿勢；用來壓住 checkpoint 靠文字壓不住的姿勢，例如各種躺姿）。"
+                                  "若同時上傳了下方的參考照片，以照片為準",
+                        )
+                        skeleton_preview = gr.Image(label="骨架預覽", interactive=False, height=200)
+                        pose_reference = gr.Image(
+                            label="或：自訂姿勢參考照片（自動抽取骨架）。此圖只抽取關節骨架，"
+                                  "不會保留臉部/身分資訊，可以是任何照片",
+                            type="filepath",
+                        )
+                        controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
+                                                         label="骨架控制強度（0=忽略骨架，1=嚴格鎖定姿勢）")
+                        gr.Markdown("ℹ️ 內建骨架庫用預先畫好的骨架直接餵 ControlNet（跳過 preprocessor），"
+                                    "不掛 FaceID 時單張約 60-90 秒。上傳照片則多一道骨架抽取。")
+                        pose_library.change(_pose_preview, inputs=pose_library, outputs=skeleton_preview)
+                    with gr.Accordion("臉部/手部精修（ADetailer，HQ 模式預設開啟）", open=True):
+                        use_facedetailer = gr.Checkbox(
+                            value=True,
+                            label="生成後自動偵測臉部+手部，各自裁切放大重繪一次，修正常見的臉部/手指小瑕疵。"
+                                  "HQ 模式可與骨架姿勢控制同時使用",
+                        )
+                        face_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_FACE_DENOISE, step=0.05,
+                                                 label="臉部精修強度（0=不變，1=該區域完全重畫）")
+                        hand_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_HAND_DENOISE, step=0.05,
+                                                 label="手部精修強度（手部通常用比臉部略低的值，避免重畫出更糟的手）")
+                        facedetailer_backend = gr.Radio(
+                            FACEDETAILER_BACKEND_CHOICES, value=FACEDETAILER_BACKEND_YOLO,
+                            label="臉部偵測方式（HQ 模式一律用 YOLO；MediaPipe 只在關掉 HQ 的舊單段式路徑有作用）",
+                        )
+                    resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（HQ 最終尺寸：正方形→1248×1248、直式→1056×1536、橫式→1536×1056；正方形沒有足夠垂直空間放全身，會被裁成上半身）")
+                    prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting in a cozy library, reading a book, warm afternoon light")
+                    translate_btn = gr.Button("翻譯成英文（CLIP 對中文支援不佳，建議先翻譯再送出；已經是英文按下去不會被改動）")
+                    negative_prompt = gr.Textbox(label="額外負面詞（選填，一次性追加，不影響下面的風格詞預設值）", lines=1)
+                    with gr.Accordion("風格正/負面詞（進階 - 可直接在這裡調整寫實感等風格用詞，不用改程式碼）", open=False):
+                        gr.Markdown(
+                            "下面兩欄會自動接在 prompt/negative prompt 後面，預設值就是目前程式碼裡用的寫實化詞彙。"
+                            "**這裡改不到年齡保護詞、露骨內容封鎖詞**，那些永遠固定套用、不會因為這裡的設定被移除或減弱。"
+                        )
+                        style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                        style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+                    gr.Markdown(
+                        "**目前預設（cyberrealistic_pony + HQ + 精修）就是實測最真實、失真最少的組合，不用改就能直接用。**"
+                        "純文字生圖、不需要鎖臉/姿勢/精修時，`z_image_turbo` 寫實度和手部更好，可以切過去試試。\n\n"
+                        "**什麼時候要切換 checkpoint：**\n"
+                        "- 需要「Anchor 身分鎖定」「骨架姿勢控制」或「臉部/手部精修」任一項 → 只能選 SDXL 系列"
+                        "（juggernaut / pony / cyberrealistic_pony / pony_realism），這三個功能都是接在 SDXL 專用模型檔上，"
+                        "選 SD1.5 送出時會直接跳錯誤。\n"
+                        "- 只要純文字生圖、想要更自然語言的 prompt、或想要 512×768 左右的原生解析度 → 可以切到 SD1.5 系列"
+                        "（realistic_vision / cyberrealistic），但切過去後 anchor / 姿勢控制 / 精修都會被鎖住，畫布比例也只能選「自動」。\n"
+                        "- pony / cyberrealistic_pony / pony_realism 需要的 `score_9, score_8_up, score_7_up` 品質 tag 前綴"
+                        "會自動加上，Prompt 欄位一樣打自然語言就好，不用自己記得加。"
+                        "下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
+                        "\n- `z_image_turbo`（Z-Image Turbo）→ 純文字生圖，寫實度、手指跟畫面裡的文字（包括中文字）都比 SDXL 好，"
+                        "Prompt 可以直接打中文不用翻譯；但沒有 anchor 鎖臉、姿勢控制、精修（選了角色只會用文字描述），"
+                        "要先依 README 下載模型，第一張要載入約 11 GB 模型，會比較久。"
+                    )
+                    with gr.Accordion("模型版本（完整版 / 量化版）", open=False):
+                        gr.Markdown(
+                            "SDXL / Pony 四個模型可以各自選「完整版」或「量化版 fp8」。量化版把主模型權重存成 fp8，"
+                            "VRAM、記憶體和硬碟用量比較少，換模型時搬得比較快；在這張 RTX 2070 上運算仍是 fp16，不會算得比較快。"
+                            "這是全域設定：這裡、批次 GIF 和 CLI 都會套用，按「儲存」後下一張就生效。"
+                            "選了量化版但還沒轉出量化檔時，會自動改用完整版並提示轉換指令；骨架姿勢（ControlNet）一律用完整版。"
+                        )
+                        variant_radios = [
+                            gr.Radio([("完整版", "full"), ("量化版 fp8", "quant")], value=_row["chosen"],
+                                     label=_variant_label(_row), interactive=not _row["unsupported"])
+                            for _row in client.variant_status()
+                        ]
+                        variant_table = gr.Markdown(_variant_table())
+                        with gr.Row():
+                            variant_save_btn = gr.Button("儲存模型版本設定")
+                            variant_refresh_btn = gr.Button("重新檢查檔案")
+                    checkpoint_choice = gr.Dropdown(
+                        CHECKPOINT_CHOICES, value="cyberrealistic_pony", label="Checkpoint 模型",
+                    )
+                    lora_strength = gr.Slider(
+                        0.0, 3.0, value=0.0, step=0.1,
+                        label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
+                    )
+                    tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
+                    seed = gr.Number(value=9000, label="Seed", precision=0)
+                    ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
+                    btn = gr.Button("生成", variant="primary")
+                with gr.Column():
+                    output = gr.Image(label="結果")
+
+            character.change(refresh_anchors, inputs=character, outputs=[anchor, anchor_preview])
+            anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
+            checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution)
+            variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
+            variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
+            caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
+            translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
+            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
+
+        with gr.Tab("🎬 AnimateDiff 動態影片"):
             gr.Markdown(
-                "**目前預設（cyberrealistic_pony + HQ + 精修）就是實測最真實、失真最少的組合，不用改就能直接用。**"
-                "純文字生圖、不需要鎖臉/姿勢/精修時，`z_image_turbo` 寫實度和手部更好，可以切過去試試。\n\n"
-                "**什麼時候要切換 checkpoint：**\n"
-                "- 需要「Anchor 身分鎖定」「骨架姿勢控制」或「臉部/手部精修」任一項 → 只能選 SDXL 系列"
-                "（juggernaut / pony / cyberrealistic_pony / pony_realism），這三個功能都是接在 SDXL 專用模型檔上，"
-                "選 SD1.5 送出時會直接跳錯誤。\n"
-                "- 只要純文字生圖、想要更自然語言的 prompt、或想要 512×768 左右的原生解析度 → 可以切到 SD1.5 系列"
-                "（realistic_vision / cyberrealistic），但切過去後 anchor / 姿勢控制 / 精修都會被鎖住，畫布比例也只能選「自動」。\n"
-                "- pony / cyberrealistic_pony / pony_realism 需要的 `score_9, score_8_up, score_7_up` 品質 tag 前綴"
-                "會自動加上，Prompt 欄位一樣打自然語言就好，不用自己記得加。"
-                "下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
-                "\n- `z_image_turbo`（Z-Image Turbo）→ 純文字生圖，寫實度、手指跟畫面裡的文字（包括中文字）都比 SDXL 好，"
-                "Prompt 可以直接打中文不用翻譯；但沒有 anchor 鎖臉、姿勢控制、精修（選了角色只會用文字描述），"
-                "要先依 README 下載模型，第一張要載入約 11 GB 模型，會比較久。"
+                "跟「自訂生圖」分頁是分開的 workflow，用 SD1.5 + AnimateDiff motion module 生成短動態影片，"
+                "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分，再把所有影格的臉部一起重新採樣精修（不會一幀一個樣）——"
+                "解決純 SVD img2vid（見 README「幫已有的圖片配上動作」）常見的臉部變形/融化問題。"
+                "**目前預設（realistic_vision、高清開、精修開、LCM 關）就是實測畫質最完整的組合，不用改就能直接用；"
+                "只有女性角色、想省時間才建議勾 LCM 快速模式——男性角色開 LCM 常常會被畫成女生，見下方勾選框說明。**"
+                "預設流程：採樣 512² → 二段式高清 768² → 臉部精修 → ESRGAN 放大到長邊 1024 → mp4。"
+                "第一次執行會比較久（SD1.5 checkpoint、motion module、FaceID SD1.5 模型是分開載入的新模型組合）。"
             )
-            with gr.Accordion("模型版本（完整版 / 量化版）", open=False):
-                gr.Markdown(
-                    "SDXL / Pony 四個模型可以各自選「完整版」或「量化版 fp8」。量化版把主模型權重存成 fp8，"
-                    "VRAM、記憶體和硬碟用量比較少，換模型時搬得比較快；在這張 RTX 2070 上運算仍是 fp16，不會算得比較快。"
-                    "這是全域設定：這裡、批次 GIF 和 CLI 都會套用，按「儲存」後下一張就生效。"
-                    "選了量化版但還沒轉出量化檔時，會自動改用完整版並提示轉換指令；骨架姿勢（ControlNet）一律用完整版。"
-                )
-                variant_radios = [
-                    gr.Radio([("完整版", "full"), ("量化版 fp8", "quant")], value=_row["chosen"],
-                             label=_variant_label(_row), interactive=not _row["unsupported"])
-                    for _row in client.variant_status()
-                ]
-                variant_table = gr.Markdown(_variant_table())
-                with gr.Row():
-                    variant_save_btn = gr.Button("儲存模型版本設定")
-                    variant_refresh_btn = gr.Button("重新檢查檔案")
-            checkpoint_choice = gr.Dropdown(
-                CHECKPOINT_CHOICES, value="cyberrealistic_pony", label="Checkpoint 模型",
+            with gr.Row():
+                with gr.Column():
+                    video_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分敘述）", value=NO_CHARACTER)
+                    video_face_ref = gr.Image(
+                        label="臉部參考圖（FaceID 用，僅限虛構/AI生成，禁止上傳真人照片）",
+                        type="filepath",
+                    )
+                    video_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting by a window, gentle breeze, turning head slightly")
+                    video_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
+                    video_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
+                    video_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
+                    with gr.Row():
+                        video_seed = gr.Number(value=6001, label="Seed", precision=0)
+                        video_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重")
+                    with gr.Row():
+                        video_frames = gr.Slider(8, 16, value=client.ANIMATEDIFF_FRAMES, step=1, label="採樣影格數（motion module 訓練上限 16）")
+                        video_fps = gr.Slider(0, 32, value=0, step=1, label="輸出 FPS（0 = 自動：8 × 補幀倍數，片長不變只變順；調低可拉長成慢動作）")
+                    with gr.Row():
+                        video_width = gr.Number(value=client.ANIMATEDIFF_WIDTH, label="寬", precision=0)
+                        video_height = gr.Number(value=client.ANIMATEDIFF_HEIGHT, label="高")
+                    with gr.Group():
+                        gr.Markdown("**畫質 / 流暢度 / 速度**")
+                        with gr.Row():
+                            video_hires = gr.Checkbox(value=True, label="二段式高清（1.5x，上限 768²；VRAM 不足會自動退回）")
+                            video_upscale = gr.Dropdown(UPSCALE_CHOICES, value=f"長邊 {client.ANIMATEDIFF_UPSCALE_TO}px",
+                                                        label="最終放大（ESRGAN 4x-UltraSharp，逐幀）")
+                        with gr.Row():
+                            video_interp = gr.Radio(list(client.ANIMATEDIFF_INTERP_CHOICES), value=1,
+                                                    label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
+                            video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
+                        video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README。男性角色實測常被畫成女生，不建議勾）")
+                    video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.ANIMATEDIFF_FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
+                    with gr.Row():
+                        video_faceid_v2_weight = gr.Slider(0.0, 3.0, value=client.ANIMATEDIFF_FACEID_V2_WEIGHT, step=0.1,
+                                                           label="FaceID 臉部結構權重（越高臉越固定但動作越少；實測對相似度幾乎沒幫助）")
+                        video_motion_scale = gr.Slider(0.5, 1.2, value=client.ANIMATEDIFF_MOTION_SCALE, step=0.05,
+                                                       label="動作幅度（1.0 = 完整動作；0.85 就幾乎靜止）")
+                    video_checkpoint_choice = gr.Dropdown(
+                        ANIMATEDIFF_CHECKPOINT_CHOICES, value=ANIMATEDIFF_CHECKPOINT_DEFAULT,
+                        label="Checkpoint 模型（必須是 SD1.5，跟「自訂生圖」分頁的選項是分開的清單）",
+                    )
+                    with gr.Accordion("風格正/負面詞（進階，跟「自訂生圖」分頁獨立設定）", open=False):
+                        video_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                        video_style_negative = gr.Textbox(label="風格負面詞（影片版不含 symmetrical face，避免臉被推向不對稱）",
+                                                          value=gc.VIDEO_REALISTIC_NEGATIVE, lines=2)
+                    with gr.Accordion("Motion LoRA（選用，鏡頭運動控制）", open=False):
+                        gr.Markdown(
+                            "官方 AnimateDiff Motion LoRA，控制的是**整個畫面的鏡頭運動**（縮放/平移/"
+                            "傾斜/旋轉），**不是特定身體部位的物理晃動效果**（沒有「彈跳」「晃動」這類選項，"
+                            "motion module 本身沒有對應的控制機制）。要先下載對應的 `.ckpt` 檔案放到"
+                            "`ComfyUI/models/animatediff_motion_lora/`，見 README「AnimateDiff Motion LoRA」"
+                            "安裝章節，沒下載的話選了會生成失敗。"
+                        )
+                        video_motion_lora = gr.Dropdown(MOTION_LORA_CHOICES, value=MOTION_LORA_NONE, label="鏡頭運動")
+                        video_motion_lora_strength = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="強度（超過 1 容易讓畫面明顯扭曲）")
+                    video_btn = gr.Button("生成影片", variant="primary")
+                with gr.Column():
+                    video_output = gr.Video(label="結果")
+
+            video_translate_btn.click(translate_prompt_to_english, inputs=video_prompt, outputs=video_prompt)
+            video_btn.click(
+                generate_video_animatediff,
+                inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed,
+                        video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
+                        video_style_positive, video_style_negative, video_checkpoint_choice,
+                        video_motion_lora, video_motion_lora_strength,
+                        video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
+                        video_faceid_v2_weight, video_motion_scale],
+                outputs=video_output,
             )
-            lora_strength = gr.Slider(
-                0.0, 3.0, value=0.0, step=0.1,
-                label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
+
+        with gr.Tab("🗣️ SadTalker 對嘴影片"):
+            gr.Markdown(
+                "上傳一張人像 + 一段語音，產生嘴型跟著語音動的說話影片（mp4，含聲音）。"
+                "**來源人像僅限虛構/AI生成的臉（例如上面生成的 anchor），禁止上傳真人照片。**"
+                "跑在 SadTalker 自己的 Python 環境，不用開 ComfyUI；如果 ComfyUI 正開著，會先請它釋放顯存。"
+                "256 比較快（約 2-3GB VRAM），512 比較清楚（約 4-6GB）。半身/全身圖建議選 full + 勾 still。"
             )
-            tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
-            seed = gr.Number(value=9000, label="Seed", precision=0)
-            ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
-            btn = gr.Button("生成", variant="primary")
-        with gr.Column():
-            output = gr.Image(label="結果")
+            with gr.Row():
+                with gr.Column():
+                    talk_image = gr.Image(label="來源人像（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath")
+                    talk_audio = gr.Audio(label="語音檔（wav/mp3 等，會自動轉成 16kHz wav）", type="filepath")
+                    with gr.Row():
+                        talk_size = gr.Radio(list(talking_head.SIZES), value=512, label="臉部渲染尺寸")
+                        talk_preprocess = gr.Dropdown(list(talking_head.PREPROCESS_MODES), value="crop",
+                                                      label="範圍（crop 只有臉；full/extfull 貼回整張圖）")
+                    with gr.Row():
+                        talk_still = gr.Checkbox(value=False, label="still（頭部幾乎不動，搭配 full 使用）")
+                        talk_enhancer = gr.Dropdown([TALK_ENHANCER_NONE] + list(talking_head.ENHANCERS), value=TALK_ENHANCER_NONE,
+                                                    label="臉部修復（gfpgan 第一次使用會下載 ~348MB）")
+                    with gr.Row():
+                        talk_expression = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="表情/嘴型幅度")
+                        talk_pose_style = gr.Slider(0, 45, value=0, step=1, label="頭部動作風格")
+                    talk_btn = gr.Button("生成說話影片", variant="primary")
+                with gr.Column():
+                    talk_output = gr.Video(label="結果")
 
-    character.change(refresh_anchors, inputs=character, outputs=[anchor, anchor_preview])
-    anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
-    checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution)
-    variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
-    variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
-    caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
-    translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
-    btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output)
-
-    gr.Markdown("---\n## AnimateDiff 動態影片（SD1.5 + FaceID 鎖臉 + 影片臉部精修，輸出 mp4）")
-    gr.Markdown(
-        "跟上面的靜態圖是分開的 workflow，用 SD1.5 + AnimateDiff motion module 生成短動態影片，"
-        "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分，再把所有影格的臉部一起重新採樣精修（不會一幀一個樣）——"
-        "解決純 SVD img2vid（見 README「幫已有的圖片配上動作」）常見的臉部變形/融化問題。"
-        "**目前預設（realistic_vision、高清開、精修開、LCM 關）就是實測畫質最完整的組合，不用改就能直接用；"
-        "只有女性角色、想省時間才建議勾 LCM 快速模式——男性角色開 LCM 常常會被畫成女生，見下方勾選框說明。**"
-        "預設流程：採樣 512² → 二段式高清 768² → 臉部精修 → ESRGAN 放大到長邊 1024 → mp4。"
-        "第一次執行會比較久（SD1.5 checkpoint、motion module、FaceID SD1.5 模型是分開載入的新模型組合）。"
-    )
-    with gr.Row():
-        with gr.Column():
-            video_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分敘述）", value=NO_CHARACTER)
-            video_face_ref = gr.Image(
-                label="臉部參考圖（FaceID 用，僅限虛構/AI生成，禁止上傳真人照片）",
-                type="filepath",
+            talk_btn.click(
+                generate_talking_head_ui,
+                inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
+                        talk_enhancer, talk_pose_style],
+                outputs=talk_output,
             )
-            video_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting by a window, gentle breeze, turning head slightly")
-            video_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
-            video_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
-            video_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
-            with gr.Row():
-                video_seed = gr.Number(value=6001, label="Seed", precision=0)
-                video_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重")
-            with gr.Row():
-                video_frames = gr.Slider(8, 16, value=client.ANIMATEDIFF_FRAMES, step=1, label="採樣影格數（motion module 訓練上限 16）")
-                video_fps = gr.Slider(0, 32, value=0, step=1, label="輸出 FPS（0 = 自動：8 × 補幀倍數，片長不變只變順；調低可拉長成慢動作）")
-            with gr.Row():
-                video_width = gr.Number(value=client.ANIMATEDIFF_WIDTH, label="寬", precision=0)
-                video_height = gr.Number(value=client.ANIMATEDIFF_HEIGHT, label="高")
-            with gr.Group():
-                gr.Markdown("**畫質 / 流暢度 / 速度**")
-                with gr.Row():
-                    video_hires = gr.Checkbox(value=True, label="二段式高清（1.5x，上限 768²；VRAM 不足會自動退回）")
-                    video_upscale = gr.Dropdown(UPSCALE_CHOICES, value=f"長邊 {client.ANIMATEDIFF_UPSCALE_TO}px",
-                                                label="最終放大（ESRGAN 4x-UltraSharp，逐幀）")
-                with gr.Row():
-                    video_interp = gr.Radio(list(client.ANIMATEDIFF_INTERP_CHOICES), value=1,
-                                            label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
-                    video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
-                video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README。男性角色實測常被畫成女生，不建議勾）")
-            video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.ANIMATEDIFF_FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
-            with gr.Row():
-                video_faceid_v2_weight = gr.Slider(0.0, 3.0, value=client.ANIMATEDIFF_FACEID_V2_WEIGHT, step=0.1,
-                                                   label="FaceID 臉部結構權重（越高臉越固定但動作越少；實測對相似度幾乎沒幫助）")
-                video_motion_scale = gr.Slider(0.5, 1.2, value=client.ANIMATEDIFF_MOTION_SCALE, step=0.05,
-                                               label="動作幅度（1.0 = 完整動作；0.85 就幾乎靜止）")
-            video_checkpoint_choice = gr.Dropdown(
-                ANIMATEDIFF_CHECKPOINT_CHOICES, value=ANIMATEDIFF_CHECKPOINT_DEFAULT,
-                label="Checkpoint 模型（必須是 SD1.5，跟上面圖片區塊的選項是分開的清單）",
+
+        with gr.Tab("📹 SVD 圖生影片"):
+            gr.Markdown(
+                "上傳一張既有的圖片（例如上面生成的 anchor 或 dataset 照片），用 Stable Video Diffusion "
+                "直接讓那張圖動起來——跟「AnimateDiff 動態影片」分頁不同，這裡不是用 prompt 生成新內容，"
+                "是直接讓那張圖本身動起來。**這條路線沒有 FaceID 鎖臉，動態幅度大時臉容易變形/融化**，"
+                "低解析度/低影格數，只是「動起來測試」用途，非最終畫質。想要臉部穩定的動態影片，"
+                "請用「AnimateDiff 動態影片」分頁。"
             )
-            with gr.Accordion("風格正/負面詞（進階，跟上面圖片區塊獨立設定）", open=False):
-                video_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                video_style_negative = gr.Textbox(label="風格負面詞（影片版不含 symmetrical face，避免臉被推向不對稱）",
-                                                  value=gc.VIDEO_REALISTIC_NEGATIVE, lines=2)
-            with gr.Accordion("Motion LoRA（選用，鏡頭運動控制）", open=False):
-                gr.Markdown(
-                    "官方 AnimateDiff Motion LoRA，控制的是**整個畫面的鏡頭運動**（縮放/平移/"
-                    "傾斜/旋轉），**不是特定身體部位的物理晃動效果**（沒有「彈跳」「晃動」這類選項，"
-                    "motion module 本身沒有對應的控制機制）。要先下載對應的 `.ckpt` 檔案放到"
-                    "`ComfyUI/models/animatediff_motion_lora/`，見 README「AnimateDiff Motion LoRA」"
-                    "安裝章節，沒下載的話選了會生成失敗。"
-                )
-                video_motion_lora = gr.Dropdown(MOTION_LORA_CHOICES, value=MOTION_LORA_NONE, label="鏡頭運動")
-                video_motion_lora_strength = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="強度（超過 1 容易讓畫面明顯扭曲）")
-            video_btn = gr.Button("生成影片", variant="primary")
-        with gr.Column():
-            video_output = gr.Video(label="結果")
-
-    video_translate_btn.click(translate_prompt_to_english, inputs=video_prompt, outputs=video_prompt)
-    video_btn.click(
-        generate_video_animatediff,
-        inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed,
-                video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
-                video_style_positive, video_style_negative, video_checkpoint_choice,
-                video_motion_lora, video_motion_lora_strength,
-                video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
-                video_faceid_v2_weight, video_motion_scale],
-        outputs=video_output,
-    )
-
-    gr.Markdown("---\n## 會講話的嘴型影片（SadTalker 對嘴，不需要 ComfyUI）")
-    gr.Markdown(
-        "上傳一張人像 + 一段語音，產生嘴型跟著語音動的說話影片（mp4，含聲音）。"
-        "**來源人像僅限虛構/AI生成的臉（例如上面生成的 anchor），禁止上傳真人照片。**"
-        "跑在 SadTalker 自己的 Python 環境，不用開 ComfyUI；如果 ComfyUI 正開著，會先請它釋放顯存。"
-        "256 比較快（約 2-3GB VRAM），512 比較清楚（約 4-6GB）。半身/全身圖建議選 full + 勾 still。"
-    )
-    with gr.Row():
-        with gr.Column():
-            talk_image = gr.Image(label="來源人像（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath")
-            talk_audio = gr.Audio(label="語音檔（wav/mp3 等，會自動轉成 16kHz wav）", type="filepath")
             with gr.Row():
-                talk_size = gr.Radio(list(talking_head.SIZES), value=512, label="臉部渲染尺寸")
-                talk_preprocess = gr.Dropdown(list(talking_head.PREPROCESS_MODES), value="crop",
-                                              label="範圍（crop 只有臉；full/extfull 貼回整張圖）")
-            with gr.Row():
-                talk_still = gr.Checkbox(value=False, label="still（頭部幾乎不動，搭配 full 使用）")
-                talk_enhancer = gr.Dropdown([TALK_ENHANCER_NONE] + list(talking_head.ENHANCERS), value=TALK_ENHANCER_NONE,
-                                            label="臉部修復（gfpgan 第一次使用會下載 ~348MB）")
-            with gr.Row():
-                talk_expression = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="表情/嘴型幅度")
-                talk_pose_style = gr.Slider(0, 45, value=0, step=1, label="頭部動作風格")
-            talk_btn = gr.Button("生成說話影片", variant="primary")
-        with gr.Column():
-            talk_output = gr.Video(label="結果")
+                with gr.Column():
+                    svd_character = gr.Dropdown(sorted(gc.CHARACTERS), label="角色（決定輸出資料夾位置）")
+                    svd_init_image = gr.Image(label="要配上動作的圖片", type="filepath")
+                    svd_seed = gr.Number(value=6001, label="Seed", precision=0)
+                    with gr.Row():
+                        svd_frames = gr.Slider(6, 25, value=client.VIDEO_FRAMES, step=1, label="影格數")
+                        svd_fps = gr.Slider(2, 12, value=client.VIDEO_FPS, step=1, label="FPS")
+                    svd_motion = gr.Slider(1, 255, value=client.MOTION_BUCKET_ID, step=1,
+                                            label="動態強度（越高動作越大，但越容易變形/融化，人像建議偏低）")
+                    svd_btn = gr.Button("生成影片（SVD）", variant="primary")
+                with gr.Column():
+                    svd_output = gr.Video(label="結果")
 
-    talk_btn.click(
-        generate_talking_head_ui,
-        inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
-                talk_enhancer, talk_pose_style],
-        outputs=talk_output,
-    )
-
-    gr.Markdown("---\n## SVD 圖生影片（幫已有的圖片配上動作）")
-    gr.Markdown(
-        "上傳一張既有的圖片（例如上面生成的 anchor 或 dataset 照片），用 Stable Video Diffusion "
-        "直接讓那張圖動起來——跟上面的 AnimateDiff 不同，這裡不是用 prompt 生成新內容，"
-        "是直接讓那張圖本身動起來。**這條路線沒有 FaceID 鎖臉，動態幅度大時臉容易變形/融化**，"
-        "低解析度/低影格數，只是「動起來測試」用途，非最終畫質。想要臉部穩定的動態影片，"
-        "請用上面的「AnimateDiff 動態影片」區塊。"
-    )
-    with gr.Row():
-        with gr.Column():
-            svd_character = gr.Dropdown(sorted(gc.CHARACTERS), label="角色（決定輸出資料夾位置）")
-            svd_init_image = gr.Image(label="要配上動作的圖片", type="filepath")
-            svd_seed = gr.Number(value=6001, label="Seed", precision=0)
-            with gr.Row():
-                svd_frames = gr.Slider(6, 25, value=client.VIDEO_FRAMES, step=1, label="影格數")
-                svd_fps = gr.Slider(2, 12, value=client.VIDEO_FPS, step=1, label="FPS")
-            svd_motion = gr.Slider(1, 255, value=client.MOTION_BUCKET_ID, step=1,
-                                    label="動態強度（越高動作越大，但越容易變形/融化，人像建議偏低）")
-            svd_btn = gr.Button("生成影片（SVD）", variant="primary")
-        with gr.Column():
-            svd_output = gr.Video(label="結果")
-
-    svd_btn.click(
-        generate_video_svd,
-        inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion],
-        outputs=svd_output,
-    )
-
-    gr.Markdown("---\n## 批次生成 GIF（同一個場景微幅變化，組成動畫）")
-    gr.Markdown(
-        "先生成第一張（完整生成），後面每一張都是拿**同一張第一張的圖**用低 denoise 的 img2img 去微調"
-        "（同一個 prompt，只有 seed 不同），組成一個會動的 GIF——同一個人、同一個姿勢、同一個場景，"
-        "只有細節隨每張的 seed 有小幅變化，靠「動作幅度」滑桿控制變化大小。"
-        "**這不是像 AnimateDiff 那樣有時序關聯的平滑動態**，是同一張圖反覆微調出來的效果，"
-        "沒有動作連貫的「進行中」的感覺，比較像是原地小幅度的浮動/晃動；想要真正平滑、有動作進展的"
-        "動態影片，請用上面的「AnimateDiff 動態影片」區塊。生成速度比 AnimateDiff 快很多"
-        "（每張都是普通靜態圖，沒有影格數的額外負擔）。"
-    )
-    with gr.Row():
-        with gr.Column():
-            gif_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
-            gif_anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
-            gif_anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
-            gif_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: standing in a park, looking at the camera")
-            gif_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
-            gif_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
-            with gr.Accordion("風格正/負面詞（進階，跟上面「自訂生圖」區塊獨立設定）", open=False):
-                gif_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                gif_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
-            gif_checkpoint_choice = gr.Dropdown(
-                CHECKPOINT_CHOICES, value="cyberrealistic_pony",
-                label="Checkpoint 模型（選了角色/anchor 就只能 SDXL 系列，跟上面「自訂生圖」區塊的規則一樣）",
+            svd_btn.click(
+                generate_video_svd,
+                inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion],
+                outputs=svd_output,
             )
-            gif_lora_strength = gr.Slider(0.0, 3.0, value=0.0, step=0.1, label="寫實風格 LoRA 強度（pony 系建議 0）")
-            gif_tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（露骨內容依然封鎖）")
-            gif_seed = gr.Number(value=9000, label="起始 Seed（每張圖依序 +1）", precision=0)
-            with gr.Row():
-                gif_frames = gr.Slider(2, 20, value=8, step=1, label="張數")
-                gif_duration = gr.Slider(100, 1000, value=300, step=50, label="每張顯示時間（毫秒）")
-            gif_denoise = gr.Slider(
-                0.0, 1.0, value=gc.GIF_WIGGLE_DENOISE, step=0.05,
-                label="動作幅度（實測：0.3 幾乎看不出變化，0.7 姿勢已經明顯跑掉；0.45 是還沒驗證過的中間值，"
-                      "看起來太靜止就往上調，姿勢跑掉就往下調）",
-            )
-            gif_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（有選角色才有作用）")
-            gif_btn = gr.Button("生成 GIF", variant="primary")
-        with gr.Column():
-            gif_output = gr.Image(label="結果（GIF，會自動播放）")
 
-    gif_character.change(refresh_anchors, inputs=gif_character, outputs=[gif_anchor, gif_anchor_preview])
-    gif_anchor.change(lambda path: path, inputs=gif_anchor, outputs=gif_anchor_preview)
-    gif_translate_btn.click(translate_prompt_to_english, inputs=gif_prompt, outputs=gif_prompt)
-    gif_btn.click(
-        generate_gif,
-        inputs=[gif_character, gif_anchor, gif_prompt, gif_tier, gif_negative_prompt, gif_seed, gif_frames,
-                gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
-                gif_checkpoint_choice, gif_lora_strength],
-        outputs=gif_output,
-    )
+        with gr.Tab("🎞️ 批次生成 GIF"):
+            gr.Markdown(
+                "先生成第一張（完整生成），後面每一張都是拿**同一張第一張的圖**用低 denoise 的 img2img 去微調"
+                "（同一個 prompt，只有 seed 不同），組成一個會動的 GIF——同一個人、同一個姿勢、同一個場景，"
+                "只有細節隨每張的 seed 有小幅變化，靠「動作幅度」滑桿控制變化大小。"
+                "**這不是像 AnimateDiff 那樣有時序關聯的平滑動態**，是同一張圖反覆微調出來的效果，"
+                "沒有動作連貫的「進行中」的感覺，比較像是原地小幅度的浮動/晃動；想要真正平滑、有動作進展的"
+                "動態影片，請用「AnimateDiff 動態影片」分頁。生成速度比 AnimateDiff 快很多"
+                "（每張都是普通靜態圖，沒有影格數的額外負擔）。"
+            )
+            with gr.Row():
+                with gr.Column():
+                    gif_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
+                    gif_anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
+                    gif_anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
+                    gif_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: standing in a park, looking at the camera")
+                    gif_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
+                    gif_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
+                    with gr.Accordion("風格正/負面詞（進階，跟「自訂生圖」分頁獨立設定）", open=False):
+                        gif_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                        gif_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+                    gif_checkpoint_choice = gr.Dropdown(
+                        CHECKPOINT_CHOICES, value="cyberrealistic_pony",
+                        label="Checkpoint 模型（選了角色/anchor 就只能 SDXL 系列，跟「自訂生圖」分頁的規則一樣）",
+                    )
+                    gif_lora_strength = gr.Slider(0.0, 3.0, value=0.0, step=0.1, label="寫實風格 LoRA 強度（pony 系建議 0）")
+                    gif_tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（露骨內容依然封鎖）")
+                    gif_seed = gr.Number(value=9000, label="起始 Seed（每張圖依序 +1）", precision=0)
+                    with gr.Row():
+                        gif_frames = gr.Slider(2, 20, value=8, step=1, label="張數")
+                        gif_duration = gr.Slider(100, 1000, value=300, step=50, label="每張顯示時間（毫秒）")
+                    gif_denoise = gr.Slider(
+                        0.0, 1.0, value=gc.GIF_WIGGLE_DENOISE, step=0.05,
+                        label="動作幅度（實測：0.3 幾乎看不出變化，0.7 姿勢已經明顯跑掉；0.45 是還沒驗證過的中間值，"
+                              "看起來太靜止就往上調，姿勢跑掉就往下調）",
+                    )
+                    gif_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（有選角色才有作用）")
+                    gif_btn = gr.Button("生成 GIF", variant="primary")
+                with gr.Column():
+                    gif_output = gr.Image(label="結果（GIF，會自動播放）")
+
+            gif_character.change(refresh_anchors, inputs=gif_character, outputs=[gif_anchor, gif_anchor_preview])
+            gif_anchor.change(lambda path: path, inputs=gif_anchor, outputs=gif_anchor_preview)
+            gif_translate_btn.click(translate_prompt_to_english, inputs=gif_prompt, outputs=gif_prompt)
+            gif_btn.click(
+                generate_gif,
+                inputs=[gif_character, gif_anchor, gif_prompt, gif_tier, gif_negative_prompt, gif_seed, gif_frames,
+                        gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
+                        gif_checkpoint_choice, gif_lora_strength],
+                outputs=gif_output,
+            )
 
 if __name__ == "__main__":
     # 7861, not Gradio's default 7860 - kohya_ss's own training GUI (kohya_gui.py, this repo's parent
