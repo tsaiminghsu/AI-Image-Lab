@@ -453,6 +453,17 @@ def free_vram() -> None:
 # and gets retried only when the request provably never left this process.
 
 
+class ComfyUIUnavailable(RuntimeError):
+    """ComfyUI could not be reached, or stopped answering, after the retries were exhausted.
+
+    An environment problem, not a bug and not a caller error, so every entry point turns it
+    into a single readable line: the CLI exits 1 with the message (see generate_character's
+    __main__), the GUI shows it as a toast, image_api records it as the job error. Without its
+    own type the CLI printed a full requests/urllib3 traceback for "ComfyUI is not running",
+    which buries the one fact the user needs.
+    """
+
+
 class _TransientHTTPError(Exception):
     """A 5xx from ComfyUI. Not a requests exception, so it needs its own type to flow through
     the same retry path (r.raise_for_status() would raise HTTPError, which we deliberately do
@@ -490,9 +501,9 @@ def _http_with_retry(call, what: str, budget_seconds: float = POLL_RETRY_BUDGET_
             delay = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
             out_of_time = spent > budget_seconds or (deadline is not None and time.time() >= deadline)
             if out_of_time:
-                raise RuntimeError(
+                raise ComfyUIUnavailable(
                     f"ComfyUI 伺服器連續 {attempt} 次沒有回應（已重試 {spent:.0f} 秒）：{what}。"
-                    f"最後一次的錯誤是 {type(exc).__name__}: {exc}"
+                    f"請確認 {COMFYUI_URL} 還活著。最後一次的錯誤是 {type(exc).__name__}: {exc}"
                 ) from exc
             if attempt == 1:
                 # Once per failure window, not once per retry - a 900s job that hiccups every
@@ -548,9 +559,14 @@ def _post_prompt_with_retry(payload: dict):
                         f"直接重送會在這張 8GB 顯示卡上多跑一次生成，請先看 {COMFYUI_URL} 的佇列（Queue）"
                         f"確認之後再決定要不要重送。原始錯誤：{type(exc).__name__}: {exc}"
                     ) from exc
-                raise
+                raise ComfyUIUnavailable(
+                    f"連不上 ComfyUI（{COMFYUI_URL}）：{type(exc).__name__}: {exc}"
+                ) from exc
             if attempt == PROMPT_POST_MAX_ATTEMPTS:
-                raise
+                raise ComfyUIUnavailable(
+                    f"連不上 ComfyUI（{COMFYUI_URL}），重試 {attempt} 次都被拒絕。"
+                    "ComfyUI 沒有在跑的話，用 GUI 會自動啟動它，或自己先把它開起來。"
+                ) from exc
             delay = RETRY_BACKOFF_SECONDS[attempt - 1]
             print(f"[comfyui] 連不上 ComfyUI（{type(exc).__name__}），{delay} 秒後重送第 {attempt + 1} 次 - "
                   f"連線被拒代表這個請求沒有送達，重送不會多排一次生成。", flush=True)

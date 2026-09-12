@@ -282,8 +282,11 @@ def test_connect_timeout_on_post_prompt_is_retried(fake_comfy, no_sleep):
 def test_post_prompt_gives_up_after_three_attempts(fake_comfy, no_sleep):
     fake_comfy.post_failures["/prompt"] = [FakeComfy.refused()] * 5
 
-    with pytest.raises(requests.exceptions.ConnectionError):
+    # ComfyUIUnavailable, not the raw ConnectionError: it still IS one by __cause__, but the
+    # message the user sees has to be a sentence naming the server, not a urllib3 chain.
+    with pytest.raises(client.ComfyUIUnavailable) as excinfo:
         _real_submit_and_wait({"3": {}}, timeout_seconds=60)
+    assert isinstance(excinfo.value.__cause__, requests.exceptions.ConnectionError)
 
     assert fake_comfy.paths("post").count("/prompt") == client.PROMPT_POST_MAX_ATTEMPTS
 
@@ -522,3 +525,44 @@ def test_download_output_cannot_be_written_outside_the_output_dir(fake_comfy, tm
     path = client._download_output({"filename": "../../escaped.png", "subfolder": "", "type": "output"})
     assert os.path.dirname(os.path.abspath(path)) == str(out_dir)
     assert os.path.basename(path) == "escaped.png"
+
+
+# --- "ComfyUI is down" must read as one line, not a urllib3 traceback --------------------------
+# Measured before this type existed: pointing the CLI at a dead port printed a full
+# requests/urllib3 stack ending in NewConnectionError, burying the one fact the user needs.
+# ComfyUIUnavailable gives every entry point something specific to catch: the CLI exits 1 with
+# the message, the GUI shows a toast, image_api records it as the job error.
+
+
+def test_unavailable_is_a_runtime_error_not_a_usage_error():
+    """It is an environment problem, so it must not be confused with a caller mistake - but it
+    must still be an ordinary Exception, or the boundaries that catch Exception miss it."""
+    assert issubclass(client.ComfyUIUnavailable, RuntimeError)
+    assert issubclass(client.ComfyUIUnavailable, Exception)
+
+
+def test_exhausted_post_retries_name_the_server(fake_comfy, no_sleep):
+    fake_comfy.post_failures = {"/prompt": [fake_comfy.refused() for _ in range(client.PROMPT_POST_MAX_ATTEMPTS)]}
+    with pytest.raises(client.ComfyUIUnavailable) as excinfo:
+        client._submit_and_wait({"9": {"class_type": "SaveImage", "inputs": {}}}, timeout_seconds=5)
+    message = str(excinfo.value)
+    assert client.COMFYUI_URL in message
+    assert "NewConnectionError" not in message, "the raw urllib3 chain must not be the message"
+    assert len([p for p, _ in fake_comfy.posted if p == "/prompt"]) == client.PROMPT_POST_MAX_ATTEMPTS
+
+
+def test_a_non_retriable_connection_failure_also_names_the_server(fake_comfy, no_sleep):
+    """A ConnectionError that is NOT a refused connection is not resent (it may have arrived),
+    but the user still gets a sentence rather than a traceback."""
+    fake_comfy.post_failures = {"/prompt": [requests.exceptions.ConnectionError("chunked encoding broke")]}
+    with pytest.raises(client.ComfyUIUnavailable) as excinfo:
+        client._submit_and_wait({"9": {"class_type": "SaveImage", "inputs": {}}}, timeout_seconds=5)
+    assert client.COMFYUI_URL in str(excinfo.value)
+    assert len([p for p, _ in fake_comfy.posted if p == "/prompt"]) == 1, "must not be resent"
+
+
+def test_exhausted_poll_budget_raises_unavailable(fake_comfy, no_sleep):
+    fake_comfy.get_failures = {"/history/": [requests.exceptions.ConnectionError("dropped")] * 40}
+    with pytest.raises(client.ComfyUIUnavailable) as excinfo:
+        client._submit_and_wait({"9": {"class_type": "SaveImage", "inputs": {}}}, timeout_seconds=600)
+    assert client.COMFYUI_URL in str(excinfo.value)

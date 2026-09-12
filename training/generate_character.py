@@ -1494,7 +1494,9 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except UsageError as exc:
-        # Library code signals caller errors with UsageError; here it becomes exactly what
-        # `raise SystemExit(msg)` always did - the message on stderr, exit code 1.
+    except (UsageError, client.ComfyUIUnavailable) as exc:
+        # Library code signals caller errors with UsageError and an unreachable server with
+        # ComfyUIUnavailable; here both become exactly what `raise SystemExit(msg)` always did -
+        # the message on stderr, exit code 1. Anything else still gets a traceback, because
+        # anything else is a bug worth seeing in full.
         raise SystemExit(str(exc))

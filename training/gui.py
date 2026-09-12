@@ -39,7 +39,10 @@ def _show_usage_errors(fn):
     exhaustive and gen_custom keeps growing flags, so this catches whatever slips through and
     shows the message instead of failing the queue task.
 
-    SystemExit is still caught alongside it: the CLI-only scripts this GUI reaches (SadTalker
+    client.ComfyUIUnavailable is caught for the same reason: "ComfyUI stopped answering" is
+    one readable line, not a requests/urllib3 traceback in the terminal.
+
+    SystemExit is still caught alongside them: the CLI-only scripts this GUI reaches (SadTalker
     via talking_head, pose_skeletons) may still use it, and it derives from BaseException, so
     Gradio's Exception-only handling would let it escape and kill the worker task silently.
     """
@@ -48,7 +51,7 @@ def _show_usage_errors(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (gc.UsageError, SystemExit) as exc:
+        except (gc.UsageError, client.ComfyUIUnavailable, SystemExit) as exc:
             raise gr.Error(str(exc)) from exc
 
     return wrapper
