@@ -17,6 +17,8 @@ import time
 
 import requests
 
+import workflow_contracts
+
 # Overridable so the exact same client code runs unchanged inside a RunPod
 # Serverless worker (ComfyUI on localhost there too) or against a RunPod Pod
 # (https://<POD_ID>-8188.proxy.runpod.net) - see CLOUD_GPU.md. _submit_and_wait/
@@ -385,8 +387,21 @@ POLL_TIMEOUT_SECONDS_VIDEO = 1800  # svd.safetensors is ~9.5GB - first load / sw
 
 
 def _load_template(path=WORKFLOW_TEMPLATE_PATH):
+    """Load a workflow template and fail immediately if its node ids moved.
+
+    Every submit_* function below reaches into the loaded dict by hardcoded node id
+    (wf["4"]["inputs"]["ckpt_name"] and friends). Re-exporting a template from the ComfyUI UI
+    renumbers nodes, and without this check the mismatch surfaces minutes into a run - after
+    the models have loaded - as a KeyError or an opaque ComfyUI node_errors response that says
+    nothing about which node actually moved. workflow_contracts is pure stdlib, so importing it
+    keeps this module's "requests only, no torch" property intact for the RunPod worker.
+    """
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        wf = json.load(f)
+    problems = workflow_contracts.check(os.path.basename(path), wf)
+    if problems:
+        raise RuntimeError("workflow template does not match its contract:\n  " + "\n  ".join(problems))
+    return wf
 
 
 def is_server_running(timeout: float = 2) -> bool:

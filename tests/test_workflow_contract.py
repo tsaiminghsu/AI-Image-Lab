@@ -348,3 +348,37 @@ def test_hq_stage_name_node_is_in_hq_contract_with_plausible_class(node_id, labe
         f"HQ_STAGE_NAMES[{node_id!r}] = {label!r} but the HQ contract says node {node_id} is "
         f"{hq_contract[node_id]!r}, not the expected {_HQ_STAGE_EXPECTED_CLASS[node_id]!r}"
     )
+
+
+# --- the contract is enforced in production, not just asserted in tests -------------------------
+
+
+def test_load_template_accepts_every_shipped_template():
+    """The guard must not reject anything that currently works."""
+    import comfyui_client as client
+
+    for name in workflow_contracts.CONTRACTS:
+        wf = client._load_template(os.path.join(os.path.dirname(client.__file__), name))
+        assert wf, name
+
+
+def test_load_template_rejects_a_renumbered_node_and_names_it(tmp_path):
+    """Re-exporting a template from the ComfyUI UI renumbers nodes. Before this guard, the
+    mismatch surfaced minutes into a run - after the models had loaded - as a KeyError or an
+    opaque ComfyUI node_errors response that never mentioned which node had moved."""
+    import comfyui_client as client
+
+    name = "workflow_template_hq.json"
+    with open(os.path.join(os.path.dirname(client.__file__), name), encoding="utf-8") as f:
+        wf = json.load(f)
+    wf["44"] = wf.pop("43")  # the hand FaceDetailer, as a UI re-export would renumber it
+
+    broken = tmp_path / name
+    broken.write_text(json.dumps(wf), encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client._load_template(str(broken))
+    message = str(excinfo.value)
+    assert "'43'" in message, message
+    assert "FaceDetailer" in message
+    assert "re-exported" in message, "the message must say what probably happened, not just that it broke"
