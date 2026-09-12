@@ -1,0 +1,14 @@
+# Dev-only tools. These deliberately do NOT live in ComfyUI\.venv: worker/Dockerfile
+# installs from comfyui-requirements.lock.txt, which is `uv pip freeze` output, so anything
+# added to that venv risks being frozen into the RunPod worker image.
+#
+# Install into the separate dev venv:
+#   uv venv .venv-dev --python 3.11
+#   uv pip install --python .venv-dev\Scripts\python.exe -r requirements-dev.txt
+#
+# Everything under tests/ is offline by design: no torch, no gradio, no GPU, no ComfyUI.
+# `requests` is the only runtime dependency any tested module imports at module scope,
+# and it is pinned to the same version as comfyui-requirements.lock.txt.
+pytest==8.4.2
+ruff==0.15.3
+requests==2.34.2

@@ -23,6 +23,11 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+# Dev-only venv for pytest/ruff (requirements-dev.txt). Kept separate from
+# ComfyUI\.venv so dev tools can never be frozen into comfyui-requirements.lock.txt.
+/.venv-dev/
+.pytest_cache/
+.ruff_cache/
 
 # Runtime / training logs - regenerable
 training/logs/

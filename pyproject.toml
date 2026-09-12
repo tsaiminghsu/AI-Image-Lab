@@ -1,0 +1,51 @@
+# Tool configuration only. This repo is a collection of scripts, not a Python package:
+# there is deliberately no [project] / [build-system] table. Runtime dependencies live in
+# comfyui-requirements*.lock.txt (installed into ComfyUI\.venv); dev tools live in
+# requirements-dev.txt (installed into the separate .venv-dev).
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# training/*.py import their siblings as top-level modules (`import comfyui_client as client`);
+# the RunPod worker does the same via PYTHONPATH=/app/training. Tests must match that, otherwise
+# `import training.comfyui_client` would create a *second* module object and monkeypatching
+# `client` would not be visible to generate_character's own reference.
+pythonpath = ["training", "tests"]
+# NOT the default ["test_*.py", "*_test.py"]: training/model_prompt_test.py is a manual
+# exploratory script with no assertions and must never be collected.
+python_files = ["test_*.py"]
+norecursedirs = [
+    "ComfyUI", "SadTalker", "MuseTalk", "web", "models", "outputs", "datasets",
+    "training/reference_candidates", ".venv", ".venv-dev", "node_modules", "__pycache__",
+]
+addopts = "-ra -q --strict-markers -m 'not live'"
+markers = [
+    "live: needs a running ComfyUI at COMFYUI_URL (deselected by default; run with -m live)",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [
+    "ComfyUI", "SadTalker", "MuseTalk", "web", "models", "outputs", "datasets",
+    "training/reference_candidates", ".venv-dev",
+]
+
+[tool.ruff.lint]
+# Stage 1: pyflakes plus the import/statement/syntax basics. E501 is deliberately off -
+# this codebase is full of intentionally long explanatory comments.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path.insert() before the sibling import is intentional (the script must run under
+# ComfyUI's own venv from any cwd).
+"training/quantize_models.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+# Only relevant once "I" is enabled; without this ruff would treat the sibling modules as
+# third-party and reorder imports wrongly.
+known-first-party = [
+    "benchmark", "caption_image", "comfyui_client", "face_similarity", "generate_character",
+    "image_api", "pose_pack", "pose_skeletons", "quantize_models", "runpod_bundle",
+    "talking_head", "translate_prompt", "workflow_contracts",
+]

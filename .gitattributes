@@ -1,0 +1,49 @@
+# Codifies the line-ending convention from CLAUDE.md so it stops being manual discipline.
+#
+# Default: text is stored LF in the repo and checked out LF on every OS. core.autocrlf is
+# false on the dev machine, so this matches the existing working tree exactly.
+* text=auto eol=lf
+
+# Explicit LF for everything this project owns (belt and braces over text=auto detection).
+*.py    text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+*.ps1   text eol=lf
+*.sh    text eol=lf
+*.ts    text eol=lf
+Dockerfile     text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# CRLF exceptions, kept byte-for-byte. `-text` means git never converts these in either
+# direction, so adding this file causes zero churn. Marking them `text eol=crlf` instead
+# would store them as LF in the index and rewrite every line on the next `git add
+# --renormalize` - exactly what CLAUDE.md warns against. CRLF-ness is asserted by the
+# line-ending audit in check.ps1 and .github/workflows/checks.yml, not by git conversion.
+#
+# README.md is edited with Windows tooling; training/poses/*.json are written by
+# pose_skeletons.py with open(..., "w") on Windows, which emits CRLF.
+README.md                                          -text
+training/poses/*.json                              -text
+training/reference_candidates/model_test/REPORT.md -text
+
+# Windows-only script types, if ever added, must be CRLF in the working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary - never touch.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.mp4  binary
+*.webm binary
+*.safetensors binary
+*.pth  binary
+*.ckpt binary
+*.onnx binary

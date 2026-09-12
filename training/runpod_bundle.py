@@ -224,7 +224,7 @@ def cmd_install(args):
     print()
     print(f"Paste into generate_character.py CHARACTERS['{trigger}']:")
     print(f'    "lora": {{"file": "{fname}", "trigger": "{trigger}", "base_family": "{base}",')
-    print(f'             "strength_model": 0.8, "strength_clip": 0.8, "faceid_weight": 0.7}},')
+    print('             "strength_model": 0.8, "strength_clip": 0.8, "faceid_weight": 0.7},')
 
 
 def main():
