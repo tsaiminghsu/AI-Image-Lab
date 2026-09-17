@@ -20,6 +20,7 @@ import threading
 import gradio as gr
 
 import caption_image
+import cloud_video
 import comfyui_client as client
 import generate_character as gc
 import pose_skeletons
@@ -46,13 +47,15 @@ def _show_usage_errors(fn):
     SystemExit is still caught alongside them: the CLI-only scripts this GUI reaches (SadTalker
     via talking_head, pose_skeletons) may still use it, and it derives from BaseException, so
     Gradio's Exception-only handling would let it escape and kill the worker task silently.
+
+    cloud_video.CloudJobFailed covers a remote job that failed, timed out or was cancelled.
     """
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (gc.UsageError, client.ComfyUIUnavailable, SystemExit) as exc:
+        except (gc.UsageError, client.ComfyUIUnavailable, cloud_video.CloudJobFailed, SystemExit) as exc:
             raise gr.Error(str(exc)) from exc
 
     return wrapper
@@ -532,6 +535,123 @@ def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_c
                        checkpoint=checkpoint, lora_strength=lora_strength)
 
 
+# --- ☁️ cloud video ---------------------------------------------------------------------------
+
+CLOUD_PROVIDER_CHOICES = [
+    ("RunPod（本專案自己的 worker，兩種工作都能跑）", "runpod"),
+    ("Replicate（託管模型，只能跑 Wan 類圖生影片）", "replicate"),
+]
+CLOUD_JOB_WAN = "Wan 2.2 圖生影片（第一幀 → 最長 5 秒 720p）"
+CLOUD_JOB_ANIMATEDIFF = "AnimateDiff 雲端高畫質（FaceID 鎖臉，解除 8GB 上限）"
+CLOUD_PRESETS = {
+    "直式 704×1280": dict(width=704, height=1280),
+    "橫式 1280×704": dict(width=1280, height=704),
+}
+CLOUD_PRESET_DEFAULT = "直式 704×1280"
+CLOUD_LENGTHS = {"短（約 2 秒）": 49, "中（約 3.4 秒）": 81, "長（約 5 秒）": 121}
+CLOUD_LENGTH_DEFAULT = "中（約 3.4 秒）"
+_CLOUD_CANCEL = {}   # Gradio session hash -> threading.Event for that session's running cloud job
+_CLOUD_CANCEL_LOCK = threading.Lock()
+
+
+def _cloud_reporter(progress):
+    """Cloud jobs have no step counter we can see, only elapsed time against a limit - so report that,
+    in the same (stage, current, total) shape _step_reporter uses."""
+    def report(label, elapsed, limit):
+        progress((elapsed, limit), desc=f"{label}（已 {elapsed} 秒／上限 {limit} 秒）")
+    return report
+
+
+def cloud_status_markdown():
+    settings = cloud_video.load_cloud_settings()
+    lines = [
+        "**雲端工作按 GPU 秒數計費，關掉瀏覽器不會自動停止——要中止請按「取消」。**",
+        f"- RunPod endpoint：`{settings['runpod']['endpoint_id'] or '未設定'}`",
+        f"- Replicate 模型：`{settings['replicate']['model'] or '未設定'}`",
+    ]
+    problems = cloud_video.config_status()
+    if problems:
+        lines.append("- 尚未完成的設定：" + "；".join(problems) + "（步驟見 README「雲端影片」）")
+    return "\n".join(lines)
+
+
+def save_cloud_config(endpoint_id, replicate_model):
+    cloud_video.save_cloud_settings(
+        {"runpod": {"endpoint_id": (endpoint_id or "").strip()},
+         "replicate": {"model": (replicate_model or "").strip()}}
+    )
+    return cloud_status_markdown()
+
+
+def cloud_anchor_for(character):
+    """First anchor of the picked character, as the cloud tab's first frame."""
+    if not character or character == NO_CHARACTER:
+        raise gr.Error("先選一個角色")
+    path = gc.picker_anchor_path(character)
+    if not path:
+        raise gr.Error(f"角色「{character}」還沒有 anchor 圖")
+    return path
+
+
+@_show_usage_errors
+def generate_cloud_video(provider, job_label, character, first_frame, prompt, tier, negative_prompt, seed,
+                         preset, length, timeout_s, request: gr.Request, progress=gr.Progress()):
+    """Submit one video job to RunPod or Replicate and wait for it.
+
+    Never calls _ensure_comfyui(): nothing here touches the local ComfyUI or GPU, which is also why
+    the button has its own concurrency id instead of "gpu" - a cloud job running for ten minutes
+    must not block local generations, and vice versa."""
+    job_type = "video_wan_i2v" if job_label == CLOUD_JOB_WAN else "video_animatediff"
+    trigger = None if character == NO_CHARACTER else character
+    if not first_frame and not (provider == "runpod" and trigger):
+        raise gr.Error("需要第一幀／臉部參考圖（上傳，或按「用角色的 anchor」「用圖片選擇生圖的結果」）")
+    prompt = (prompt or "").strip()
+    if job_type == "video_animatediff" and any(ord(c) > 127 for c in prompt):
+        # AnimateDiff's SD1.5 CLIP mostly ignores Chinese; Wan's umt5 reads it natively.
+        try:
+            prompt = translate_prompt.translate_to_english(prompt)
+        except RuntimeError as exc:
+            raise gr.Error(f"AnimateDiff 需要英文 prompt，自動翻譯失敗（{exc}）——請改打英文") from exc
+
+    if job_type == "video_wan_i2v":
+        params = dict(frames=CLOUD_LENGTHS.get(length, 81), fps=client.WAN_FPS, cfg=client.WAN_CFG,
+                      **CLOUD_PRESETS.get(preset, CLOUD_PRESETS[CLOUD_PRESET_DEFAULT]))
+    else:
+        params = dict(upscaleTo=1024)
+
+    event = threading.Event()
+    key = getattr(request, "session_hash", None) or "default"
+    with _CLOUD_CANCEL_LOCK:
+        _CLOUD_CANCEL[key] = event
+    try:
+        result = cloud_video.run_cloud_video(
+            provider, job_type, prompt=prompt, extra_negative=(negative_prompt or "").strip(), tier=tier,
+            trigger=trigger, image_path=first_frame, seed=int(seed), params=params,
+            out_dir=os.path.join(os.path.dirname(__file__), "reference_candidates", "videos", "cloud"),
+            max_wait_s=int(timeout_s), on_status=_cloud_reporter(progress), cancel_event=event,
+        )
+    finally:
+        with _CLOUD_CANCEL_LOCK:
+            if _CLOUD_CANCEL.get(key) is event:
+                del _CLOUD_CANCEL[key]
+    info = (f"**完成** ｜ {result.provider} 工作 `{result.job_id}` ｜ 總耗時 {result.elapsed_s} 秒"
+            + (f" ｜ 排隊 {result.queue_s:.0f} 秒" if result.queue_s is not None else "")
+            + (f" ｜ GPU 執行 {result.execution_s:.0f} 秒（計費依據）" if result.execution_s is not None else "")
+            + f"\n\n存到 `{result.path}`")
+    return result.path, info
+
+
+def cancel_cloud_video(request: gr.Request):
+    key = getattr(request, "session_hash", None) or "default"
+    with _CLOUD_CANCEL_LOCK:
+        event = _CLOUD_CANCEL.get(key)
+    if event is None:
+        gr.Info("目前沒有正在跑的雲端工作")
+        return
+    event.set()
+    gr.Info("已要求取消，下一次查詢狀態時會送出取消")
+
+
 with gr.Blocks(title="AI Image Lab") as demo:
     gr.Markdown("# AI Image Lab\n先確定 ComfyUI server 已經在跑（127.0.0.1:8188）。")
 
@@ -972,6 +1092,75 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 outputs=pick_output,
                 concurrency_id="gpu",
             )
+
+        with gr.Tab("☁️ 雲端影片"):
+            gr.Markdown(
+                "在雲端 GPU 上生成影片，不佔用本機這張 8GB 卡。**Wan 2.2 圖生影片**是新一代模型："
+                "拿一張角色圖當第一幀，生成動作自然的 720p 影片（沒有 FaceID，身分靠第一幀維持）。"
+                "**AnimateDiff 雲端高畫質**是本機同一套 FaceID 鎖臉流程，只是解除 8GB 的高清上限，"
+                "只能跑在 RunPod。所有 prompt 一樣會套用年齡保護與內容分級的負面詞。"
+            )
+            cloud_status = gr.Markdown(cloud_status_markdown())
+            with gr.Accordion("雲端設定（endpoint ID／模型；API 金鑰請用環境變數）", open=False):
+                _cloud_settings = cloud_video.load_cloud_settings()
+                cloud_endpoint = gr.Textbox(
+                    label="RunPod Serverless endpoint ID", value=_cloud_settings["runpod"]["endpoint_id"],
+                )
+                cloud_replicate_model = gr.Textbox(
+                    label="Replicate 模型（owner/name 或 owner/name:version；不符合安全條件的模型會被拒絕）",
+                    value=_cloud_settings["replicate"]["model"],
+                )
+                cloud_save_btn = gr.Button("儲存設定")
+            with gr.Row():
+                with gr.Column():
+                    cloud_provider = gr.Radio(CLOUD_PROVIDER_CHOICES, value="runpod", label="雲端平台")
+                    cloud_job = gr.Radio([CLOUD_JOB_WAN, CLOUD_JOB_ANIMATEDIFF], value=CLOUD_JOB_WAN,
+                                         label="工作類型")
+                    cloud_character = gr.Dropdown(CHARACTER_CHOICES, value=NO_CHARACTER,
+                                                  label="角色（選填，會加上角色外貌描述）")
+                    cloud_first_frame = gr.Image(
+                        label="第一幀／臉部參考圖（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath",
+                    )
+                    with gr.Row():
+                        cloud_use_anchor_btn = gr.Button("用角色的 anchor", size="sm")
+                        cloud_use_picker_btn = gr.Button("用「圖片選擇生圖」的結果", size="sm")
+                    cloud_prompt = gr.Textbox(
+                        label="Prompt：描述要發生的動作（Wan 看得懂中文；AnimateDiff 會自動翻成英文）", lines=3,
+                        placeholder="例如：她轉頭看向鏡頭微笑，頭髮被微風吹動",
+                    )
+                    cloud_negative = gr.Textbox(label="額外負面詞（選填，安全負面詞一定會加上）", lines=1)
+                    cloud_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
+                    with gr.Row():
+                        cloud_seed = gr.Number(value=7001, label="Seed", precision=0)
+                        cloud_timeout = gr.Slider(300, 2400, value=1800, step=60,
+                                                  label="最長等待秒數（超過會自動取消雲端工作）")
+                    with gr.Row():
+                        cloud_preset = gr.Radio(list(CLOUD_PRESETS), value=CLOUD_PRESET_DEFAULT,
+                                                label="畫面方向（只影響 Wan；AnimateDiff 固定 512² 放大到 1024）")
+                        cloud_length = gr.Radio(list(CLOUD_LENGTHS), value=CLOUD_LENGTH_DEFAULT,
+                                                label="長度（只影響 Wan；AnimateDiff 固定 16 幀）")
+                    with gr.Row():
+                        cloud_btn = gr.Button("在雲端生成", variant="primary")
+                        cloud_cancel_btn = gr.Button("取消雲端工作", variant="stop")
+                with gr.Column():
+                    cloud_output = gr.Video(label="結果")
+                    cloud_info = gr.Markdown()
+
+            cloud_save_btn.click(save_cloud_config, inputs=[cloud_endpoint, cloud_replicate_model],
+                                 outputs=cloud_status)
+            cloud_use_anchor_btn.click(cloud_anchor_for, inputs=cloud_character, outputs=cloud_first_frame)
+            cloud_use_picker_btn.click(lambda image: image, inputs=pick_output, outputs=cloud_first_frame)
+            cloud_btn.click(
+                generate_cloud_video,
+                inputs=[cloud_provider, cloud_job, cloud_character, cloud_first_frame, cloud_prompt, cloud_tier,
+                        cloud_negative, cloud_seed, cloud_preset, cloud_length, cloud_timeout],
+                outputs=[cloud_output, cloud_info],
+                # Not "gpu": a cloud job doesn't touch the local card, and a 10-minute remote run must
+                # not queue local generations behind it. One cloud job at a time keeps spend bounded.
+                concurrency_id="cloud",
+                concurrency_limit=1,
+            )
+            cloud_cancel_btn.click(cancel_cloud_video, inputs=None, outputs=None)
 
 if __name__ == "__main__":
     # 7861, not Gradio's default 7860 - kohya_ss's own training GUI (kohya_gui.py, this repo's parent

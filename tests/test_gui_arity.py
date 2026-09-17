@@ -41,6 +41,7 @@ GENERATION_HANDLERS = {
     "generate_video_svd",
     "generate_gif",
     "generate_from_picker",
+    "generate_cloud_video",
 }
 
 
@@ -239,14 +240,15 @@ def test_generation_handlers_are_covered():
 # so they're safe to import for real here and use `inspect.signature` on the target side,
 # while the call side (gui.py) still has to stay AST-only.
 
+import cloud_video as cloud_module  # noqa: E402
 import comfyui_client as client_module  # noqa: E402
 import generate_character as gc_module  # noqa: E402
 
-_ALIAS_MODULES = {"gc": gc_module, "client": client_module}
+_ALIAS_MODULES = {"gc": gc_module, "client": client_module, "cloud_video": cloud_module}
 
 
 def _collect_kwarg_calls():
-    """Every `gc.<fn>(...)`/`client.<fn>(...)` call in gui.py that passes keyword args,
+    """Every `gc.<fn>(...)`/`client.<fn>(...)`/`cloud_video.<fn>(...)` call in gui.py that passes keyword args,
     as (test id, fn name, sorted kwarg names, target module), skipping calls that splat
     `**kwargs` (name set not visible statically) and skipping targets that themselves
     declare `**kwargs` (any keyword is legal for them)."""
