@@ -143,6 +143,10 @@ template，可以照 README 現有的安裝流程幾乎原封不動搬過去。
   `image_hq`、`video_wan_i2v`（Wan 2.2 圖生影片）、`video_animatediff`（解除 8GB 高清上限）
   三種工作；本機用 GUI「☁️ 雲端影片」分頁或 `training/cloud_video.py` 送出。沒工作時不計費，
   不會有「pod 忘了關」的問題。設定步驟見 README「雲端影片（RunPod／Replicate）」。
+  另外還有第四種 `workflow` 工作：本機把**已經組好的完整 workflow** 送過去執行，所以「自訂生圖」
+  與 CLI 的所有靜態圖流程（FaceID、姿勢骨架、Z-Image、SD1.5、GIF）都能改在雲端跑，不必逐功能
+  寫 worker 程式。用 GUI「自訂生圖」的雲端核取方塊或 `generate_character.py --backend runpod`
+  開啟，見 README「雲端生圖（同一套 workflow 送到 RunPod）」。
 - **手動開 Pod**：ComfyUI 位址由環境變數 `COMFYUI_URL` 決定（預設
   `http://127.0.0.1:8188`），設成上面那個 `https://<POD_ID>-8188.proxy.runpod.net` 後，
   `generate_character.py`／`gui.py`／`image_api.py` 都不用改——整條 pipeline 本來就是透過 HTTP

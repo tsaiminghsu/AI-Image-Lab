@@ -5,6 +5,51 @@
 
 ## 2026-09-17
 
+### 雲端生圖：把本機組好的完整 workflow 送到 RunPod 執行
+
+- **問題**：雲端影片已經可用，但「自訂生圖」與 CLI 的靜態圖**沒有任何上雲的入口**。worker 雖然有
+  `image_hq`，但它必須有臉圖、沒有姿勢骨架、checkpoint 綁死在 endpoint，而且 Z-Image、SD1.5、GIF
+  都沒有。照高階參數的做法，每個功能都要在 worker 再寫一份，跟本機逐漸漂移。
+- **解法**：在既有架構上加第四種工作 `workflow`，**不動**另外三種。本機照常把完整 workflow 組好
+  （prompt、安全負面詞、FaceID、骨架、精修全部在本機），整包送去執行。worker 用它自己的
+  `_submit_and_wait` 跑，所以量化版選擇、cfg 下限、`/free` 重置都在 GPU 旁邊發生。只要 volume 上有
+  模型，骨架、Z-Image、SD1.5、GIF 就自動能上雲，不需要逐功能寫 worker 程式。
+- **切換點只有兩個**：`comfyui_client._submit_and_wait` 與 `upload_reference_image`，也就是所有流程
+  必經之處。優先序：GUI 勾選（執行緒範圍）> CLI `--backend`（行程範圍）> `GENERATION_BACKEND` >
+  預設本機。偵測到 `RUNPOD_POD_ID` 時拒絕開雲端模式，避免 worker 自己再把工作送回 RunPod。
+- **worker 不能直接相信收到的圖**，所以新增 `training/workflow_safety.py`，本機送出前與 worker 執行前
+  各跑一次：節點類別只能是 repo 模板用到的（擋掉 `SamplerCustom*` 這類可能跳過負面詞的取樣器）；每個
+  `negative` 輸入**沿連線往回追**，穿過 ControlNet 等傳遞節點，源頭必須是含年齡保護詞的文字
+  （SVD 的圖像條件是唯一例外，它本來就沒有文字編碼器）。先盤點過全部 12 個模板的負面條件來源，
+  只有三種，規則剛好涵蓋。
+- **參考圖**：雲端沒有共用硬碟，`upload_reference_image` 在雲端模式改成暫存 bytes、以內容雜湊命名，
+  跟著引用它的工作一起送。雜湊命名讓 GIF「上傳一次、送出 N 幀」在無狀態的 worker 之間也正確。
+- **重用既有程式**：RunPod 的送出、輪詢、取消、逾時、設定檔、送出不重試等全部沿用 `cloud_video.py`。
+  唯一的修改是 `RunPodBackend.result` 的副檔名改由 worker 回傳的 `outputKey` 決定（原本寫死 mp4），
+  只接受 png／mp4／webm。
+- **CLI 隱藏問題**：`generate_character.py` 直接執行時是 `__main__`，雲端模組延遲匯入的會是**另一份**
+  `generate_character`，兩份的 `UsageError` 不是同一個類別，錯誤會變成完整 traceback。進入點先把自己
+  註冊成 `generate_character`，並補上 `CloudJobFailed` 轉一行錯誤。實測：沒設定時 exit 1、只印一行。
+- **驗證**：
+  - `check.ps1` 全綠，1269 passed（原 1205）。`test_workflow_safety.py` 用**真實建構器**產出 15 種圖
+    （含骨架走 ControlNet、AnimateDiff 加 RIFE、Wan、SVD）全部通過，並逐一證明各種繞過方式會被擋；
+    `test_cloud_workflow.py` 涵蓋雲端模式完全不碰本機 ComfyUI、送出的圖帶年齡詞且 cfg ≥ 1.5、不安全
+    或缺圖或過大的請求在送出前就擋下、逾時會取消、worker 錯誤原文保留（AnimateDiff OOM 重試靠比對它）。
+  - **模擬雲端往返**：本機組出真正要送的請求（HQ + FaceID + 姿勢骨架，2.15 MB），經 JSON 序列化後
+    原封不動交給 worker 的程式碼，在本機 ComfyUI 產出 704×1024 的圖，圖片改名、LoadImage 重寫、
+    骨架與輸出回收都正確。
+  - GUI 實機點過：勾選雲端、沒設定時在啟動本機 ComfyUI 之前就提示缺 RUNPOD_API_KEY 與 endpoint ID。
+  - **尚未在真正的雲端 GPU 上跑過**，冷啟動、每張耗時與成本都沒有實測數字。
+- **限制**：雲端生圖仍佔 `concurrency_id="gpu"` 這條排隊；進度只有雲端狀態文字；本機 8GB 的限制常數
+  （高清 1.5 倍等）照樣套用，大卡沒有自動放寬。
+- **附帶發現，這次沒有修**：
+  - 「自訂生圖」與「批次生成 GIF」的 Checkpoint 下拉選單預設值 `cyberrealistic_pony` 不在選項清單裡
+    （清單裡是 `cyberrealistic_pony (預設 - Pony 系寫實)`），gradio 6.24 下不動下拉選單直接按生成會被擋。
+    這是先前就存在的問題，「圖片選擇生圖」分頁寫法正確。
+  - **`safe` 分級會漏出泳裝**：模擬往返那張圖分級是 `safe`、prompt 沒提服裝，cyberrealistic_pony 畫出
+    高衩泳裝。`SAFE_SAFETY_NEGATIVE` 只擋 `nsfw, nude, naked, explicit, sexual content`，沒有擋泳裝、
+    內衣、暴露服裝，而這些照定義屬於 `suggestive`。改全域負面詞會影響所有生成，留待決定。
+
 ### 雲端影片：RunPod 跑 Wan 2.2 圖生影片／AnimateDiff，Replicate 跑託管模型 `28de7e0` `9929671`
 
 - **問題**：本機 8GB 卡把影片品質卡死在兩處——AnimateDiff 二段高清上限 768²、只能用 SD1.5 motion

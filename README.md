@@ -1946,6 +1946,48 @@ ComfyUI\.venv\Scripts\python.exe training\validate_workflow_nodes.py
 
 需要本機 ComfyUI 在執行。
 
+### 雲端生圖（同一套 workflow 送到 RunPod）
+
+「自訂生圖」分頁與 CLI 的靜態圖流程也能改在 RunPod 上跑。做法跟雲端影片不同：本機**照常把完整的
+workflow 組好**（prompt、安全負面詞、FaceID、姿勢骨架、精修、Pony 標籤全部在本機處理），再整包送到
+worker 的 `workflow` 工作執行。所以骨架、Z-Image、SD1.5、GIF 都不需要各自寫一份雲端版本；只要
+worker 映像檔有對應節點、volume 上有對應模型就能跑。
+
+**開啟方式**（設定跟雲端影片共用：環境變數 `RUNPOD_API_KEY` ＋ `training/settings/cloud.json` 的
+endpoint ID）：
+
+- GUI：「自訂生圖」勾選「用 RunPod 雲端 GPU 生成」
+- CLI：`--backend runpod` 放在子指令**前面**
+- 環境變數：`GENERATION_BACKEND=runpod`（優先序：GUI 勾選 > `--backend` > 環境變數 > 預設本機）
+
+```powershell
+ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod custom --prompt "portrait photo" --character mei --anchor training\reference_candidates\mei\anchor_seed3001.png --pose standing_straight
+```
+
+**安全檢查在兩邊各做一次**（`training/workflow_safety.py`）：本機送出前先檢查，不合格的圖不會送出、
+也不會計費；worker 執行前再檢查一次，所以拿到 endpoint 金鑰的人也無法自己送一份 JSON 繞過。
+
+- 節點類別只能是本 repo 模板裡用到的（再加上程式會注入的幾個），擋掉可能跳過負面詞的取樣器
+- 每個負面條件都**沿著節點連線往回追**，源頭必須是含年齡保護詞的文字；不是靠固定節點編號，
+  所以模板重新匯出、節點重編號也不會失效
+- cfg 下限 1.5 由 worker 自己的 `_submit_and_wait` 再套一次
+
+**參考圖**：雲端 worker 跟本機沒有共用硬碟，anchor 與骨架圖會以內容雜湊命名、跟著工作一起送出。
+整個請求要小於 RunPod `/run` 的約 10 MB 上限，超過會在送出前就擋下。
+
+**模型要自己放上 volume**：workflow 用到的每個檔案（checkpoint、角色 LoRA、ControlNet、Z-Image 三個檔…）
+都必須在 worker 的 volume 上；本機有、雲端沒有時，會把 ComfyUI 的原文錯誤傳回來。本機「模型版本」
+（量化版）的設定不影響雲端，雲端一律用完整版。
+
+**目前的限制**：
+
+- **還沒在真正的雲端 GPU 上跑過**，冷啟動、每張耗時與成本都沒有實測。已做的驗證是在本機把要送出的
+  請求經過 JSON 序列化，再原封不動交給 worker 程式碼在本機 ComfyUI 上執行（HQ + FaceID + 姿勢骨架，
+  請求 2.15 MB，成功產出 704×1024 的圖）
+- 雲端生圖跟本機生成共用同一條排隊（`concurrency_id="gpu"`），雲端工作進行中本機其他生成要等
+- 進度只顯示雲端狀態文字（排隊中／冷啟動／雲端步數），沒有本機那種逐步進度條
+- 本機 8GB 卡的限制常數（例如高清 1.5 倍）仍然照樣套用，大卡目前沒有自動放寬
+
 ## 資料夾結構
 
 ```

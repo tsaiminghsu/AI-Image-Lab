@@ -28,7 +28,7 @@ GENERATE_CHARACTER_PATH = os.path.join(
 # Changing any set here means changing the real CLI: update only after confirming that's
 # the intended, signed-off change.
 FROZEN_CLI = {
-    "__top__": {"--variant"},
+    "__top__": {"--variant", "--backend"},
     "list-characters": set(),
     "anchor": {"--character", "--out", "--seeds"},
     "variations": {"--character", "--anchor", "--out", "--count", "--ip-adapter-weight", "--seed"},

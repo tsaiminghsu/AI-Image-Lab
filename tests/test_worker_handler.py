@@ -255,3 +255,136 @@ def test_make_s3_passes_the_endpoint_url(monkeypatch):
     assert handler_mod.make_s3() == "client"
     assert captured["kwargs"]["endpoint_url"] == "https://acct.r2.cloudflarestorage.com"
     assert captured["config"] == {"signature_version": "s3v4"}
+
+
+# --- jobType "workflow": a graph built locally, run as-is after the worker re-checks it ----------
+
+
+@pytest.fixture
+def built_hq(captured_submit):
+    """A real HQ graph with a FaceID anchor and a pose skeleton, exactly as the local builder makes it."""
+    client.submit_generation_hq(
+        prompt="a portrait",
+        negative_prompt=f"lowres, {gc.AGE_SAFETY_NEGATIVE}",
+        seed=1,
+        filename_prefix="stem",
+        ip_adapter_image_filename="anchor.png",
+        pose_image_filename="pose.png",
+        pose_is_skeleton=True,
+    )
+    return captured_submit[-1]["wf"]
+
+
+def _images(*names):
+    return {name: base64.b64encode(PNG_BYTES).decode() for name in names}
+
+
+def test_workflow_job_needs_no_prompt_and_reports_png(built_hq):
+    spec = jobs.parse_job(
+        {"jobType": "workflow", "workflow": built_hq, "inputImages": _images("anchor.png", "pose.png")},
+        worker_checkpoint="cyberrealistic_pony",
+    )
+    assert spec["job_type"] == "workflow"
+    assert (spec["ext"], spec["content_type"]) == ("png", "image/png")
+    assert spec["output_node_id"] == "9"
+    assert spec["timeout"] == client.POLL_TIMEOUT_SECONDS
+
+
+def test_workflow_job_refuses_a_graph_without_the_safety_negatives(built_hq):
+    for node in built_hq.values():
+        if node["class_type"] == "CLIPTextEncode" and gc.AGE_SAFETY_NEGATIVE in node["inputs"]["text"]:
+            node["inputs"]["text"] = "lowres"
+    with pytest.raises(jobs.JobInputError, match="workflow rejected"):
+        jobs.parse_job(
+            {"jobType": "workflow", "workflow": built_hq, "inputImages": _images("anchor.png", "pose.png")},
+            worker_checkpoint="cyberrealistic_pony",
+        )
+
+
+def test_workflow_job_refuses_images_it_was_not_sent(built_hq):
+    with pytest.raises(jobs.JobInputError, match="not sent"):
+        jobs.parse_job(
+            {"jobType": "workflow", "workflow": built_hq, "inputImages": _images("anchor.png")},
+            worker_checkpoint="cyberrealistic_pony",
+        )
+
+
+@pytest.mark.parametrize("name", ["../evil.png", "a b.png", "x.gif", "no_extension"])
+def test_workflow_job_refuses_unsafe_image_names(built_hq, name):
+    images = _images("anchor.png", "pose.png")
+    images[name] = images["pose.png"]
+    with pytest.raises(jobs.JobInputError, match="invalid input image name"):
+        jobs.parse_job(
+            {"jobType": "workflow", "workflow": built_hq, "inputImages": images},
+            worker_checkpoint="cyberrealistic_pony",
+        )
+
+
+@pytest.mark.parametrize(
+    ("asked", "expected"), [(1, jobs.WORKFLOW_TIMEOUT_RANGE[0]), (10**6, jobs.WORKFLOW_TIMEOUT_RANGE[1])]
+)
+def test_workflow_job_clamps_the_timeout(built_hq, asked, expected):
+    spec = jobs.parse_job(
+        {
+            "jobType": "workflow",
+            "workflow": built_hq,
+            "timeout": asked,
+            "inputImages": _images("anchor.png", "pose.png"),
+        },
+        worker_checkpoint="cyberrealistic_pony",
+    )
+    assert spec["timeout"] == expected
+
+
+def test_workflow_job_uploads_renames_and_runs_the_graph_locally(monkeypatch, tmp_path, built_hq):
+    spec = jobs.parse_job(
+        {"jobType": "workflow", "workflow": built_hq, "timeout": 700, "inputImages": _images("anchor.png", "pose.png")},
+        worker_checkpoint="cyberrealistic_pony",
+    )
+    uploaded, submitted = [], []
+    monkeypatch.setattr(
+        client, "upload_reference_image", lambda path: uploaded.append(path) or f"srv_{len(uploaded)}.png"
+    )
+    out_png = tmp_path / "out.png"
+    out_png.write_bytes(PNG_BYTES)
+
+    def fake_submit(wf, output_node_id, timeout_seconds):
+        submitted.append((wf, output_node_id, timeout_seconds))
+        return str(out_png)
+
+    monkeypatch.setattr(client, "_submit_and_wait", fake_submit)
+    tmp_files = []
+    result = jobs.run_job(spec, job_id="j", anchor_dir=str(tmp_path), out_dir=str(tmp_path), tmp_files=tmp_files)
+
+    assert len(uploaded) == 2
+    wf, node, timeout = submitted[0]
+    assert (node, timeout) == ("9", 700)
+    assert sorted(n["inputs"]["image"] for n in wf.values() if n["class_type"] == "LoadImage") == [
+        "srv_1.png",
+        "srv_2.png",
+    ]
+    # the spec's own graph is left untouched, so a retry would start from the same input
+    assert sorted(ws_names(spec["workflow"])) == ["anchor.png", "pose.png"]
+    assert result["localPath"] == str(out_png) and result["ext"] == "png"
+    assert str(out_png) in tmp_files
+
+
+def ws_names(wf):
+    return [n["inputs"]["image"] for n in wf.values() if n["class_type"] == "LoadImage"]
+
+
+def test_handler_uploads_a_workflow_result_as_png(monkeypatch, tmp_path, built_hq):
+    monkeypatch.setattr(handler_mod, "S3_BUCKET", "bucket")
+    out_png = tmp_path / "out.png"
+    out_png.write_bytes(PNG_BYTES)
+    monkeypatch.setattr(client, "upload_reference_image", lambda path: "srv.png")
+    monkeypatch.setattr(client, "_submit_and_wait", lambda wf, node, timeout: str(out_png))
+    s3 = FakeS3()
+    job = {
+        "id": "wf1",
+        "input": {"jobType": "workflow", "workflow": built_hq, "inputImages": _images("anchor.png", "pose.png")},
+    }
+    out = handler_mod.handler(job, s3_factory=lambda: s3)
+    assert "error" not in out, out
+    assert out["outputKey"] == "generated/wf1.png"
+    assert s3.uploads[0][3] == {"ContentType": "image/png"}

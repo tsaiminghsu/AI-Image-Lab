@@ -13,20 +13,35 @@ Input schema (camelCase, matching web/amplify/functions/generate/providers/runpo
   video_wan_i2v:     model, width, height, frames, fps, steps, cfg
   video_animatediff: frames, fps, width, height, hires, hiresScale, upscaleTo, interp,
                      useFacedetailer, checkpoint, motionScale, faceidV2Weight
+  workflow:          workflow, outputNodeId, inputImages {name: base64}, timeout
+                     (none of the common fields: the graph was composed by the local
+                     generate_character code and arrives finished - see training/cloud_workflow.py)
+
+The workflow job is the odd one out on purpose. The other three compose their prompt here; a workflow
+job's prompt is already inside the graph, so instead of composing it the worker VERIFIES it with
+training/workflow_safety.py (node allowlist, every negative traced to the safety text) and lets its
+own _submit_and_wait re-apply the cfg floor.
 """
 
 import base64
 import binascii
+import copy
 import glob
 import io
 import os
 import random
+import re
 import tempfile
 
 import comfyui_client as client
 import generate_character as gc
+import workflow_safety
 
-JOB_TYPES = ("image_hq", "video_wan_i2v", "video_animatediff")
+JOB_TYPES = ("image_hq", "video_wan_i2v", "video_animatediff", "workflow")
+WORKER_MAX_TIMEOUT_SECONDS = int(os.environ.get("WORKER_MAX_TIMEOUT", "1800"))
+WORKFLOW_TIMEOUT_RANGE = (60, WORKER_MAX_TIMEOUT_SECONDS)
+# cloud_workflow.stage_upload names: <16 hex>_<safe stem>.png|.jpg. Anything else is not ours.
+_INPUT_IMAGE_NAME = re.compile(r"^[A-Za-z0-9._-]{1,128}\.(png|jpe?g)$")
 
 # aspectRatio -> final (width, height); submit_generation_hq derives the lower first-pass size.
 ASPECT_SIZES = {
@@ -88,6 +103,8 @@ def parse_job(inp, *, worker_checkpoint):
     job_type = inp.get("jobType") or "image_hq"
     if job_type not in JOB_TYPES:
         raise JobInputError(f"unknown jobType {job_type!r}; choices: {list(JOB_TYPES)}")
+    if job_type == "workflow":
+        return _parse_workflow_job(inp)
 
     prompt = (inp.get("prompt") or "").strip()
     if not prompt:
@@ -171,7 +188,60 @@ def parse_job(inp, *, worker_checkpoint):
     return spec
 
 
-def decode_reference(b64, job_id, *, max_bytes=MAX_REFERENCE_BYTES):
+def _parse_workflow_job(inp):
+    wf = inp.get("workflow")
+    output_node_id = str(inp.get("outputNodeId") or "9")
+    try:
+        workflow_safety.validate_graph(wf, output_node_id)
+        workflow_safety.check_negative_safety(wf, required=gc.AGE_SAFETY_NEGATIVE)
+    except workflow_safety.WorkflowRejected as exc:
+        raise JobInputError(f"workflow rejected: {exc}") from exc
+
+    images = inp.get("inputImages") or {}
+    if not isinstance(images, dict):
+        raise JobInputError("inputImages must be an object of {filename: base64}")
+    total_b64 = 0
+    for name, b64 in images.items():
+        if not isinstance(name, str) or not _INPUT_IMAGE_NAME.match(name):
+            raise JobInputError(f"invalid input image name {name!r}")
+        if not isinstance(b64, str):
+            raise JobInputError(f"input image {name} must be a base64 string")
+        total_b64 += len(b64)
+    # Checked on the encoded length so an oversized job is refused before anything is decoded.
+    if total_b64 * 3 // 4 > MAX_REFERENCE_BYTES:
+        raise JobInputError(f"input images too large (>{MAX_REFERENCE_BYTES} bytes decoded)")
+    # The worker has no pose library or anchors for these - every image the graph loads must arrive.
+    missing = [n for n in workflow_safety.load_image_names(wf) if n not in images]
+    if missing:
+        raise JobInputError(f"workflow loads images that were not sent: {missing}")
+
+    timeout = _get_int(inp, "timeout", client.POLL_TIMEOUT_SECONDS, 1, 10**7)
+    timeout = max(WORKFLOW_TIMEOUT_RANGE[0], min(timeout, WORKFLOW_TIMEOUT_RANGE[1]))
+    ext, content_type = workflow_safety.output_kind(wf, output_node_id)
+    return {
+        "job_type": "workflow", "workflow": wf, "output_node_id": output_node_id, "input_images": images,
+        "timeout": timeout, "ext": ext, "content_type": content_type,
+    }
+
+
+def _run_workflow_job(spec, *, job_id, tmp_files):
+    wf = copy.deepcopy(spec["workflow"])
+    renamed = {}
+    for name, b64 in spec["input_images"].items():
+        path = decode_reference(b64, job_id, field=f"inputImages[{name}]")
+        tmp_files.append(path)
+        renamed[name] = client.upload_reference_image(path)
+    for node in wf.values():
+        if node["class_type"] == "LoadImage" and node["inputs"].get("image") in renamed:
+            node["inputs"]["image"] = renamed[node["inputs"]["image"]]
+    # This _submit_and_wait is the worker's own: model variants, the cfg floor and the /free resets
+    # all run here, next to the GPU they are about.
+    path = client._submit_and_wait(wf, spec["output_node_id"], spec["timeout"])
+    tmp_files.append(path)
+    return {"jobType": "workflow", "localPath": path, "contentType": spec["content_type"], "ext": spec["ext"]}
+
+
+def decode_reference(b64, job_id, *, max_bytes=MAX_REFERENCE_BYTES, field="referenceImageBase64"):
     """Decode a base64 reference image, verify it really is a PNG/JPEG (never trust a declared content
     type), and write it to a tempfile. Returns the path, or raises JobInputError.
 
@@ -180,7 +250,7 @@ def decode_reference(b64, job_id, *, max_bytes=MAX_REFERENCE_BYTES):
     try:
         raw = base64.b64decode(b64, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise JobInputError(f"referenceImageBase64 is not valid base64: {exc}") from exc
+        raise JobInputError(f"{field} is not valid base64: {exc}") from exc
     if len(raw) > max_bytes:
         raise JobInputError(f"reference image too large ({len(raw)} bytes > {max_bytes})")
     if raw.startswith(_PNG_MAGIC):
@@ -197,7 +267,7 @@ def decode_reference(b64, job_id, *, max_bytes=MAX_REFERENCE_BYTES):
         try:
             Image.open(io.BytesIO(raw)).verify()
         except Exception as exc:
-            raise JobInputError(f"referenceImageBase64 is not a decodable image: {exc}") from exc
+            raise JobInputError(f"{field} is not a decodable image: {exc}") from exc
     fd, path = tempfile.mkstemp(prefix=f"ref_{job_id}_", suffix=suffix)
     with os.fdopen(fd, "wb") as f:
         f.write(raw)
@@ -218,6 +288,8 @@ def anchor_for_character(character_id, anchor_dir):
 def run_job(spec, *, job_id, anchor_dir, out_dir, tmp_files):
     """Generate what `spec` describes. Temp files it creates are appended to tmp_files (the caller
     deletes them). Returns {"localPath", "contentType", "ext", "seed", "width", "height", ...}."""
+    if spec["job_type"] == "workflow":
+        return _run_workflow_job(spec, job_id=job_id, tmp_files=tmp_files)
     if spec["reference_b64"]:
         ref_path = decode_reference(spec["reference_b64"], job_id)
         tmp_files.append(ref_path)

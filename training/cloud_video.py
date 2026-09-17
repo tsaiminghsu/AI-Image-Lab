@@ -408,7 +408,11 @@ class RunPodBackend:
         url = output.get("outputUrl") if isinstance(output, dict) else None
         if not url:
             raise CloudJobFailed(f"RunPod 工作完成但沒有輸出連結：{output}", provider=self.name, detail=output)
-        path = _download(self.session, url, os.path.join(dest_dir, f"{stem}.mp4"))
+        # The worker keys the upload as generated/<job>.<ext>; video jobs give mp4, workflow jobs can
+        # also give png or webm. Only a known extension is trusted - it becomes part of a local path.
+        ext = os.path.splitext(str(output.get("outputKey") or ""))[1].lower().lstrip(".")
+        ext = ext if ext in ("mp4", "png", "webm") else "mp4"
+        path = _download(self.session, url, os.path.join(dest_dir, f"{stem}.{ext}"))
         queue = data.get("delayTime")
         execution = data.get("executionTime")
         return path, (queue / 1000.0 if queue else None), (execution / 1000.0 if execution else None)

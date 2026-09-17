@@ -456,6 +456,10 @@ def has_node(class_name: str) -> bool:
     """True if the running ComfyUI server knows this node class - used to fail fast with an
     install hint when an optional custom node pack (e.g. RIFE frame interpolation) is missing,
     instead of a raw workflow-validation error."""
+    if backend() == "runpod":
+        # The local server says nothing about the worker. The worker image installs every node the
+        # templates use; a genuinely missing one comes back as the job's error instead.
+        return True
     try:
         r = requests.get(f"{COMFYUI_URL}/object_info/{requests.utils.quote(class_name)}", timeout=10)
         return r.status_code == 200 and bool(r.json())
@@ -809,6 +813,8 @@ def log_gpu_memory(stage: str):
     a finished render over a telemetry call. nan rather than 0 so benchmark.py's arithmetic
     comes out visibly broken instead of quietly reporting a plausible-looking zero.
     """
+    if backend() == "runpod":
+        return float("nan"), float("nan")   # the local card is not the one doing the work
     try:
         r = requests.get(f"{COMFYUI_URL}/system_stats", timeout=10)
         r.raise_for_status()
@@ -825,7 +831,14 @@ def log_gpu_memory(stage: str):
 
 def upload_reference_image(local_path: str) -> str:
     """Upload a face-reference image into ComfyUI's input/ dir. Returns the
-    filename to use as the LoadImage node's `image` input."""
+    filename to use as the LoadImage node's `image` input.
+
+    With the runpod backend nothing is uploaded here: the bytes are staged and shipped inside the
+    job that references them, since a serverless worker shares no disk with this machine."""
+    if backend() == "runpod":
+        import cloud_workflow
+
+        return cloud_workflow.stage_upload(local_path)
     filename = os.path.basename(local_path)
 
     def attempt():
@@ -1972,6 +1985,51 @@ _STAGE_LABELS = {
 _progress_local = threading.local()
 
 
+# --- generation backend -------------------------------------------------------------------
+# "local" runs the workflow on the ComfyUI at COMFYUI_URL, as always. "runpod" sends the SAME
+# fully-built workflow to this repo's RunPod worker (worker/jobs.py, jobType "workflow") instead,
+# so every local feature runs on a bigger card without a per-feature copy in the worker. The
+# switch lives here because _submit_and_wait and upload_reference_image are the only two places
+# every flow passes through.
+BACKEND_CHOICES = ("local", "runpod")
+_backend_local = threading.local()
+_backend_override = None
+
+
+def set_backend_override(name):
+    """Process-wide backend (the CLI's --backend). None restores env/default resolution."""
+    global _backend_override
+    if name is not None and name not in BACKEND_CHOICES:
+        raise ValueError(f"unknown backend {name!r}; choices: {list(BACKEND_CHOICES)}")
+    _backend_override = name
+
+
+@contextlib.contextmanager
+def backend_scope(name):
+    """Backend for generations started in THIS thread (the GUI's per-request cloud toggle).
+    Thread-local for the same reason as progress_reporter: each Gradio request is its own thread."""
+    if name not in BACKEND_CHOICES:
+        raise ValueError(f"unknown backend {name!r}; choices: {list(BACKEND_CHOICES)}")
+    previous = getattr(_backend_local, "name", None)
+    _backend_local.name = name
+    try:
+        yield
+    finally:
+        _backend_local.name = previous
+
+
+def backend():
+    """Resolved backend: thread scope > process override > env GENERATION_BACKEND > "local"."""
+    name = getattr(_backend_local, "name", None) or _backend_override or os.environ.get("GENERATION_BACKEND") or "local"
+    if name not in BACKEND_CHOICES:
+        raise ValueError(f"GENERATION_BACKEND={name!r} is not one of {list(BACKEND_CHOICES)}")
+    # The worker imports this module too. Inside a RunPod container a "runpod" backend would make
+    # the worker submit its own job back to RunPod instead of running it - refuse outright.
+    if name == "runpod" and os.environ.get("RUNPOD_POD_ID"):
+        raise RuntimeError("the runpod backend cannot be used inside a RunPod worker (RUNPOD_POD_ID is set)")
+    return name
+
+
 def _stage_labeller(wf: dict):
     """Returns node_id -> user-facing stage name, resolved from the workflow's own class_type."""
     def label(node_id):
@@ -2082,6 +2140,13 @@ class _StepProgressListener:
 def _submit_and_wait(wf: dict, output_node_id: str = "9", timeout_seconds: int = POLL_TIMEOUT_SECONDS,
                      client_id: str = None) -> str:
     callback = getattr(_progress_local, "callback", None)
+    if backend() == "runpod":
+        # Before the lock and the websocket listener: neither applies to a remote job, and the
+        # model-variant / /free steps below belong next to the remote GPU, where the worker's own
+        # _submit_and_wait runs them. Imported lazily - cloud_workflow imports this module.
+        import cloud_workflow
+
+        return cloud_workflow.submit_and_wait(wf, output_node_id, timeout_seconds, progress=callback)
     listener = None
     if callback is not None:
         # ComfyUI only sends /ws messages to the client_id that submitted the prompt, so a
@@ -2161,6 +2226,19 @@ def _format_execution_error(status: dict) -> str:
     return str(status)
 
 
+def raw_output_dir() -> str:
+    """Where a finished generation lands before its caller moves it. Shared by the local download
+    and the runpod backend, so every caller's shutil.move works the same for both. Overridable so
+    the RunPod worker can write to a tempdir instead of the repo's outputs/ tree (which doesn't
+    exist in the container)."""
+    out_dir = os.environ.get(
+        "COMFYUI_RAW_OUTPUT_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "outputs", "_comfyui_raw"),
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir
+
+
 def _download_output(image_info: dict) -> str:
     params = {
         "filename": image_info["filename"],
@@ -2177,13 +2255,7 @@ def _download_output(image_info: dict) -> str:
         return r
 
     r = _http_with_retry(attempt, f"下載輸出檔 {image_info['filename']}")
-    # Overridable so the RunPod worker can write to a tempdir instead of the
-    # repo's outputs/ tree (which doesn't exist in the container).
-    out_dir = os.environ.get(
-        "COMFYUI_RAW_OUTPUT_DIR",
-        os.path.join(os.path.dirname(__file__), "..", "outputs", "_comfyui_raw"),
-    )
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = raw_output_dir()
     # basename: the filename comes back from ComfyUI's own response, but it is still untrusted
     # input being joined into a local path - a subfolder or traversal component in it would
     # write outside out_dir.

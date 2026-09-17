@@ -22,6 +22,7 @@ import glob
 import os
 import random
 import shutil
+import sys
 from types import SimpleNamespace
 
 import comfyui_client as client
@@ -626,7 +627,9 @@ def _run_hq(full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose
         loradef = get_character(trigger).get("lora")
         if loradef:
             fname = loradef["file"]
-            if os.path.isfile(os.path.join(COMFYUI_LORAS_DIR, fname)):
+            # The local loras folder says nothing about a cloud worker's volume. Trust the profile
+            # there; a LoRA the worker lacks fails its job with ComfyUI's own "not in list" error.
+            if client.backend() == "runpod" or os.path.isfile(os.path.join(COMFYUI_LORAS_DIR, fname)):
                 character_lora = fname
                 if resolved_lora_strength is None:
                     resolved_lora_strength = loradef.get("strength_model", client.CHARACTER_LORA_STRENGTH)
@@ -1457,6 +1460,10 @@ def build_parser():
                         help="full or quant (fp8) for the SDXL/Pony checkpoints in this run; goes BEFORE the "
                              "subcommand (generate_character.py --variant quant custom ...). Overrides the "
                              "per-model choices in training/settings/model_variants.json and MODEL_VARIANT")
+    parser.add_argument("--backend", choices=list(client.BACKEND_CHOICES), default=None,
+                        help="where the ComfyUI workflow runs: local (default) or runpod (this repo's RunPod "
+                             "worker, configured in training/settings/cloud.json + RUNPOD_API_KEY). Goes BEFORE "
+                             "the subcommand. Overrides GENERATION_BACKEND")
     sub = parser.add_subparsers(dest="mode", required=True)
 
     sub.add_parser("list-characters")
@@ -1598,6 +1605,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.variant:
         client.set_variant_override(args.variant)
+    if args.backend:
+        client.set_backend_override(args.backend)
     if args.mode == "list-characters":
         for name, profile in sorted(CHARACTERS.items()):
             print(f"{name}: age {profile['age']}, {profile['appearance']}, {profile['style']}")
@@ -1666,8 +1675,17 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # Run as a script this module is "__main__", so anything that later imports generate_character
+    # by name (cloud_workflow, via the runpod backend) would load a SECOND copy whose UsageError is a
+    # different class - and escape the except below as a traceback. Register this copy under its real
+    # name first so there is only one.
+    sys.modules.setdefault("generate_character", sys.modules[__name__])
+    import cloud_video
+
     try:
         main()
+    except cloud_video.CloudJobFailed as exc:
+        raise SystemExit(f"雲端工作失敗：{exc}")
     except (UsageError, client.ComfyUIUnavailable) as exc:
         # Library code signals caller errors with UsageError and an unreachable server with
         # ComfyUIUnavailable; here both become exactly what `raise SystemExit(msg)` always did -

@@ -73,6 +73,11 @@ def _step_reporter(progress):
     (FaceDetailer's depends on how many faces and hands it finds).
     """
     def report(stage, current, total):
+        if total is None:
+            # A cloud job reports status text (queued, cold start, remote step count) rather than a
+            # local step counter, so there is no honest bar to draw - show the text only.
+            progress(None, desc=stage)
+            return
         progress((current, total), desc=f"{stage} {current}/{total} 步")
     return report
 
@@ -267,11 +272,31 @@ def refresh_variant_status():
 def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
              pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
              character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
-             style_positive, style_negative, checkpoint_choice, lora_strength,
+             style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud=False,
              progress=gr.Progress()):
+    # The scope has to wrap the whole handler, not just gen_custom: upload_reference_image and the
+    # has_node / log_gpu_memory calls inside the generation path all consult the backend too.
+    with client.backend_scope("runpod" if use_cloud else "local"):
+        return _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
+                         pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
+                         character_lora_strength, use_facedetailer, face_denoise, hand_denoise,
+                         facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength,
+                         use_cloud, progress)
+
+
+def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
+              pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
+              character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
+              style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud, progress):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
-    _ensure_comfyui()
+    if use_cloud:
+        problems = cloud_video.config_status("runpod")
+        if problems:
+            raise gr.Error("雲端生成還沒設定好：" + "；".join(problems) + "（設定方式見「☁️ 雲端影片」分頁）")
+        gr.Info("雲端生成：沒有暖機的 worker 時要先冷啟動，第一張可能要等好幾分鐘")
+    else:
+        _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
     is_zimage = checkpoint_choice in client.ZIMAGE_MODELS
     if is_zimage:
@@ -280,7 +305,8 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
         if custom_anchor or pose_reference or (pose_library and pose_library != POSE_NONE):
             raise gr.Error("Z-Image 目前只支援純文字生圖——自行上傳的 anchor（FaceID 鎖臉）、骨架姿勢參考圖、"
                            "骨架庫都沒有 Z-Image 版的模型檔，請先清掉這些欄位")
-        missing = client.zimage_missing_files(checkpoint_choice)
+        # The check asks the LOCAL server which model files it has; that says nothing about a worker.
+        missing = [] if use_cloud else client.zimage_missing_files(checkpoint_choice)
         if missing:
             raise gr.Error(f"找不到 Z-Image 模型檔：{', '.join(missing)}——下載指令見 README「Z-Image Turbo（選用安裝）」")
         if trigger and anchor:
@@ -309,8 +335,11 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
     checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
     variant_key = checkpoint or (gc.DEFAULT_CUSTOM_CHECKPOINT if use_hq else "juggernaut")
-    for note in client.variant_preflight(variant_key, uses_pose=bool(pose_reference or pose_name)):
-        gr.Info(note)
+    if use_cloud:
+        gr.Info("雲端生成用 worker 上的完整版權重，本機的「模型版本」（量化版）設定不影響雲端")
+    else:
+        for note in client.variant_preflight(variant_key, uses_pose=bool(pose_reference or pose_name)):
+            gr.Info(note)
     if is_sd15 and (anchor_path or pose_reference):
         raise gr.Error("這個 checkpoint 是 SD1.5，目前只支援純文字生圖——anchor（IP-Adapter）、"
                         "骨架姿勢控制都還沒接（那些用的是 SDXL 專用的模型檔，跟 SD1.5 對不上）")
@@ -445,7 +474,7 @@ def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, ti
         RESOLUTION_AUTO, True, client.HIRES_DENOISE, client.CHARACTER_LORA_STRENGTH,
         True, client.FACEDETAILER_FACE_DENOISE, client.FACEDETAILER_HAND_DENOISE, FACEDETAILER_BACKEND_YOLO,
         gc.REALISTIC_STYLE, gc.REALISTIC_NEGATIVE, checkpoint_choice, 0.0,
-        progress,
+        use_cloud=False, progress=progress,
     )
 
 
@@ -769,6 +798,11 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         0.0, 3.0, value=0.0, step=0.1,
                         label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
                     )
+                    use_cloud = gr.Checkbox(
+                        value=False,
+                        label="用 RunPod 雲端 GPU 生成（同一套 workflow 送到雲端跑，不佔本機 8GB 卡；"
+                              "需先在「☁️ 雲端影片」分頁設定 endpoint 與環境變數 RUNPOD_API_KEY）",
+                    )
                     tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
                     seed = gr.Number(value=9000, label="Seed", precision=0)
                     ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
@@ -791,7 +825,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
             # just see their button spin with no explanation; a shared concurrency_id makes
             # Gradio queue it visibly instead. Includes the SadTalker button, which does not go
             # through ComfyUI but competes for the same VRAM.
-            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength], outputs=output, concurrency_id="gpu")
+            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud], outputs=output, concurrency_id="gpu")
 
         with gr.Tab("🎬 AnimateDiff 動態影片"):
             gr.Markdown(
