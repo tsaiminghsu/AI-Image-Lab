@@ -22,3 +22,10 @@ runpod_volume:
     ultralytics_segm: ultralytics/segm
     # ComfyUI_IPAdapter_plus + FaceID read insightface models from here.
     insightface: insightface
+    # Wan 2.2 image-to-video loads three loose files (UNETLoader / CLIPLoader / VAELoader).
+    diffusion_models: diffusion_models
+    text_encoders: text_encoders
+    vae: vae
+    # AnimateDiff-Evolved's motion modules and camera-motion LoRAs.
+    animatediff_models: animatediff_models
+    animatediff_motion_lora: animatediff_motion_lora

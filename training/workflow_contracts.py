@@ -135,6 +135,17 @@ _ANIMATEDIFF_FINAL = {
     # _SAMPLE_SAVE at all and spells its own "3"/"8"/"9" out below.
 }
 
+# Wan 2.2 image-to-video (TI2V-5B): three loose loader files like Z-Image, but a different id
+# scheme - it was written by hand from Comfy-Org's official video_wan2_2_5B_ti2v template, not
+# exported from the UI. The start image goes straight into the latent (Wan22ImageToVideoLatent
+# encodes it and masks it as frame 0), so there is no image-conditioning node pair here.
+_WAN22_LOADERS = {
+    "1": "UNETLoader",
+    "2": "CLIPLoader",
+    "3": "VAELoader",
+    "4": "ModelSamplingSD3",
+}
+
 # --- The contract map --------------------------------------------------------------------
 # template filename -> {node_id: expected class_type}. Every training/workflow_template*.json
 # file must have exactly one entry here (see tests/test_workflow_contract.py group 1).
@@ -163,6 +174,11 @@ CONTRACTS: dict[str, dict[str, str]] = {
         "3": "KSampler", "8": "VAEDecode",
         **_HIRES_CORE, "35": "VAEDecodeTiled",
         **_ANIMATEDIFF_DETAILER, **_ANIMATEDIFF_FINAL,
+    },
+    "workflow_template_wan_i2v.json": {
+        **_WAN22_LOADERS, **_PROMPTS,
+        "10": "LoadImage", "11": "Wan22ImageToVideoLatent", "12": "KSampler", "8": "VAEDecode",
+        "90": "CreateVideo", "9": "SaveVideo",
     },
 }
 

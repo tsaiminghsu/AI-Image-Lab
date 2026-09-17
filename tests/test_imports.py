@@ -15,6 +15,9 @@ import pytest
         "pose_pack",
         "benchmark",
         "scene_library",
+        "cloud_video",
+        "validate_workflow_nodes",
+        "workflow_contracts",
     ],
 )
 def test_module_imports_offline(name):

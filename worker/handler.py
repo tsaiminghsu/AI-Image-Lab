@@ -1,181 +1,100 @@
 """RunPod Serverless handler for AI-Image-Lab.
 
-Runs inside the worker container next to a ComfyUI server on localhost:8188.
-Reuses the EXACT local generation code (training/comfyui_client.py +
-generate_character.py) so the age/tier safety negatives are the same hard
-guarantee they are locally - that is why runpod.ts deliberately sends the raw
-prompt + tier and lets this worker apply buildSafePrompt's equivalent
-(_build_prompt_and_negative) itself, rather than double-applying it.
+Runs inside the worker container next to a ComfyUI server on localhost:8188. What to generate is
+decided by jobs.py, which reuses the EXACT local generation code (training/comfyui_client.py +
+generate_character.py), so the age/tier safety negatives and the cfg floor are the same hard
+guarantee they are locally. That is why runpod.ts and training/cloud_video.py send the raw prompt +
+tier and let this worker compose the negatives, rather than double-applying them.
 
-Input (matches web/amplify/functions/generate/providers/runpod.ts):
-  {"input": {"prompt", "tier", "characterId", "referenceImageBase64",
-             "referenceImageContentType", "loraId", "aspectRatio", "seed"}}
-Output on success:
-  {"outputKey", "outputUrl", "seed", "width", "height"}
+This module only does the RunPod-facing parts: S3 upload, progress updates, the entry point. boto3
+and runpod are imported lazily so tests/test_worker_handler.py can import it without either.
+
+Input:  {"input": {...}} - see jobs.py's docstring for the per-jobType schema.
+Output: {"outputKey", "outputUrl", "seed", "width", "height", "jobType", ...}
 On any failure returns {"error": "..."} so RunPod marks the job FAILED.
 """
 
-import base64
-import binascii
-import io
 import os
-import random
+import shutil
 import tempfile
-
-import boto3
-import runpod
+import time
 
 import comfyui_client as client
-import generate_character as gc
+import jobs
 
 S3_BUCKET = os.environ.get("S3_BUCKET")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 WORKER_CHECKPOINT = os.environ.get("WORKER_CHECKPOINT", "cyberrealistic_pony")
 ANCHOR_DIR = os.environ.get("RUNPOD_ANCHOR_DIR", "/runpod-volume/anchors")
+PRESIGN_SECONDS = int(os.environ.get("PRESIGN_SECONDS", "3600"))
+# RunPod progress updates are HTTP calls - one per sampler step would be dozens a minute.
+PROGRESS_MIN_INTERVAL_SECONDS = 5.0
 
-# aspectRatio -> (width, height). Values are SDXL-friendly and match the set
-# provider-types.ts declares. These are FINAL sizes; submit_generation_hq
-# derives the lower first-pass size itself.
-ASPECT_SIZES = {
-    "1:1": (1024, 1024),
-    "3:4": (896, 1152),
-    "4:3": (1152, 896),
-    "9:16": (832, 1216),
-    "16:9": (1216, 832),
-}
-MAX_PROMPT_CHARS = gc.MAX_PROMPT_CHARS  # one definition, shared with the local CLI/API paths
-_s3 = boto3.client("s3", region_name=AWS_REGION)
+_progress_update = None   # runpod.serverless.progress_update, set in __main__
+_s3 = None
 
 
-def _decode_reference(b64, job_id):
-    """Decode a base64 reference image, verify it really is a PNG/JPEG (never
-    trust the declared content type), and write it to a tempfile. Returns the
-    path, or raises ValueError."""
-    from PIL import Image
+def make_s3():
+    """S3 client. S3_ENDPOINT_URL makes it work against S3-compatible stores (Cloudflare R2 takes
+    https://<account>.r2.cloudflarestorage.com with AWS_REGION=auto); unset means AWS S3."""
+    import boto3
+    from botocore.config import Config
 
-    try:
-        raw = base64.b64decode(b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"referenceImageBase64 is not valid base64: {exc}")
-    try:
-        img = Image.open(io.BytesIO(raw))
-        img.verify()  # structural check; raises on anything that isn't a real image
-        fmt = (img.format or "").upper()
-    except Exception as exc:
-        raise ValueError(f"referenceImageBase64 is not a decodable image: {exc}")
-    if fmt not in ("PNG", "JPEG"):
-        raise ValueError(f"reference image must be PNG or JPEG, got {fmt or 'unknown'}")
-    fd, path = tempfile.mkstemp(prefix=f"ref_{job_id}_", suffix=".png")
-    with os.fdopen(fd, "wb") as f:
-        f.write(raw)
-    return path
+    return boto3.client(
+        "s3",
+        endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None,
+        region_name=AWS_REGION,
+        config=Config(signature_version="s3v4"),
+    )
 
 
-def _anchor_for_character(character_id):
-    """Fallback face reference from the Network Volume when the caller didn't
-    upload one: anchors/<characterId>/anchor_*.png (mirrors the local
-    reference_candidates layout)."""
-    import glob
+def _progress_callback(job):
+    """(stage, current, total) -> throttled runpod progress_update; never raises into the job."""
+    state = {"stage": None, "at": 0.0}
 
-    if not character_id:
-        return None
-    matches = sorted(glob.glob(os.path.join(ANCHOR_DIR, character_id, "anchor_*.png")))
-    if not matches:
-        matches = sorted(glob.glob(os.path.join(ANCHOR_DIR, character_id, "*.png")))
-    return matches[0] if matches else None
+    def callback(stage, current, total):
+        if _progress_update is None:
+            return
+        now = time.monotonic()
+        if stage == state["stage"] and now - state["at"] < PROGRESS_MIN_INTERVAL_SECONDS and current < total:
+            return
+        state.update(stage=stage, at=now)
+        try:
+            _progress_update(job, {"stage": stage, "current": current, "total": total})
+        except Exception:
+            pass
+
+    return callback
 
 
-def handler(job):
+def handler(job, *, s3_factory=None):
+    global _s3
     tmp_files = []
+    out_dir = None
     try:
         if not S3_BUCKET:
             return {"error": "S3_BUCKET env var not set on the worker"}
-
         job_id = job.get("id", "unknown")
-        inp = job.get("input") or {}
+        spec = jobs.parse_job(job.get("input") or {}, worker_checkpoint=WORKER_CHECKPOINT)
 
-        prompt = (inp.get("prompt") or "").strip()
-        if not prompt:
-            return {"error": "missing prompt"}
-        if len(prompt) > MAX_PROMPT_CHARS:
-            return {"error": f"prompt too long (>{MAX_PROMPT_CHARS} chars)"}
+        out_dir = tempfile.mkdtemp(prefix=f"out_{job_id}_")
+        started = time.monotonic()
+        with client.progress_reporter(_progress_callback(job)):
+            result = jobs.run_job(spec, job_id=job_id, anchor_dir=ANCHOR_DIR, out_dir=out_dir, tmp_files=tmp_files)
 
-        # Never trust an arbitrary tier - anything but the two known values
-        # falls back to the strictest ("safe"), same ceiling logic as locally.
-        tier = inp.get("tier")
-        if tier not in ("safe", "suggestive"):
-            tier = "safe"
-
-        aspect = inp.get("aspectRatio") or "3:4"
-        if aspect not in ASPECT_SIZES:
-            return {"error": f"unknown aspectRatio {aspect!r}; choices: {sorted(ASPECT_SIZES)}"}
-        width, height = ASPECT_SIZES[aspect]
-
-        character_id = inp.get("characterId") or None
-        trigger = None
-        if character_id:
-            gc.get_character(character_id)  # raises gc.UsageError on unknown -> caught below
-            trigger = character_id
-
-        # Reference face: uploaded image wins, else the character's anchor.
-        ref_b64 = inp.get("referenceImageBase64")
-        if ref_b64:
-            ref_path = _decode_reference(ref_b64, job_id)
-            tmp_files.append(ref_path)
-        else:
-            ref_path = _anchor_for_character(character_id)
-        if not ref_path:
-            return {"error": "no reference face: provide referenceImageBase64 or a characterId with an anchor on the volume"}
-
-        seed = inp.get("seed")
-        if not isinstance(seed, int):
-            seed = random.randint(0, 2**31 - 1)
-
-        checkpoint_key = WORKER_CHECKPOINT
-        if checkpoint_key not in client.CHECKPOINTS:
-            return {"error": f"WORKER_CHECKPOINT {checkpoint_key!r} not in CHECKPOINTS"}
-
-        # Same composition point as CLI/GUI: applies AGE_SAFETY_NEGATIVE and the
-        # tier ceiling, and the Pony quality-tag prefix when relevant.
-        full_prompt, negative_prompt = gc._build_prompt_and_negative(
-            prompt, "", tier, trigger, None, None, checkpoint_key,
-        )
-
-        lora_strength = 0.0 if checkpoint_key in client.PONY_CHECKPOINTS else None
-
-        lora_id = inp.get("loraId") or None
-        character_lora = f"characters/{lora_id}.safetensors" if lora_id else None
-        ip_weight = client.IP_ADAPTER_WEIGHT
-        if character_lora:
-            ip_weight = 0.7  # LoRA carries identity; FaceID only corrects drift
-
-        ip_name = client.upload_reference_image(ref_path)
-
-        out_path = client.submit_generation_hq(
-            prompt=full_prompt,
-            negative_prompt=negative_prompt,
-            seed=seed,
-            filename_prefix=f"rp_{job_id}",
-            ip_adapter_image_filename=ip_name,
-            width=width,
-            height=height,
-            checkpoint=client.CHECKPOINTS[checkpoint_key],
-            lora_strength=lora_strength,
-            character_lora=character_lora,
-            ip_adapter_weight=ip_weight,
-            hires=True,
-            use_facedetailer=True,
-        )
-        tmp_files.append(out_path)
-
-        key = f"generated/{job_id}.png"
-        _s3.upload_file(out_path, S3_BUCKET, key, ExtraArgs={"ContentType": "image/png"})
-        # Debug-only presigned URL; the status Lambda re-presigns from outputKey.
+        if _s3 is None or s3_factory is not None:
+            _s3 = (s3_factory or make_s3)()
+        key = f"generated/{job_id}.{result['ext']}"
+        _s3.upload_file(result["localPath"], S3_BUCKET, key, ExtraArgs={"ContentType": result["contentType"]})
         url = _s3.generate_presigned_url(
-            "get_object", Params={"Bucket": S3_BUCKET, "Key": key}, ExpiresIn=3600,
+            "get_object", Params={"Bucket": S3_BUCKET, "Key": key}, ExpiresIn=PRESIGN_SECONDS,
         )
-        return {"outputKey": key, "outputUrl": url, "seed": seed, "width": width, "height": height}
+        out = {k: v for k, v in result.items() if k not in ("localPath", "contentType", "ext")}
+        out.update(outputKey=key, outputUrl=url, elapsedSeconds=round(time.monotonic() - started, 1))
+        return out
 
+    except jobs.JobInputError as exc:
+        return {"error": str(exc)}
     except BaseException as exc:  # gc.UsageError included, and anything else a handler can hit
         return {"error": f"{type(exc).__name__}: {exc}"}
     finally:
@@ -184,7 +103,12 @@ def handler(job):
                 os.remove(p)
             except OSError:
                 pass
+        if out_dir:
+            shutil.rmtree(out_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
+    import runpod
+
+    _progress_update = runpod.serverless.progress_update
     runpod.serverless.start({"handler": handler})

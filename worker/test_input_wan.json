@@ -1,0 +1,13 @@
+{
+  "input": {
+    "jobType": "video_wan_i2v",
+    "prompt": "she turns her head toward the camera and smiles softly, hair moving slightly in a light breeze, natural daylight",
+    "tier": "safe",
+    "characterId": "mei",
+    "width": 704,
+    "height": 1280,
+    "frames": 81,
+    "fps": 24,
+    "seed": 7001
+  }
+}

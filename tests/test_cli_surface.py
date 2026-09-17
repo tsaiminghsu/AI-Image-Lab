@@ -13,6 +13,7 @@ tests at the bottom parse real arguments to check the resolved defaults.
 import ast
 import io
 import os
+import re
 
 import generate_character as gc
 import pytest
@@ -269,9 +270,14 @@ def test_no_hardcoded_absolute_paths_remain_in_argparse_defaults():
 
 def test_max_prompt_chars_has_a_single_definition():
     """worker/handler.py used to carry its own copy, so the cloud path could drift from the
-    local one. It now imports this value."""
-    worker = os.path.join(os.path.dirname(os.path.dirname(GENERATE_CHARACTER_PATH)), "worker", "handler.py")
-    with io.open(worker, encoding="utf-8") as f:
-        text = f.read()
-    assert "MAX_PROMPT_CHARS = gc.MAX_PROMPT_CHARS" in text
+    local one. The worker's prompt validation now lives in worker/jobs.py and reads
+    gc.MAX_PROMPT_CHARS directly; no worker module may define its own number."""
+    worker_dir = os.path.join(os.path.dirname(os.path.dirname(GENERATE_CHARACTER_PATH)), "worker")
+    texts = {}
+    for name in ("handler.py", "jobs.py"):
+        with io.open(os.path.join(worker_dir, name), encoding="utf-8") as f:
+            texts[name] = f.read()
+    for name, text in texts.items():
+        assert not re.search(r"^\s*MAX_PROMPT_CHARS\s*=\s*\d", text, re.MULTILINE), f"{name} defines its own limit"
+    assert "gc.MAX_PROMPT_CHARS" in texts["jobs.py"]
     assert gc.MAX_PROMPT_CHARS == 2000

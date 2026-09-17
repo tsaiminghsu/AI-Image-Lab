@@ -40,6 +40,7 @@ WORKFLOW_TEMPLATE_MEDIAPIPE_FACEDETAILER_PATH = os.path.join(os.path.dirname(__f
 WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_animatediff_facedetailer.json")
 WORKFLOW_TEMPLATE_IMG2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2img.json")
 WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img_zimage.json")
+WORKFLOW_TEMPLATE_WAN_I2V_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_wan_i2v.json")
 
 CHECKPOINTS = {
     "juggernaut": "juggernaut_xl_v9_photo.safetensors",
@@ -141,6 +142,29 @@ ZIMAGE_SHIFT = 3.0
 ZIMAGE_CFG = 2.0
 ZIMAGE_MIN_CFG = SAFETY_MIN_CFG  # kept as a name because the Z-Image docstrings refer to it
 POLL_TIMEOUT_SECONDS_ZIMAGE = 1200  # first image after startup took up to ~7 min on the 2070
+
+# Wan 2.2 TI2V-5B image-to-video, run on a RunPod GPU (see worker/ and cloud_video.py) rather than
+# the local card. Filenames and sampler settings are Comfy-Org's official video_wan2_2_5B_ti2v
+# template, read 2026-09-17 - not recalled: shift 8, 20 steps, cfg 5, uni_pc/simple, 1280x704,
+# 121 frames (5 s) at 24 fps. The official cfg is already well above SAFETY_MIN_CFG, so the floor
+# costs nothing here. Deliberately NO cfg-1 "lightning"/distill LoRA: those only work at cfg 1.0,
+# where ComfyUI drops the negative conditioning - and with it AGE_SAFETY_NEGATIVE.
+WAN_MODELS = {
+    "wan22_ti2v_5b": dict(unet="wan2.2_ti2v_5B_fp16.safetensors",
+                          text_encoder="umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                          vae="wan2.2_vae.safetensors"),
+}
+WAN_DEFAULT_MODEL = "wan22_ti2v_5b"
+WAN_WIDTH, WAN_HEIGHT = 1280, 704   # Wan22ImageToVideoLatent steps width/height by 32
+WAN_FRAMES = 121                    # length must be 4n+1 (the VAE packs 4 frames per latent step)
+WAN_FPS = 24
+WAN_STEPS = 20
+WAN_CFG = 5.0
+WAN_SHIFT = 8.0
+WAN_SAMPLER = "uni_pc"
+WAN_SCHEDULER = "simple"
+# Generous: first job on a cold RunPod worker loads ~15 GB of weights off a network volume.
+POLL_TIMEOUT_SECONDS_WAN = 2400
 WIDTH, HEIGHT = 1024, 1024   # switch to 768/832/896 as needed - not hardcoded elsewhere
 BATCH_SIZE = 1                # RTX 2070 8GB - always 1, no multi-image batches
 STEPS = 30
@@ -1134,6 +1158,7 @@ def submit_generation_animatediff(
     use_facedetailer: bool = True,
     lcm_preset: str = None,
     video_crf: float = ANIMATEDIFF_VIDEO_CRF,
+    hires_max_pixels: int = None,
 ) -> str:
     """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking. Returns the local
     path of the saved .mp4 (h264). face_ref_image_filename must already be uploaded (see
@@ -1168,7 +1193,10 @@ def submit_generation_animatediff(
     is FaceID's face-structure branch (node 12 weight_faceidv2), faceid_lora_strength the FaceID
     LoRA on node 11, motion_scale the motion module's temporal-attention scale (node 62
     ADE_MultivalDynamic, only injected when != 1.0; lower = less motion and less face drift), and
-    facedetailer_steps the video detailer's own step count (LCM presets override it)."""
+    facedetailer_steps the video detailer's own step count (LCM presets override it).
+
+    hires_max_pixels overrides ANIMATEDIFF_HIRES_MAX_PIXELS, which is an 8GB-card ceiling - a
+    cloud GPU can lift it. None keeps the local default."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH))
 
     sampler, scheduler = ANIMATEDIFF_SAMPLER, ANIMATEDIFF_SCHEDULER
@@ -1231,7 +1259,8 @@ def submit_generation_animatediff(
     # Hires second pass (31-35). Frame size after this stage = cur_w x cur_h.
     cur_w, cur_h = width, height
     if hires:
-        eff_scale = min(hires_scale, (ANIMATEDIFF_HIRES_MAX_PIXELS / float(width * height)) ** 0.5)
+        max_pixels = ANIMATEDIFF_HIRES_MAX_PIXELS if hires_max_pixels is None else hires_max_pixels
+        eff_scale = min(hires_scale, (max_pixels / float(width * height)) ** 0.5)
         eff_scale = max(eff_scale, 1.0)
         cur_w, cur_h = _round8(width * eff_scale), _round8(height * eff_scale)
         wf["32"]["inputs"]["scale_by"] = eff_scale / UPSCALE_MODEL_SCALE
@@ -1349,7 +1378,15 @@ def submit_txt2img_generation_sd15(
 def zimage_missing_files(model: str = "z_image_turbo") -> list:
     """Files of a ZIMAGE_MODELS entry that the running ComfyUI server does not list (empty = all
     present). Lets callers fail with a download hint instead of a raw workflow-validation error."""
-    files = ZIMAGE_MODELS[model]
+    return _missing_loader_files(ZIMAGE_MODELS[model])
+
+
+def wan_missing_files(model: str = WAN_DEFAULT_MODEL) -> list:
+    """Same check as zimage_missing_files, for a WAN_MODELS entry."""
+    return _missing_loader_files(WAN_MODELS[model])
+
+
+def _missing_loader_files(files: dict) -> list:
     need = [("UNETLoader", "unet_name", files["unet"]),
             ("CLIPLoader", "clip_name", files["text_encoder"]),
             ("VAELoader", "vae_name", files["vae"])]
@@ -1417,6 +1454,63 @@ def submit_txt2img_generation_zimage(
     wf["3"]["inputs"]["scheduler"] = ZIMAGE_SCHEDULER
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
     return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_ZIMAGE)
+
+
+def _round_to(x: float, step: int, minimum: int) -> int:
+    return max(minimum, int(round(x / float(step))) * step)
+
+
+def submit_generation_wan_i2v(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    start_image_filename: str,
+    filename_prefix: str,
+    model: str = WAN_DEFAULT_MODEL,
+    width: int = WAN_WIDTH,
+    height: int = WAN_HEIGHT,
+    frames: int = WAN_FRAMES,
+    fps: int = WAN_FPS,
+    steps: int = WAN_STEPS,
+    cfg: float = WAN_CFG,
+    shift: float = WAN_SHIFT,
+    video_crf: float = ANIMATEDIFF_VIDEO_CRF,
+) -> str:
+    """Wan 2.2 image-to-video (see WAN_MODELS). start_image_filename must already be uploaded (see
+    upload_reference_image) and becomes frame 0. Returns the local path of the saved .mp4.
+
+    Graph: 1-3 loaders -> 4 ModelSamplingSD3(shift) -> 12 KSampler over 11 Wan22ImageToVideoLatent
+    (encodes the start image into the first latent step and masks it) -> 8 VAEDecode ->
+    90 CreateVideo(fps) -> 9 SaveVideo mp4/h264.
+
+    Width/height are snapped to Wan22ImageToVideoLatent's step of 32 and frames to 4n+1. cfg is
+    floored by enforce_min_cfg inside _submit_and_wait like every other path; callers that take
+    user input should reject a low cfg themselves rather than rely on the silent floor."""
+    missing = wan_missing_files(model)
+    if missing:
+        raise RuntimeError(f"Wan model files not found by ComfyUI: {', '.join(missing)} - see "
+                           "worker/download_video_models.sh")
+    files = WAN_MODELS[model]
+    wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_WAN_I2V_PATH))
+    wf["1"]["inputs"]["unet_name"] = files["unet"]
+    wf["2"]["inputs"]["clip_name"] = files["text_encoder"]
+    wf["3"]["inputs"]["vae_name"] = files["vae"]
+    wf["4"]["inputs"]["shift"] = float(shift)
+    wf["6"]["inputs"]["text"] = prompt
+    wf["7"]["inputs"]["text"] = negative_prompt
+    wf["10"]["inputs"]["image"] = start_image_filename
+    wf["11"]["inputs"]["width"] = _round_to(width, 32, 256)
+    wf["11"]["inputs"]["height"] = _round_to(height, 32, 256)
+    wf["11"]["inputs"]["length"] = max(5, (int(frames) - 1) // 4 * 4 + 1)
+    wf["12"]["inputs"]["seed"] = seed
+    wf["12"]["inputs"]["steps"] = steps
+    wf["12"]["inputs"]["cfg"] = cfg
+    wf["12"]["inputs"]["sampler_name"] = WAN_SAMPLER
+    wf["12"]["inputs"]["scheduler"] = WAN_SCHEDULER
+    wf["90"]["inputs"]["fps"] = float(fps)
+    wf["9"]["inputs"]["filename_prefix"] = filename_prefix
+    wf["9"]["inputs"]["codec.encoding.crf"] = float(video_crf)
+    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_WAN)
 
 
 def submit_img2vid_generation(

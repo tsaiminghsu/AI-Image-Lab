@@ -88,6 +88,7 @@ def test_known_negative_prompt_constants_inventory():
     style_or_quality = {
         "REALISTIC_NEGATIVE",
         "VIDEO_REALISTIC_NEGATIVE",
+        "WAN_VIDEO_NEGATIVE",
         "QUALITY_NEGATIVE",
         "PONY_QUALITY_NEGATIVE_TAGS",
     }

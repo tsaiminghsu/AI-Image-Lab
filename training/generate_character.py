@@ -49,6 +49,15 @@ REALISTIC_NEGATIVE = (
 # up directly as asymmetric faces that warped from frame to frame.
 VIDEO_REALISTIC_NEGATIVE = REALISTIC_NEGATIVE.replace("symmetrical face, ", "")
 assert "symmetrical" not in VIDEO_REALISTIC_NEGATIVE
+# Wan 2.2 style negative: the failure modes of a video DiT (frozen frames, flicker, smeared limbs)
+# rather than the "3d render / plastic skin" list aimed at SDXL stills. Written in English - the
+# official template's negative is Chinese, but this project's safety terms are English and one
+# language per prompt keeps the umt5 encoding predictable. Safety negatives are added on top by
+# _build_prompt_and_negative, never by this constant.
+WAN_VIDEO_NEGATIVE = (
+    "static image, frozen frame, flickering, jitter, blurry, overexposed, low quality, jpeg artifacts, "
+    "deformed hands, extra fingers, distorted face, morphing face, melting limbs, subtitles, watermark"
+)
 
 # Pony-family checkpoints (client.PONY_CHECKPOINTS) were trained on a
 # "score_9, score_8_up, score_7_up"-style quality-tag prefix convention, not
@@ -1221,7 +1230,7 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
                            hires=True, hires_scale=None, hires_denoise=None, upscale_to=None,
                            interp=None, use_facedetailer=True, lcm=False, lcm_preset="animatelcm",
                            faceid_v2_weight=None, faceid_lora_strength=None, motion_scale=None,
-                           facedetailer_steps=None, face_report=False):
+                           facedetailer_steps=None, face_report=False, hires_max_pixels=None):
     """AnimateDiff (SD1.5) txt2vid with IPAdapter-FaceID identity locking and
     a video-native face-fix pass - fixes the face warping that
     gen_video's plain SVD img2vid produces (SVD's temporal U-Net can't be
@@ -1320,7 +1329,8 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
     if lcm:
         kwargs["lcm_preset"] = lcm_preset
     for name, value in (("faceid_v2_weight", faceid_v2_weight), ("faceid_lora_strength", faceid_lora_strength),
-                        ("motion_scale", motion_scale), ("facedetailer_steps", facedetailer_steps)):
+                        ("motion_scale", motion_scale), ("facedetailer_steps", facedetailer_steps),
+                        ("hires_max_pixels", hires_max_pixels)):
         if value is not None:
             kwargs[name] = value
 
@@ -1359,6 +1369,82 @@ def gen_video_animatediff(prompt, extra_negative, tier, trigger, face_ref_path, 
         except (RuntimeError, OSError, ValueError) as exc:
             print(f"[warn] face report skipped: {exc}", flush=True)
     client.log_gpu_memory("after_animatediff")
+    return out_path
+
+
+WAN_FRAME_RANGE = (17, 121)
+WAN_SIDE_RANGE = (256, 1280)
+WAN_MAX_PIXELS = 1280 * 704
+
+
+def check_wan_params(width, height, frames, fps, steps, cfg, model):
+    """Validate Wan I2V parameters, raising UsageError. Shared by gen_video_wan_i2v and the RunPod
+    worker's job parser so the bounds exist in one place.
+
+    cfg below SAFETY_MIN_CFG is REJECTED rather than quietly floored: a caller asking for cfg 1.0
+    is almost always copying a lightning/distill recipe, and silently running it at 1.5 would give
+    them a result that looks broken for no stated reason."""
+    if model not in client.WAN_MODELS:
+        raise UsageError(f"unknown wan model {model!r} - choices: {sorted(client.WAN_MODELS)}")
+    for name, side in (("width", width), ("height", height)):
+        if side % 32 or not WAN_SIDE_RANGE[0] <= side <= WAN_SIDE_RANGE[1]:
+            raise UsageError(f"{name} must be a multiple of 32 between {WAN_SIDE_RANGE[0]} and "
+                             f"{WAN_SIDE_RANGE[1]}, got {side}")
+    if width * height > WAN_MAX_PIXELS:
+        raise UsageError(f"width x height must be at most 1280x704 pixels in total, got {width}x{height}")
+    if (frames - 1) % 4 or not WAN_FRAME_RANGE[0] <= frames <= WAN_FRAME_RANGE[1]:
+        raise UsageError(f"frames must be 4n+1 between {WAN_FRAME_RANGE[0]} and {WAN_FRAME_RANGE[1]}, got {frames}")
+    if not 8 <= fps <= 30:
+        raise UsageError(f"fps must be between 8 and 30, got {fps}")
+    if not 10 <= steps <= 50:
+        raise UsageError(f"steps must be between 10 and 50, got {steps}")
+    if not client.SAFETY_MIN_CFG <= cfg <= 10:
+        floor = client.SAFETY_MIN_CFG
+        raise UsageError(f"cfg must be between {floor} and 10 (below {floor} ComfyUI skips the negative "
+                         f"prompt, including the mandatory safety terms), got {cfg}")
+
+
+def build_wan_prompts(prompt, extra_negative, tier, trigger):
+    """Wan's positive/negative prompt pair. Goes through _build_prompt_and_negative like every other
+    path so the tier + age safety negatives are guaranteed, but passes the style terms explicitly:
+    the SD defaults (REALISTIC_STYLE's "visible pores, film grain" and friends) are CLIP-era tags
+    tuned for SD1.5/SDXL and have no business in Wan's umt5 prompt. checkpoint=None and no gender
+    weight, since the "(man:1.3)" syntax is an SD CLIP convention umt5 doesn't parse."""
+    return _build_prompt_and_negative(prompt, extra_negative, tier, trigger, "", WAN_VIDEO_NEGATIVE, None,
+                                      gender_weight=None)
+
+
+def gen_video_wan_i2v(prompt, extra_negative, tier, trigger, first_frame_path, out_dir, seed, *,
+                      model=client.WAN_DEFAULT_MODEL, width=None, height=None, frames=None, fps=None,
+                      steps=None, cfg=None):
+    """Wan 2.2 image-to-video: first_frame_path (a generated fictional-character image - an anchor or
+    a picker-tab result, never a real person's photo) becomes frame 0 and the prompt describes the
+    motion. Meant for a RunPod GPU; see comfyui_client.WAN_MODELS for why it's not a local path.
+
+    Unlike gen_video_animatediff there is no FaceID here - identity is held only by the first frame,
+    so check drift with face_similarity.py rather than by eye. Returns the saved .mp4 path."""
+    width = client.WAN_WIDTH if width is None else int(width)
+    height = client.WAN_HEIGHT if height is None else int(height)
+    frames = client.WAN_FRAMES if frames is None else int(frames)
+    fps = client.WAN_FPS if fps is None else int(fps)
+    steps = client.WAN_STEPS if steps is None else int(steps)
+    cfg = client.WAN_CFG if cfg is None else float(cfg)
+    check_wan_params(width, height, frames, fps, steps, cfg, model)
+    if not first_frame_path or not os.path.isfile(first_frame_path):
+        raise UsageError(f"first frame image not found: {first_frame_path!r}")
+    full_prompt, negative_prompt = build_wan_prompts(prompt, extra_negative, tier, trigger)
+
+    os.makedirs(out_dir, exist_ok=True)
+    stem = f"wan_i2v_seed{seed}"
+    start_filename = client.upload_reference_image(first_frame_path)
+    raw_path = client.submit_generation_wan_i2v(
+        prompt=full_prompt, negative_prompt=negative_prompt, seed=seed,
+        start_image_filename=start_filename, filename_prefix=stem, model=model,
+        width=width, height=height, frames=frames, fps=fps, steps=steps, cfg=cfg,
+    )
+    out_path = os.path.join(out_dir, f"{stem}.mp4")
+    shutil.move(raw_path, out_path)
+    print(f"saved {out_path}", flush=True)
     return out_path
 
 
