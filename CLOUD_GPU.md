@@ -74,10 +74,13 @@ with open("output.mp4", "wb") as f:
 
 ### 跟這個專案的關係
 
-Replicate 上的模型是別人包好的固定 pipeline，跟 `comfyui_client.py` 那套
-「送 workflow JSON 給自己的 ComfyUI server」完全是两條路——**不會共用同一套
-程式碼**，是獨立的呼叫方式。真的要接的話，會是新寫一個類似
-`image_api.py` 的薄 wrapper，而不是把 `comfyui_client.py` 的邏輯搬過去用。
+已經接好了：`training/cloud_video.py` 的 `ReplicateBackend`（GUI「☁️ 雲端影片」分頁、
+`cloud_video.py run --provider replicate`），用法與設定見 README「雲端影片（RunPod／Replicate）」。
+
+Replicate 上的模型是別人包好的固定 pipeline，本專案的安全負面詞沒辦法在伺服器端保證，所以
+**每個模型使用前都要通過安全檢查**：輸入格式必須有負面詞、圖片、guidance／cfg（上限至少 1.5）
+三個欄位，否則拒絕。很多託管的快速版影片模型沒有 cfg 或負面詞欄位，會被擋下——選模型時先用
+`cloud_video.py status` 設好後跑一次看會不會被拒。
 
 ## RunPod
 
@@ -134,16 +137,16 @@ template，可以照 README 現有的安裝流程幾乎原封不動搬過去。
 
 ### 跟這個專案的關係
 
-`comfyui_client.py` 目前把 ComfyUI 位址寫死在檔案開頭：
+有兩種接法：
 
-```python
-COMFYUI_URL = "http://127.0.0.1:8188"
-```
-
-要接 RunPod 的 pod，把這行改成上面那個 `https://<POD_ID>-8188.proxy.runpod.net`
-即可——`comfyui_client.py`／`generate_character.py`／`gui.py`／`image_api.py`
-其他部分完全不用動，因為整條 pipeline本來就是透過 HTTP 呼叫 ComfyUI，不管
-ComfyUI 是跑在同一台機器還是雲端的 pod 上，呼叫方式沒有差別。要注意兩點：
+- **Serverless（已實作，建議）**：`worker/` 是本專案自己的 RunPod worker，支援
+  `image_hq`、`video_wan_i2v`（Wan 2.2 圖生影片）、`video_animatediff`（解除 8GB 高清上限）
+  三種工作；本機用 GUI「☁️ 雲端影片」分頁或 `training/cloud_video.py` 送出。沒工作時不計費，
+  不會有「pod 忘了關」的問題。設定步驟見 README「雲端影片（RunPod／Replicate）」。
+- **手動開 Pod**：ComfyUI 位址由環境變數 `COMFYUI_URL` 決定（預設
+  `http://127.0.0.1:8188`），設成上面那個 `https://<POD_ID>-8188.proxy.runpod.net` 後，
+  `generate_character.py`／`gui.py`／`image_api.py` 都不用改——整條 pipeline 本來就是透過 HTTP
+  呼叫 ComfyUI。要注意兩點：
 
 - 網路延遲比本地高很多，`POLL_TIMEOUT_SECONDS` 系列的 timeout 常數可能要
   調高（尤其是第一次跑、要下載 InsightFace/OpenPose 模型那幾次）

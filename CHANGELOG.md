@@ -3,6 +3,51 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-09-17
+
+### 雲端影片：RunPod 跑 Wan 2.2 圖生影片／AnimateDiff，Replicate 跑託管模型 `28de7e0` `9929671`
+
+- **問題**：本機 8GB 卡把影片品質卡死在兩處——AnimateDiff 二段高清上限 768²、只能用 SD1.5 motion
+  module；新一代圖生影片模型完全跑不動。只把同一套 AnimateDiff 搬到大卡上，畫質天花板仍是 SD1.5，
+  所以**先做新模型**：Wan 2.2 TI2V-5B，拿角色 anchor 或「🎯 圖片選擇生圖」的結果當第一幀。
+- **兩個平台刻意不對等**：
+  - **RunPod Serverless** 跑本專案自己的 worker。`worker/handler.py` 拆成薄的 S3／進度外殼 +
+    新的 `worker/jobs.py`（不 import boto3／runpod，可離線測），支援 `image_hq`（預設，行為不變）、
+    `video_wan_i2v`、`video_animatediff`，全部走跟本機同一套 `generate_character`，安全負面詞與
+    cfg 下限在伺服器端保證。
+  - **Replicate** 跑別人的模型，所以 `training/cloud_video.py` 使用前讀模型輸入格式，**缺負面詞、
+    圖片或 cfg（上限 ≥ 1.5）欄位一律拒絕**。cfg 欄位是必要條件：沒有 cfg 控制的模型常是 cfg 1 蒸餾
+    模型，負面詞形同虛設。預期多數託管「快速版」模型會被拒。
+- **外部細節全部查證，不憑記憶**（2026-09-17）：Wan 設定照 Comfy-Org 官方 `video_wan2_2_5B_ti2v`
+  範本（shift 8、20 步、cfg 5、uni_pc／simple、1280×704、121 幀、24 fps），模型網址逐一 HEAD 檢查
+  （5B 10.0 GB＋umt5 6.7 GB＋VAE 1.4 GB）；RunPod `/run` 上限 10 MB、`policy.executionTimeout`
+  單位毫秒、結果保留 30 分鐘；Replicate data URL 上限 256 KB。Replicate 的 Files API 在官方參考
+  文件查不到，所以**沒有使用**，過大的第一幀改成壓成 256 KB 內的 JPEG。刻意不用 cfg 1 的
+  lightning／蒸餾 LoRA。
+- **順手修掉從沒 build 過的 worker image 裡的潛在錯誤**：基底映像是 cuda12.4.1／torch 2.4，但 lock
+  鎖的是 `torch==2.11.0+cu128`（而且那個 wheel 不在 PyPI，要加 PyTorch cu128 索引）；ComfyUI 與節點包
+  都追分支名稱，現在全部鎖到本機實際跑的 commit，並補上 worker 從來沒有的 AnimateDiff-Evolved 與
+  Frame-Interpolation；`extra_model_paths.yaml` 缺 Wan／AnimateDiff 的模型資料夾；S3 client 沒有
+  `endpoint_url`，R2 不能用。
+- **成本與可靠性**：逾時、GUI 取消、Ctrl-C 都會先送遠端取消；建立工作的 POST 不重試（回應遺失時重送
+  會變成兩個計費工作）；輸出檔名用雲端工作 ID，不再用會跨 session 撞名的 `gui_seed<seed>`；密鑰只讀
+  環境變數，設定檔拒存 key／token。GUI 新分頁「☁️ 雲端影片」用自己的 `concurrency_id="cloud"`，
+  雲端工作不會卡住本機生成。
+- **驗證**：
+  - `check.ps1` 全綠，1205 passed（原 1104）。新增 `test_cloud_video.py`（假 HTTP session：狀態轉換、
+    每種中止路徑都剛好取消一次、401／402／429 訊息、送出不重試、安全閘門、payload 的安全欄位）、
+    `test_worker_handler.py`（斷言 boto3／runpod 沒被 import）、`test_wan_i2v.py`、
+    `test_validate_workflow_nodes.py`。
+  - 新工具 `training/validate_workflow_nodes.py` 對本機 ComfyUI（62b3c94）的 `/object_info` 檢查，
+    不載入模型：12 個模板（含 Wan）0 個未知類別或輸入。用同一份真實 object_info 做突變測試，拼錯的
+    輸入、不存在的類別、拼錯的 codec 子選項都有抓到；uni_pc／simple、mp4／h264 確認是合法選項值。
+  - GUI 在沒有帳號的狀態下實機點過：狀態列正確列出 4 項缺漏設定、「用角色的 anchor」帶入圖片、
+    生成被擋下並說明缺 RunPod key 與 endpoint、無工作時取消給提示、儲存 endpoint 後狀態列更新。
+  - **尚未在真正的雲端 GPU 上跑過**（還沒有 RunPod 帳號／Replicate token），冷啟動、每支耗時與成本
+    都還沒有實測數字。
+- **附帶發現**：Comfy-Org 文件寫 Wan 2.2 5B「用 ComfyUI 原生 offload 可以塞進 8GB VRAM」。這張卡是
+  PCIe x1，offload 會非常慢，沒有實測，但代表 Wan 也許能在本機做小規模的畫面驗證。
+
 ## 2026-09-13
 
 ### 生成進度改成顯示真實步數，不再顯示推估的百分比

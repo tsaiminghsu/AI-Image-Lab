@@ -1112,6 +1112,19 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
   或用了骨架姿勢），也會跳提示
 - 這裡不提供「立即轉換」按鈕：轉一個模型要讀約 7 GB、跑一分多鐘，請用 3c 的 CLI 指令
 
+#### ☁️ 雲端影片（RunPod／Replicate）
+
+- 在雲端 GPU 上生成影片，不佔用本機的 8GB 卡；設定步驟見下方「雲端影片（RunPod／Replicate）」
+- **Wan 2.2 圖生影片**：一張角色圖當第一幀，生成最長 5 秒的 720p 影片。沒有 FaceID，身分只靠
+  第一幀維持。Prompt 可以直接打中文（Wan 的文字編碼器看得懂）
+- **AnimateDiff 雲端高畫質**：跟「AnimateDiff 動態影片」分頁同一套 FaceID 鎖臉流程，只是解除
+  8GB 的二段高清上限；只能跑在 RunPod
+- 第一幀來源：自己上傳、「用角色的 anchor」、或「用『圖片選擇生圖』的結果」
+- **按 GPU 秒數計費，關掉瀏覽器不會停止雲端工作**——要中止請按「取消雲端工作」；超過
+  「最長等待秒數」也會自動送出取消
+- 狀態列會列出還沒完成的設定；endpoint ID／Replicate 模型可以在「雲端設定」摺疊區塊儲存，
+  API 金鑰一律用環境變數，不會寫進任何檔案
+
 #### AnimateDiff 動態影片
 
 - 頁面最下方獨立區塊，跟上面的靜態圖生成完全分開（不同 checkpoint：SD1.5，
@@ -1846,6 +1859,92 @@ RunPod、怎麼接上現有的 `comfyui_client.py`，見 [CLOUD_GPU.md](CLOUD_GP
 要把網頁部署到 AWS Amplify、GPU 運算外包給 Replicate/RunPod 的架構規劃
 （`gui.py`/`image_api.py` 哪些能重用、哪些要重寫），見
 [WEB_DEPLOYMENT.md](WEB_DEPLOYMENT.md)——目前只是規劃文件，還沒有對應實作。
+
+### 雲端影片（RunPod／Replicate）
+
+本機這張 8GB 卡把影片品質卡在兩個地方：AnimateDiff 的二段高清上限 768²、而且新一代圖生影片
+模型根本跑不動。這個專案接了兩個雲端平台，**刻意不對等**：
+
+| | RunPod Serverless | Replicate |
+|---|---|---|
+| 跑什麼 | 本專案自己的 worker（`worker/`） | 別人託管的模型 |
+| 工作類型 | Wan 2.2 圖生影片、AnimateDiff 雲端高畫質 | 只有 Wan 類圖生影片 |
+| 安全負面詞 | 由 worker 用跟本機同一套 `_build_prompt_and_negative` 組，cfg 下限一樣生效 | 本機組好再送；**模型必須通過安全檢查才准用**（見下） |
+| 設定成本 | 要建 endpoint、Network Volume、放模型 | 只要 token 跟模型名稱 |
+
+**Replicate 的安全檢查**：使用前會讀模型的輸入格式，必須同時有「負面詞」「圖片」「guidance／cfg
+（上限至少 1.5）」三個欄位才准用，否則直接拒絕。cfg 欄位不是可有可無：沒有 cfg 控制的模型
+常常是 cfg 1 的蒸餾模型，cfg 1 時負面詞（含年齡保護詞）根本不會生效。**預期很多託管的「快速版」
+影片模型會被拒絕，這是設計結果，不是 bug**。欄位名稱不同時可以在 `training/settings/cloud.json`
+的 `replicate.fields` 對應。
+
+**Wan 2.2 設定**（照 Comfy-Org 官方 `video_wan2_2_5B_ti2v` 範本，2026-09-17 讀取）：TI2V-5B、
+shift 8、20 步、cfg 5、uni_pc／simple、預設 1280×704、121 幀（5 秒）、24 fps。**刻意不用 cfg 1
+的 lightning／蒸餾 LoRA**——速度會快好幾倍，但 cfg 1 時負面詞失效。雲端實際耗時與每支成本
+尚未實測。
+
+#### 設定步驟（需要自己操作）
+
+1. **RunPod 帳號**：註冊、儲值、建立 API key，設成環境變數：
+
+   ```powershell
+   setx RUNPOD_API_KEY "你的 key"
+   ```
+
+2. **Network Volume**：在有 24GB GPU 的區域建立，約 60GB（Wan 模型 18.1GB＋AnimateDiff 2.0GB＋
+   既有圖片流程的模型）
+3. **放模型**：開一台便宜的暫時 pod 掛上這個 volume，在 pod 裡執行（**會下載約 20GB**）：
+
+   ```bash
+   bash worker/download_models.sh
+   bash worker/download_video_models.sh
+   ```
+
+   `Realistic_Vision_V6.0_NV_B1_fp16.safetensors` 跟 `anchors/<角色>/anchor_*.png` 要從本機
+   自己傳上去（腳本最後會列出來）
+4. **Worker image**：`.github/workflows/worker-image.yml` 在 push 後自動 build 並推到 GHCR。
+   基底是 `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`，ComfyUI 與六個節點包
+   都鎖在跟本機相同的 commit
+5. **建立 Serverless endpoint**：
+   - image：`ghcr.io/<repo>-worker:<commit sha>`（GHCR package 設公開，或在 RunPod 加 registry 憑證）
+   - GPU：24GB 等級，**限定支援 CUDA 12.8 的主機**
+   - Max workers `1`、Active workers `0`（沒工作時不計費）、Execution timeout `1800` 秒
+   - 掛上步驟 2 的 volume
+   - 環境變數：`S3_BUCKET`、`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_REGION`；
+     用 Cloudflare R2 的話再加 `S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com`、
+     `AWS_REGION=auto`。可選 `PRESIGN_SECONDS`（下載連結有效秒數，預設 3600）、
+     `WORKER_AD_HIRES_MAX_PIXELS`（AnimateDiff 雲端高清上限，預設 1024²）
+6. **儲存桶**：設生命週期規則讓 `generated/` 1–7 天後自動刪除（影片是伺服器端下載，不需要 CORS）
+7. **Replicate（選用）**：建 token → `setx REPLICATE_API_TOKEN "r8_..."`，選一個模型
+8. **本機設定**：開新的終端機讓環境變數生效，在 GUI「☁️ 雲端影片」→「雲端設定」填 endpoint ID
+   ／Replicate 模型，或用 CLI 確認：
+
+   ```powershell
+   ComfyUI\.venv\Scripts\python.exe training\cloud_video.py status
+   ```
+
+#### CLI
+
+```powershell
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --frames 81
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py cancel --provider runpod --job-id <工作 ID>
+```
+
+- 結果存到 `training/reference_candidates/videos/`，檔名含雲端工作 ID（不會跟別的工作撞名）
+- 逾時、Ctrl-C、GUI 取消都會先送出遠端取消——**放著不管的雲端工作會一直計費**
+- 送出工作的請求**不會自動重試**：回應遺失時重送會變成兩個計費工作，所以連線失敗時會請你先到
+  後台確認
+
+#### 修改 workflow 模板後的結構檢查
+
+雲端 worker 跟本機鎖在同一個 ComfyUI commit，所以可以在本機（不需要雲端 GPU、不載入任何模型）
+檢查每個模板的節點類別與輸入名稱都存在：
+
+```powershell
+ComfyUI\.venv\Scripts\python.exe training\validate_workflow_nodes.py
+```
+
+需要本機 ComfyUI 在執行。
 
 ## 資料夾結構
 

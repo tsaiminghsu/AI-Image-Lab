@@ -107,7 +107,12 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   角色 LoRA」）。
 - 4 個 SDXL / Pony checkpoint 都有 fp8 量化版可選，預設仍是完整版。
 - Z-Image Turbo 只支援純文字生圖，沒有 FaceID / ControlNet / 精修版本。
-- GUI 有 6 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
+- 雲端影片（2026-09-17）：`worker/`（RunPod Serverless，`jobs.py` 支援 `image_hq`／`video_wan_i2v`／
+  `video_animatediff`）＋ `training/cloud_video.py`（本機客戶端，RunPod 與 Replicate）＋ GUI「☁️ 雲端影片」
+  分頁。Replicate 模型沒有負面詞＋cfg 欄位就拒用。**程式碼與離線測試完成，但從未在真的雲端 GPU 上跑過**
+  （沒有帳號），worker image 也還沒 build 過。改 workflow 模板後可用
+  `training/validate_workflow_nodes.py` 對本機 ComfyUI 做結構檢查。
+- GUI 有 7 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
   `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是
   降級成文字（Z-Image、SD1.5），降級時 GUI 會明講。場景庫在 `training/scenes/`（縮圖已
   commit，`scene_library.py render-thumbs` 重生）。
