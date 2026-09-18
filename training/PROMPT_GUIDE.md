@@ -90,11 +90,13 @@ LCM 加速預設（`ANIMATEDIFF_LCM_PRESETS`，兩個都是 8 步／cfg 2.0／`l
 所有流程都經過 `generate_character._build_prompt_and_negative()`，順序固定：
 
 ```
-positive = [PONY_QUALITY_TAGS, ] [character_base_prompt(trigger), ] <你打的 prompt> [, style_positive]
+positive = [PONY_QUALITY_TAGS, ] [character_base_prompt(trigger), ] <你打的 prompt> [, 推導標籤] [, style_positive]
 negative = [PONY_QUALITY_NEGATIVE_TAGS, ] <tier 安全負面詞> [, style_negative] [, extra_negative]
 ```
 
 - `PONY_QUALITY_TAGS`／`PONY_QUALITY_NEGATIVE_TAGS` 只有 checkpoint 屬於 `PONY_CHECKPOINTS` 時才加。
+- **推導標籤**只有 Pony 系會加：`prompt_adapter.adapt()` 保留你打的自然語言，另外從裡面推出這個模型
+  偏好的 booru 標籤接在後面（見 2a）。已經在 prompt 裡出現的詞不會重複加，`PROMPT_ADAPTER=off` 可整個關掉。
 - `style_positive`／`style_negative` 傳 `None` 時分別預設成 `REALISTIC_STYLE`／`REALISTIC_NEGATIVE`；
   傳空字串則整段不加（Wan 就是這樣關掉風格詞的）。
 - tier `safe` 用 `SAFE_SAFETY_NEGATIVE`，`suggestive` 用 `SUGGESTIVE_NEGATIVE`。兩者都含 `AGE_SAFETY_NEGATIVE`，
@@ -116,6 +118,25 @@ negative = [PONY_QUALITY_NEGATIVE_TAGS, ] <tier 安全負面詞> [, style_negati
 
 姿勢骨架的文字提示（`prompt_hint`）由 `_plan_custom()` 追加在 prompt 尾端，不在這個函式裡；
 picker 分頁在沒有 ControlNet 的模型上會額外把 `camera` 也接上去（見 4f）。
+
+### 2a. 自然語言 → booru 詞表（`prompt_adapter`）
+
+Pony 三檔是 booru 標籤訓練出來的，對標籤比對整句自然語言更聽話（見第 7 節與 README 的姿勢實測）。
+`training/prompt_adapter.py` 的做法是**不改寫、只附加**：你照常打自然語言，它從句子裡推出對應的 booru
+標籤接在後面，模型看得懂哪一種就用哪一種。詞表沒收錄的詞不會消失，照樣以自然語言送進模型。
+
+- **只有 Pony 系會適配**，其他家族（SDXL／SD1.5／Z-Image／Wan／AnimateDiff、以及 `checkpoint=None`）原樣通過。
+- 預設用 `training/booru_lexicon.json`：整句片語比對、長片語優先、依片語在 prompt 裡的位置排序、
+  去重（已經在 prompt 裡的詞不重加）。`tests/test_prompt_adapter.py` 釘住它涵蓋專案自己的所有詞彙、
+  而且推導出的標籤不含任何年齡／露骨詞（那些只該出現在負面詞）。
+- 環境變數 `PROMPT_ADAPTER`：`lexicon`（預設）／`off`（完全關掉）。
+- 想看某句會被加上什麼：
+```
+ComfyUI\.venv\Scripts\python.exe training\prompt_adapter.py --checkpoint cyberrealistic_pony "a woman with long black hair sitting in a cafe"
+```
+- **想改用 LLM 推標籤**：`prompt_adapter.set_tagger(fn)` 註冊一個 `fn(text) -> list[str]` 就好，
+  組裝點和所有呼叫端都不用動；`set_tagger(None)` 還原成內建詞表。這個專案目前沒有 LLM API key，
+  所以預設是離線詞表。
 
 ## 3. 常數一覽
 
@@ -476,12 +497,12 @@ nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, 
 
 ### 5b. Pony（`cyberrealistic_pony`）、safe、角色 `mei`
 
-比 5a 多了 score 標籤和身分前綴，負面詞前面多了 `score_6, score_5, score_4`。
+比 5a 多了 score 標籤和身分前綴，負面詞前面多了 `score_6, score_5, score_4`。身分前綴與 prompt 後面那串 `1girl, solo, long hair, straight hair` 是 `prompt_adapter` 從句子推出來的 booru 標籤（見 2a）；已經在文字裡出現的詞不會重複加。
 
 <!-- example: {"checkpoint": "cyberrealistic_pony", "fn": "build", "id": "pony_safe", "prompt": "sitting at a wooden cafe table, holding a ceramic coffee cup, soft window light", "tier": "safe", "trigger": "mei"} -->
 **Positive**
 ```
-score_9, score_8_up, score_7_up, mei, 19 year old adult woman, east asian, long straight jet-black hair with blunt bangs, bright round eyes, soft round face, petite build, casual campus style, oversized hoodie and pleated skirt, sneakers, sitting at a wooden cafe table, holding a ceramic coffee cup, soft window light, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
+score_9, score_8_up, score_7_up, mei, 19 year old adult woman, east asian, long straight jet-black hair with blunt bangs, bright round eyes, soft round face, petite build, casual campus style, oversized hoodie and pleated skirt, sneakers, sitting at a wooden cafe table, holding a ceramic coffee cup, soft window light, 1girl, solo, long hair, straight hair, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
 ```
 **Negative**
 ```
@@ -495,7 +516,7 @@ score_6, score_5, score_4, nsfw, nude, naked, explicit, sexual content, child, c
 <!-- example: {"checkpoint": "pony_realism", "fn": "build", "id": "pony_suggestive", "prompt": "standing on the beach at sunset, wearing a one-piece swimsuit", "tier": "suggestive", "trigger": "xinyi"} -->
 **Positive**
 ```
-score_9, score_8_up, score_7_up, xinyi, 21 year old adult woman, east asian, shoulder-length wavy chestnut brown hair, almond eyes, heart-shaped face, slim build, modern minimalist chic, tailored blazer and trousers, standing on the beach at sunset, wearing a one-piece swimsuit, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
+score_9, score_8_up, score_7_up, xinyi, 21 year old adult woman, east asian, shoulder-length wavy chestnut brown hair, almond eyes, heart-shaped face, slim build, modern minimalist chic, tailored blazer and trousers, standing on the beach at sunset, wearing a one-piece swimsuit, 1girl, solo, medium hair, wavy hair, almond-shaped eyes, facial mark, minimalism, pants, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
 ```
 **Negative**
 ```
@@ -574,7 +595,7 @@ nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, 
 
 ## 6. 在 ComfyUI 網頁手動測試時
 
-- **不要重複加 score 標籤**：管線已經加過了，上面的字串裡就有。
+- **不要重複加 score 標籤或推導標籤**：管線已經加過了，第 5 節的 Pony 範例字串裡（包含 `1girl, solo` 那些）就有。
 - **Pony 系要把風格 LoRA 關掉**：`sdxl_photorealistic_slider_v1-0.safetensors` 在每個模板裡固定 2.5，
   是照寫實 SDXL 調的，套在 Pony 上會跟它自己的畫風打架。程式路徑傳 `lora_strength=0.0`。
 - **只有 Z-Image 和 Wan 讀得懂中文**，其他全部先翻成英文（GUI 有「翻譯成英文」按鈕，

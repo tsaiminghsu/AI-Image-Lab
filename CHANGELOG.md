@@ -5,6 +5,36 @@
 
 ## 2026-09-18
 
+### 依模型適配 prompt：保留自然語言，Pony 系自動附加 booru 標籤
+
+- **問題**：Pony 三檔是 booru 標籤訓練的，對標籤比對整句自然語言更聽話（見 README「骨架庫在各
+  checkpoint 的實測」的姿勢矩陣：純文字跪姿會生兩個人、五個躺姿全塌成坐姿）。但使用者想一直用
+  自然語言打 prompt，不想為了 Pony 改寫成 `1girl, solo, ...` 這種標籤句，也不想失去自然語言的細節。
+- **解法**：新增 `training/prompt_adapter.py`，**不改寫、只附加**——保留使用者原句，另外從句子裡
+  推出這個 checkpoint 偏好的 booru 標籤接在後面，模型看得懂哪一種就用哪一種；詞表沒收錄的詞照樣
+  以自然語言送進去，不會消失。掛在唯一組裝點 `generate_character._build_prompt_and_negative`，
+  所以 CLI／GUI／API／RunPod worker／picker 預覽全都一致生效，不會漂。順序變成
+  `score 標籤, 身分前綴, 自然語言, 推導標籤, 風格詞`。
+- **只動 Pony**：SDXL／SD1.5／Z-Image／Wan／AnimateDiff 以及 `checkpoint=None` 全部原樣通過
+  （它們本來就吃自然語言）。負面詞完全不碰。
+- **推導用離線詞表**：`training/booru_lexicon.json`（148 條、230 個比對片語），整句片語比對、
+  長片語優先、依片語在 prompt 裡的位置排序、去重（已經在句子裡的詞不重加，所以對自己的輸出是
+  冪等的）、單人才保留 `solo`。這個專案沒有 LLM API key，所以預設離線；之後要換 LLM 只要
+  `prompt_adapter.set_tagger(fn)` 註冊一個 `fn(text) -> list[str]`，組裝點和呼叫端都不用動。
+- **開關**：環境變數 `PROMPT_ADAPTER=off` 整個關掉，不加旗標（`FROZEN_CLI` 不動）。
+- **安全**：推導出的標籤永遠只加進正面詞，所以詞表任何標籤都不得含年齡／露骨詞——
+  `FORBIDDEN_TAG_TERMS` 與「沒有任何標籤命中它」都由測試釘住（跟 `AGE_SAFETY_NEGATIVE` 同做法）。
+  `shirtless` 是專案已用的正常 booru 詞，刻意保留；`topless`／`nude` 這類則擋掉。
+- **驗證（離線）**：`check.ps1` 全綠，1711 passed（原 1482）。`tests/test_prompt_adapter.py`（228 例）
+  釘住詞表涵蓋專案自己的每個角色外觀／詞庫項／場景／骨架（新增姿勢或服裝而詞表沒跟上就會紅）、
+  比對規則、Pony-only、開關、掛點、以及整合後的順序與負面詞不變。`PROMPT_GUIDE.md` 的 2、2a、
+  5b、5c 一併更新（範例由 `tests/test_prompt_guide.py` 重新產出比對）。`worker/Dockerfile` 已經
+  `COPY training/*.py training/*.json`，所以 `prompt_adapter.py`＋`booru_lexicon.json` 自動進 worker image，
+  不用改 Dockerfile。
+- **尚未實機驗證**：這次沒有在真的 ComfyUI 上跑 A/B（開發機此刻沒起 ComfyUI）。要看效果先起 ComfyUI，
+  同 seed 對 `cyberrealistic_pony` 各跑一張 `PROMPT_ADAPTER=off` vs 預設，並記 GPU 溫度／耗時。
+  **Pony 的姿勢問題仍以 ControlNet 骨架庫為正解**，附加標籤是輔助、不是取代。
+
 ### 各模型關鍵字總表與 Prompt 範例，並用測試把文件釘在程式上
 
 - **問題**：`training/PROMPT_GUIDE.md` 是 2026-09-08 寫的 prompt 食譜，之後一次都沒更新，

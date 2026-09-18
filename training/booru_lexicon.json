@@ -1,0 +1,1298 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "match": [
+        "woman",
+        "lady",
+        "female"
+      ],
+      "tags": [
+        "1girl",
+        "solo"
+      ]
+    },
+    {
+      "match": [
+        "man",
+        "male guy"
+      ],
+      "tags": [
+        "1boy",
+        "solo"
+      ]
+    },
+    {
+      "match": [
+        "long straight black hair"
+      ],
+      "tags": [
+        "long hair",
+        "straight hair",
+        "black hair"
+      ]
+    },
+    {
+      "match": [
+        "long straight jet-black hair"
+      ],
+      "tags": [
+        "long hair",
+        "straight hair",
+        "black hair"
+      ]
+    },
+    {
+      "match": [
+        "long layered hair"
+      ],
+      "tags": [
+        "long hair",
+        "layered hair"
+      ]
+    },
+    {
+      "match": [
+        "shoulder-length wavy chestnut brown hair"
+      ],
+      "tags": [
+        "medium hair",
+        "wavy hair",
+        "brown hair"
+      ]
+    },
+    {
+      "match": [
+        "short bob"
+      ],
+      "tags": [
+        "bob cut",
+        "short hair"
+      ]
+    },
+    {
+      "match": [
+        "high ponytail"
+      ],
+      "tags": [
+        "ponytail"
+      ]
+    },
+    {
+      "match": [
+        "tousled black hair"
+      ],
+      "tags": [
+        "black hair",
+        "messy hair"
+      ]
+    },
+    {
+      "match": [
+        "black hair"
+      ],
+      "tags": [
+        "black hair"
+      ]
+    },
+    {
+      "match": [
+        "soft permed hair"
+      ],
+      "tags": [
+        "wavy hair"
+      ]
+    },
+    {
+      "match": [
+        "slicked side part hair"
+      ],
+      "tags": [
+        "slicked back hair"
+      ]
+    },
+    {
+      "match": [
+        "side part"
+      ],
+      "tags": [
+        "parted hair"
+      ]
+    },
+    {
+      "match": [
+        "undercut"
+      ],
+      "tags": [
+        "undercut"
+      ]
+    },
+    {
+      "match": [
+        "tweed cut"
+      ],
+      "tags": [
+        "short hair"
+      ]
+    },
+    {
+      "match": [
+        "soft curls"
+      ],
+      "tags": [
+        "curly hair"
+      ]
+    },
+    {
+      "match": [
+        "blunt bangs"
+      ],
+      "tags": [
+        "blunt bangs"
+      ]
+    },
+    {
+      "match": [
+        "long black hair"
+      ],
+      "tags": [
+        "long hair",
+        "black hair"
+      ]
+    },
+    {
+      "match": [
+        "long brown hair"
+      ],
+      "tags": [
+        "long hair",
+        "brown hair"
+      ]
+    },
+    {
+      "match": [
+        "long blonde hair",
+        "long blond hair"
+      ],
+      "tags": [
+        "long hair",
+        "blonde hair"
+      ]
+    },
+    {
+      "match": [
+        "long wavy hair"
+      ],
+      "tags": [
+        "long hair",
+        "wavy hair"
+      ]
+    },
+    {
+      "match": [
+        "long hair"
+      ],
+      "tags": [
+        "long hair"
+      ]
+    },
+    {
+      "match": [
+        "short hair"
+      ],
+      "tags": [
+        "short hair"
+      ]
+    },
+    {
+      "match": [
+        "brown hair"
+      ],
+      "tags": [
+        "brown hair"
+      ]
+    },
+    {
+      "match": [
+        "blonde hair",
+        "blond hair"
+      ],
+      "tags": [
+        "blonde hair"
+      ]
+    },
+    {
+      "match": [
+        "wavy hair"
+      ],
+      "tags": [
+        "wavy hair"
+      ]
+    },
+    {
+      "match": [
+        "curly hair"
+      ],
+      "tags": [
+        "curly hair"
+      ]
+    },
+    {
+      "match": [
+        "hair"
+      ],
+      "tags": [
+        "hair"
+      ]
+    },
+    {
+      "match": [
+        "dark brown eyes"
+      ],
+      "tags": [
+        "brown eyes"
+      ]
+    },
+    {
+      "match": [
+        "bright round eyes"
+      ],
+      "tags": [
+        "round eyes"
+      ]
+    },
+    {
+      "match": [
+        "big expressive eyes"
+      ],
+      "tags": [
+        "big eyes"
+      ]
+    },
+    {
+      "match": [
+        "almond eyes"
+      ],
+      "tags": [
+        "almond-shaped eyes"
+      ]
+    },
+    {
+      "match": [
+        "sharp eyes"
+      ],
+      "tags": [
+        "sharp eyes"
+      ]
+    },
+    {
+      "match": [
+        "calm reserved eyes"
+      ],
+      "tags": [
+        "expressionless"
+      ]
+    },
+    {
+      "match": [
+        "cool detached eyes"
+      ],
+      "tags": [
+        "expressionless"
+      ]
+    },
+    {
+      "match": [
+        "deep-set eyes"
+      ],
+      "tags": [
+        "deep-set eyes"
+      ]
+    },
+    {
+      "match": [
+        "warm friendly eyes"
+      ],
+      "tags": [
+        "smile"
+      ]
+    },
+    {
+      "match": [
+        "oval face"
+      ],
+      "tags": [
+        "oval face"
+      ]
+    },
+    {
+      "match": [
+        "soft round face",
+        "youthful round face",
+        "round face"
+      ],
+      "tags": [
+        "round face"
+      ]
+    },
+    {
+      "match": [
+        "heart-shaped face"
+      ],
+      "tags": [
+        "facial mark"
+      ]
+    },
+    {
+      "match": [
+        "angular face",
+        "refined face"
+      ],
+      "tags": [
+        "v-shaped chin"
+      ]
+    },
+    {
+      "match": [
+        "angular jaw",
+        "sharp jawline"
+      ],
+      "tags": [
+        "v-shaped chin"
+      ]
+    },
+    {
+      "match": [
+        "petite build"
+      ],
+      "tags": [
+        "petite"
+      ]
+    },
+    {
+      "match": [
+        "slim build",
+        "slender build",
+        "lean build"
+      ],
+      "tags": [
+        "slim"
+      ]
+    },
+    {
+      "match": [
+        "athletic build",
+        "toned build",
+        "fit build",
+        "natural healthy build"
+      ],
+      "tags": [
+        "toned"
+      ]
+    },
+    {
+      "match": [
+        "mature adult features"
+      ],
+      "tags": [
+        "mature female"
+      ]
+    },
+    {
+      "match": [
+        "denim jacket"
+      ],
+      "tags": [
+        "denim jacket"
+      ]
+    },
+    {
+      "match": [
+        "bomber jacket"
+      ],
+      "tags": [
+        "bomber jacket"
+      ]
+    },
+    {
+      "match": [
+        "cropped jacket"
+      ],
+      "tags": [
+        "cropped jacket"
+      ]
+    },
+    {
+      "match": [
+        "surf-brand jacket",
+        "jacket"
+      ],
+      "tags": [
+        "jacket"
+      ]
+    },
+    {
+      "match": [
+        "blazer"
+      ],
+      "tags": [
+        "blazer"
+      ]
+    },
+    {
+      "match": [
+        "knit sweater"
+      ],
+      "tags": [
+        "sweater"
+      ]
+    },
+    {
+      "match": [
+        "sweater"
+      ],
+      "tags": [
+        "sweater"
+      ]
+    },
+    {
+      "match": [
+        "cardigan"
+      ],
+      "tags": [
+        "cardigan"
+      ]
+    },
+    {
+      "match": [
+        "blouse"
+      ],
+      "tags": [
+        "blouse"
+      ]
+    },
+    {
+      "match": [
+        "button-up shirt",
+        "button-up"
+      ],
+      "tags": [
+        "collared shirt"
+      ]
+    },
+    {
+      "match": [
+        "t-shirt"
+      ],
+      "tags": [
+        "shirt"
+      ]
+    },
+    {
+      "match": [
+        "crop top"
+      ],
+      "tags": [
+        "crop top"
+      ]
+    },
+    {
+      "match": [
+        "tank top"
+      ],
+      "tags": [
+        "tank top"
+      ]
+    },
+    {
+      "match": [
+        "camisole"
+      ],
+      "tags": [
+        "camisole"
+      ]
+    },
+    {
+      "match": [
+        "off-shoulder top",
+        "off-shoulder"
+      ],
+      "tags": [
+        "off shoulder"
+      ]
+    },
+    {
+      "match": [
+        "hoodie"
+      ],
+      "tags": [
+        "hoodie"
+      ]
+    },
+    {
+      "match": [
+        "shirt"
+      ],
+      "tags": [
+        "shirt"
+      ]
+    },
+    {
+      "match": [
+        "summer dress",
+        "dress"
+      ],
+      "tags": [
+        "dress"
+      ]
+    },
+    {
+      "match": [
+        "floral"
+      ],
+      "tags": [
+        "floral print"
+      ]
+    },
+    {
+      "match": [
+        "trench coat"
+      ],
+      "tags": [
+        "trench coat"
+      ]
+    },
+    {
+      "match": [
+        "jeans"
+      ],
+      "tags": [
+        "denim",
+        "pants"
+      ]
+    },
+    {
+      "match": [
+        "cargo pants"
+      ],
+      "tags": [
+        "cargo pants"
+      ]
+    },
+    {
+      "match": [
+        "pleated skirt"
+      ],
+      "tags": [
+        "pleated skirt"
+      ]
+    },
+    {
+      "match": [
+        "skirt"
+      ],
+      "tags": [
+        "skirt"
+      ]
+    },
+    {
+      "match": [
+        "trousers",
+        "pants"
+      ],
+      "tags": [
+        "pants"
+      ]
+    },
+    {
+      "match": [
+        "sneakers"
+      ],
+      "tags": [
+        "sneakers"
+      ]
+    },
+    {
+      "match": [
+        "one-piece swimsuit"
+      ],
+      "tags": [
+        "one-piece swimsuit"
+      ]
+    },
+    {
+      "match": [
+        "swimsuit"
+      ],
+      "tags": [
+        "swimsuit"
+      ]
+    },
+    {
+      "match": [
+        "bikini"
+      ],
+      "tags": [
+        "bikini"
+      ]
+    },
+    {
+      "match": [
+        "sports bra"
+      ],
+      "tags": [
+        "sports bra"
+      ]
+    },
+    {
+      "match": [
+        "swim trunks",
+        "board shorts",
+        "swim shorts"
+      ],
+      "tags": [
+        "male swimwear",
+        "swim trunks"
+      ]
+    },
+    {
+      "match": [
+        "short shorts"
+      ],
+      "tags": [
+        "short shorts"
+      ]
+    },
+    {
+      "match": [
+        "shorts"
+      ],
+      "tags": [
+        "shorts"
+      ]
+    },
+    {
+      "match": [
+        "shirtless"
+      ],
+      "tags": [
+        "shirtless"
+      ]
+    },
+    {
+      "match": [
+        "joggers"
+      ],
+      "tags": [
+        "sweatpants"
+      ]
+    },
+    {
+      "match": [
+        "standing straight",
+        "standing"
+      ],
+      "tags": [
+        "standing"
+      ]
+    },
+    {
+      "match": [
+        "sitting on a chair"
+      ],
+      "tags": [
+        "sitting",
+        "on chair"
+      ]
+    },
+    {
+      "match": [
+        "sitting on the floor",
+        "sitting on a low step",
+        "sitting cross-legged",
+        "sitting"
+      ],
+      "tags": [
+        "sitting"
+      ]
+    },
+    {
+      "match": [
+        "seated"
+      ],
+      "tags": [
+        "sitting"
+      ]
+    },
+    {
+      "match": [
+        "kneeling"
+      ],
+      "tags": [
+        "kneeling"
+      ]
+    },
+    {
+      "match": [
+        "squatting"
+      ],
+      "tags": [
+        "squatting"
+      ]
+    },
+    {
+      "match": [
+        "leaning against a wall"
+      ],
+      "tags": [
+        "against wall",
+        "leaning"
+      ]
+    },
+    {
+      "match": [
+        "leaning forward"
+      ],
+      "tags": [
+        "leaning forward"
+      ]
+    },
+    {
+      "match": [
+        "bending forward"
+      ],
+      "tags": [
+        "bent over"
+      ]
+    },
+    {
+      "match": [
+        "reclining"
+      ],
+      "tags": [
+        "lying"
+      ]
+    },
+    {
+      "match": [
+        "lying on back",
+        "lying on the back",
+        "lying flat"
+      ],
+      "tags": [
+        "lying",
+        "on back"
+      ]
+    },
+    {
+      "match": [
+        "lying on side",
+        "lying on one side"
+      ],
+      "tags": [
+        "lying",
+        "on side"
+      ]
+    },
+    {
+      "match": [
+        "lying on stomach",
+        "lying on the stomach"
+      ],
+      "tags": [
+        "lying",
+        "on stomach"
+      ]
+    },
+    {
+      "match": [
+        "walking"
+      ],
+      "tags": [
+        "walking"
+      ]
+    },
+    {
+      "match": [
+        "jogging"
+      ],
+      "tags": [
+        "running"
+      ]
+    },
+    {
+      "match": [
+        "jumping"
+      ],
+      "tags": [
+        "jumping"
+      ]
+    },
+    {
+      "match": [
+        "arms crossed",
+        "crossed the chest"
+      ],
+      "tags": [
+        "crossed arms"
+      ]
+    },
+    {
+      "match": [
+        "hands in pockets",
+        "pockets"
+      ],
+      "tags": [
+        "hands in pockets"
+      ]
+    },
+    {
+      "match": [
+        "hands on the hips",
+        "hands on hips",
+        "on the hips"
+      ],
+      "tags": [
+        "hands on hips"
+      ]
+    },
+    {
+      "match": [
+        "hand touching hair",
+        "touch the hair",
+        "touching hair"
+      ],
+      "tags": [
+        "hand in own hair"
+      ]
+    },
+    {
+      "match": [
+        "arms above head",
+        "arms stretched above",
+        "one arm raised",
+        "stretched overhead",
+        "arms overhead"
+      ],
+      "tags": [
+        "arms up"
+      ]
+    },
+    {
+      "match": [
+        "waving"
+      ],
+      "tags": [
+        "waving"
+      ]
+    },
+    {
+      "match": [
+        "reading a book",
+        "reading"
+      ],
+      "tags": [
+        "book",
+        "reading"
+      ]
+    },
+    {
+      "match": [
+        "yoga",
+        "tree pose"
+      ],
+      "tags": [
+        "yoga"
+      ]
+    },
+    {
+      "match": [
+        "mid-stride",
+        "mid-step"
+      ],
+      "tags": [
+        "walking"
+      ]
+    },
+    {
+      "match": [
+        "slight smile",
+        "smile",
+        "smiling"
+      ],
+      "tags": [
+        "smile"
+      ]
+    },
+    {
+      "match": [
+        "looking directly at camera",
+        "looking at camera",
+        "looking at the camera"
+      ],
+      "tags": [
+        "looking at viewer"
+      ]
+    },
+    {
+      "match": [
+        "looking away"
+      ],
+      "tags": [
+        "looking away"
+      ]
+    },
+    {
+      "match": [
+        "looking back over",
+        "looking back",
+        "looking over shoulder",
+        "over one shoulder"
+      ],
+      "tags": [
+        "looking back"
+      ]
+    },
+    {
+      "match": [
+        "front view portrait",
+        "front view"
+      ],
+      "tags": [
+        "front view"
+      ]
+    },
+    {
+      "match": [
+        "3/4 back view",
+        "3/4 view",
+        "three-quarter view"
+      ],
+      "tags": [
+        "dutch angle"
+      ]
+    },
+    {
+      "match": [
+        "side profile",
+        "side view"
+      ],
+      "tags": [
+        "from side",
+        "profile"
+      ]
+    },
+    {
+      "match": [
+        "back view",
+        "from behind",
+        "rear view",
+        "back of head"
+      ],
+      "tags": [
+        "from behind"
+      ]
+    },
+    {
+      "match": [
+        "close-up headshot",
+        "close-up",
+        "headshot"
+      ],
+      "tags": [
+        "portrait",
+        "close-up"
+      ]
+    },
+    {
+      "match": [
+        "medium shot",
+        "upper body"
+      ],
+      "tags": [
+        "upper body"
+      ]
+    },
+    {
+      "match": [
+        "full body shot",
+        "full length shot",
+        "full body",
+        "full length",
+        "head-to-toe"
+      ],
+      "tags": [
+        "full body"
+      ]
+    },
+    {
+      "match": [
+        "overhead view",
+        "high angle view",
+        "high angle",
+        "from directly above",
+        "from above",
+        "looking down"
+      ],
+      "tags": [
+        "from above"
+      ]
+    },
+    {
+      "match": [
+        "from below"
+      ],
+      "tags": [
+        "from below"
+      ]
+    },
+    {
+      "match": [
+        "portrait"
+      ],
+      "tags": [
+        "portrait"
+      ]
+    },
+    {
+      "match": [
+        "walking away"
+      ],
+      "tags": [
+        "walking"
+      ]
+    },
+    {
+      "match": [
+        "window light"
+      ],
+      "tags": [
+        "window light"
+      ]
+    },
+    {
+      "match": [
+        "golden hour",
+        "sunlight"
+      ],
+      "tags": [
+        "sunlight"
+      ]
+    },
+    {
+      "match": [
+        "softbox lighting",
+        "studio softbox"
+      ],
+      "tags": [
+        "studio lighting"
+      ]
+    },
+    {
+      "match": [
+        "overcast"
+      ],
+      "tags": [
+        "overcast"
+      ]
+    },
+    {
+      "match": [
+        "warm indoor lighting",
+        "indoor"
+      ],
+      "tags": [
+        "indoors"
+      ]
+    },
+    {
+      "match": [
+        "rim light"
+      ],
+      "tags": [
+        "backlighting"
+      ]
+    },
+    {
+      "match": [
+        "studio background"
+      ],
+      "tags": [
+        "studio",
+        "simple background"
+      ]
+    },
+    {
+      "match": [
+        "cafe"
+      ],
+      "tags": [
+        "cafe"
+      ]
+    },
+    {
+      "match": [
+        "city street at night",
+        "city street"
+      ],
+      "tags": [
+        "city",
+        "street"
+      ]
+    },
+    {
+      "match": [
+        "park with trees",
+        "park"
+      ],
+      "tags": [
+        "park"
+      ]
+    },
+    {
+      "match": [
+        "bedroom"
+      ],
+      "tags": [
+        "bedroom"
+      ]
+    },
+    {
+      "match": [
+        "outdoor garden",
+        "garden"
+      ],
+      "tags": [
+        "garden"
+      ]
+    },
+    {
+      "match": [
+        "minimalist"
+      ],
+      "tags": [
+        "minimalism"
+      ]
+    },
+    {
+      "match": [
+        "bookstore"
+      ],
+      "tags": [
+        "bookshelf"
+      ]
+    },
+    {
+      "match": [
+        "neon signs",
+        "neon"
+      ],
+      "tags": [
+        "neon lights"
+      ]
+    },
+    {
+      "match": [
+        "night"
+      ],
+      "tags": [
+        "night"
+      ]
+    },
+    {
+      "match": [
+        "rooftop terrace",
+        "rooftop"
+      ],
+      "tags": [
+        "rooftop"
+      ]
+    },
+    {
+      "match": [
+        "beach at sunset",
+        "beach during the day",
+        "beach"
+      ],
+      "tags": [
+        "beach"
+      ]
+    },
+    {
+      "match": [
+        "sunset"
+      ],
+      "tags": [
+        "sunset"
+      ]
+    },
+    {
+      "match": [
+        "poolside"
+      ],
+      "tags": [
+        "poolside"
+      ]
+    },
+    {
+      "match": [
+        "outdoor shower"
+      ],
+      "tags": [
+        "shower"
+      ]
+    },
+    {
+      "match": [
+        "tropical resort",
+        "tropical"
+      ],
+      "tags": [
+        "palm tree"
+      ]
+    },
+    {
+      "match": [
+        "resort"
+      ],
+      "tags": [
+        "palm tree"
+      ]
+    },
+    {
+      "match": [
+        "lakeside dock",
+        "lakeside",
+        "dock"
+      ],
+      "tags": [
+        "lake"
+      ]
+    },
+    {
+      "match": [
+        "overlooking the city",
+        "city"
+      ],
+      "tags": [
+        "cityscape"
+      ]
+    },
+    {
+      "match": [
+        "casual"
+      ],
+      "tags": [
+        "casual"
+      ]
+    },
+    {
+      "match": [
+        "streetwear"
+      ],
+      "tags": [
+        "street fashion"
+      ]
+    }
+  ]
+}

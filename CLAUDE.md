@@ -56,8 +56,10 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   確認沒有把整個檔案換行改掉。
 - **語言**：程式碼註解、commit 訊息用英文；使用者看得到的字串（GUI 標籤、CLI 提示、
   README）用繁體中文。`training/quantize_models.py` 全檔 ASCII。
-- **單一改寫點**：所有流程都經過 `comfyui_client._submit_and_wait`。要對每條流程都生效
-  的改寫（模型版本切換、LCM 模式切換重置）放在那裡，不要散在各個 caller。
+- **單一改寫點**：所有流程都經過 `comfyui_client._submit_and_wait`（workflow 圖層級的改寫，
+  例如模型版本切換、LCM 模式切換重置）與 `generate_character._build_prompt_and_negative`
+  （prompt 字串層級的組裝：score 標籤、安全負面詞、依模型的自然語言適配 `prompt_adapter.adapt`）。
+  要對每條流程都生效的改寫放在這兩個點，不要散在各個 caller。
 - **workflow**：`training/workflow_template*.json`，程式用 node id 改參數。功能關掉時要
   把節點從 dict 移除，不是留著把權重設成 0。
 - **年齡安全**：`MINIMUM_AGE` 在 import 時檢查，不符合會直接 `raise`；
@@ -83,6 +85,8 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   - `training/PROMPT_GUIDE.md` 引用的常數、模型 key／檔名、詞庫、角色、場景、骨架與 8 組
     Prompt 範例跟程式一致（`tests/test_prompt_guide.py` 會重新呼叫組裝函式比對，失敗訊息
     直接印出可貼回的字串）
+  - `training/booru_lexicon.json` 涵蓋專案自己的所有詞彙（角色外觀／詞庫／場景／骨架），
+    而且推導出的標籤不含任何年齡／露骨詞（`tests/test_prompt_adapter.py`）
 - CI（`.github/workflows/checks.yml`）在 ubuntu 與 windows 兩個 runner 上跑同一套，
   worker image 的 build 有 `needs: checks` 擋著。
 - 臉／身分比較用 `training/face_similarity.py`（InsightFace `buffalo_l`，跟 FaceID 同一個

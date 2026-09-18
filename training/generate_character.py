@@ -27,6 +27,7 @@ from types import SimpleNamespace
 
 import comfyui_client as client
 import pose_skeletons
+import prompt_adapter
 import scene_library
 
 # "photorealistic, high detail" reads to SDXL as "polished digital art" as
@@ -595,6 +596,11 @@ def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_posi
         full_prompt = f"{character_base_prompt(trigger, profile, gender_weight=weight)}, {prompt}"
     else:
         full_prompt = prompt
+    # Keep the user's natural language, append the booru tags this checkpoint prefers. No-op for
+    # every non-Pony family and when PROMPT_ADAPTER=off. Runs on the identity prefix + user prompt
+    # together, before the style suffix, so a character's "long straight black hair" also yields
+    # tags but REALISTIC_STYLE's constant phrasing doesn't get tagged every image. See prompt_adapter.
+    full_prompt, _ = prompt_adapter.adapt(full_prompt, checkpoint)
     if style_positive:
         full_prompt = f"{full_prompt}, {style_positive}"
     if checkpoint in client.PONY_CHECKPOINTS:

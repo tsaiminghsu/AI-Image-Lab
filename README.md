@@ -1500,6 +1500,8 @@ dict 的 key（例如 `"newname"`）就是 LoRA 訓練用的 trigger word，會�
 ## Prompt 結構
 
 > 各模型的關鍵字總表、全部詞庫、以及每個家族「實際送給 ComfyUI 的完整字串」範例，見 [training/PROMPT_GUIDE.md](training/PROMPT_GUIDE.md)（由 `tests/test_prompt_guide.py` 釘住，不會過期）。這一節只講資料集流程（anchor/variations）怎麼組。
+>
+> Pony 系吃 booru 標籤，所以自訂生圖時你照打自然語言，`prompt_adapter` 會保留原句再附加推出來的 booru 標籤（`PROMPT_ADAPTER=off` 可關），細節見 PROMPT_GUIDE 的 2a。
 
 positive prompt 組成順序：
 
@@ -1803,6 +1805,7 @@ ControlNet 本身不是瓶頸。強度掃描（0.6/0.8/1.0）三個值都能讓�
 | ANIMATEDIFF_FACEID_V2_WEIGHT / FACEID_LORA_STRENGTH | 1.0 / 0.6（調高會讓動作明顯變少，見「臉部變形排查」） |
 | ANIMATEDIFF_MOTION_SCALE | 1.0（motion module 時序注意力強度；不是 1.0 時才注入節點 `62`） |
 | SD15_GENDER_WEIGHT | 1.3（`generate_character.py`；SD1.5 路線的角色性別字寫成 `(man:1.3)`，見「男性角色被畫成女生」） |
+| PROMPT_ADAPTER | `lexicon`（預設）／`off`（環境變數；Pony 系把自然語言 prompt 額外附加 booru 標籤，詞表 `training/booru_lexicon.json`，見 PROMPT_GUIDE 2a） |
 | QUANT_MODEL_KEYS / QUANT_SUFFIX | juggernaut、pony、cyberrealistic_pony、pony_realism / `.fp8q.safetensors`（`comfyui_client.py`；設定檔 `training/settings/model_variants.json`，環境變數 `MODEL_VARIANT`，見「3c. 量化版模型」） |
 | ANIMATEDIFF_FACE_CROP_FACTOR / FACE_GUIDE_SIZE | 1.5 / 512（影片臉部精修的裁切倍數 / 臉部重繪尺寸） |
 | ANIMATEDIFF_FACEDETAILER_STEPS / DENOISE | 12 / 0.45（影片專用；靜態圖仍用 FACEDETAILER_DENOISE 0.5） |

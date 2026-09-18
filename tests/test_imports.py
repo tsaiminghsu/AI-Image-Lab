@@ -12,6 +12,7 @@ import pytest
         "comfyui_client",
         "generate_character",
         "pose_skeletons",
+        "prompt_adapter",
         "pose_pack",
         "benchmark",
         "scene_library",
