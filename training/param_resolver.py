@@ -14,9 +14,13 @@ backwards would be a security regression, not a UX change.
 Picking a random seed when none was given stays the caller's decision - image_api.py:191 and
 worker/jobs.py:129 both do it with `random.randint(0, 2**31 - 1)`. This module only normalises
 a seed it was actually handed; it has no sentinel for "surprise me".
-"""
 
-import generate_character as gc
+generate_character is imported lazily rather than at module scope, because the import graph runs
+generate_character -> capability_catalog -> param_resolver and a top-level import here would
+close that into a cycle. Deferring it costs nothing: by the time resolve_prompt is called,
+generate_character is fully loaded. The repo already does this in the same shape for
+cloud_workflow inside _submit_and_wait and for PIL inside gen_gif.
+"""
 
 STEP = 32
 MIN_SIDE = 256
@@ -89,7 +93,10 @@ def resolve_prompt(value, limit=None):
     boundary is near the end; otherwise (a single enormous token) a hard cut is the honest
     answer.
     """
-    limit = gc.MAX_PROMPT_CHARS if limit is None else limit
+    if limit is None:
+        import generate_character as gc  # deferred: see the module docstring's import-cycle note
+
+        limit = gc.MAX_PROMPT_CHARS
     text = "" if value is None else str(value).strip()
     if len(text) <= limit:
         return text
