@@ -1027,6 +1027,26 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
 - 刻意跑在 CPU 上，不佔用 GPU VRAM——避免跟 ComfyUI 常駐的 SDXL checkpoint
   搶顯存，導致生成中的圖片 OOM
 
+#### Pony 關鍵字（點選代替打字）
+
+- Prompt 欄位上方的「Pony 關鍵字」摺疊區，把 Pony 系 checkpoint 的標籤慣例做成勾選清單：
+  **必備 4 類**（品質分數、來源風格 `source_*`、內容分級 `rating_*`、主體與人數 `1girl` / `solo`）
+  ＋ **其他 9 類**（鏡頭、姿勢、表情、髮型體態、服裝、光線、場景、攝影風格、額外負面詞），
+  共 137 個標籤，每個都附中文標籤和原始英文標籤
+- 勾選時下方預覽會即時顯示「會被加進去的字」，按「加入 Prompt」才真的拼進 Prompt 欄位
+  （「額外負面詞」那一類拼進負面欄位）。是**附加**不是覆蓋，已經打好的字不會被蓋掉，
+  按兩次也不會重複
+- **品質分數（`score_9, score_8_up, score_7_up`）不在勾選範圍**，它本來就會自動加在最前面，
+  這裡只是顯示出來讓你知道；自己再打一次反而變成兩次
+- 切到非 Pony 系 checkpoint（juggernaut / SD1.5 / Z-Image）時，`score_*`、`source_*`、
+  `rating_*` 三類會自動收起來——那些模型沒有被這樣訓練過；描述性的字則全部保留
+- 內容分級選 `safe` 時，泳裝／海灘這類 suggestive 選項不會出現；從 `suggestive` 切回
+  `safe` 時，已經勾選的那些也會一起被清掉，不會隱形地被送出去
+- 打自然語言本來就會由 `prompt_adapter` 自動補上推導出來的 booru 標籤（見 PROMPT_GUIDE 的 2a），
+  這個摺疊區是想**明確指定**時用的——尤其 `rating_*` / `source_*` 是句子推不出來的
+- 完整說明（含 booru 語法、`rating_explicit` 為什麼不提供、`1girl` 的年齡偏誤）在
+  `training/PROMPT_GUIDE.md` 的 4h；清單本身在 `training/pony_tags.py`
+
 #### 自動翻譯（多語言輸入）
 
 - Prompt 欄位下方的「翻譯成英文」按鈕，呼叫 Google Translate 的公開端點把

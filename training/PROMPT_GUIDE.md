@@ -476,6 +476,36 @@ jungi, 25 year old adult man, east asian, slicked side part hair, confident shar
 
 GUI 每個 prompt 欄位下方的「依圖片產生 Prompt」摺疊區就是這兩個按鈕，旁邊還有「翻譯成英文」。
 
+### 4h. Pony 必備標籤與 GUI 勾選詞庫（`pony_tags`）
+
+4a–4f 都是「描述畫面」的詞。Pony 系另外還有一組**跟畫面內容無關的技術標籤**，是它訓練資料裡
+就帶著的欄位，共四類：
+
+| 類別 | 標籤 | 誰負責加 |
+|---|---|---|
+| 品質分數 | `score_9, score_8_up, score_7_up`（負面側 `score_6, score_5, score_4`） | **自動**，由 `_build_prompt_and_negative` 加，見第 2 節 |
+| 來源風格 | `source_pony` / `source_anime` / `source_cartoon` / `source_furry` | 自己選；寫實 merge 通常不加 |
+| 內容分級 | `rating_safe` / `rating_questionable` / `rating_explicit` | 自己選；本專案只提供前兩個 |
+| 主體與人數 | `1girl` / `1boy` / `solo` / `mature female` / `adult` | 自己選，或由 `prompt_adapter` 從句子推出（2a） |
+
+- **`source_*`**：切換畫風大方向。`cyberrealistic_pony`、`pony_realism` 這類已經調成照片風的
+  merge 通常不要加——補上 `source_anime` / `source_cartoon` 會把畫面拉回插畫。
+- **`rating_*`**：`rating_explicit` 本專案**不提供**。露骨內容本來就被 `SUGGESTIVE_NEGATIVE`
+  擋著（第 3 節），正面詞和負面詞互相打架只會生出壞圖。GUI 依內容分級決定給哪些：
+  safe 只有 `rating_safe`，suggestive 才多一個 `rating_questionable`。
+- **`1girl` 的年齡偏誤**：booru 資料裡 `1girl` 常對應到偏年輕的畫風，所以寫實成人角色請同時加
+  `mature female` / `mature male` 和 `adult`。負面詞的年齡保護（`AGE_SAFETY_NEGATIVE`）永遠都在，
+  這裡是把正面側也講清楚。
+
+booru 語法本身：逗號分隔、底線和空格等價（`long_hair` ≒ `long hair`）、權重寫成 `(tag:1.2)`
+（ComfyUI 語法，0.8–1.3 之間就夠用），`BREAK` 可以把 prompt 切成兩段條件。
+
+**程式與 GUI**：清單在 `training/pony_tags.py`（`CATEGORIES`，13 類＝必備 4 ＋ 其他 9）。
+它把 4a–4f 這些既有詞庫**直接引用**過來、只補中文標籤，兩邊不同步時 import 就會報錯。
+GUI「🖼️ 自訂生圖」分頁的「Pony 關鍵字」摺疊區是它的勾選介面：勾完按「加入 Prompt」把字拼進
+Prompt 欄位（「額外負面詞」那一類拼進負面欄位）。它產生的只是一般 prompt 文字，照樣走第 2 節的
+組裝規則，而且**永遠不自己加 score 標籤**——那已經是自動的，加了會變成兩次。
+
 ## 5. 各家族 Prompt 範例
 
 下面每組都是**管線實際送給 ComfyUI 的完整字串**，由 `tests/test_prompt_guide.py` 重新呼叫組裝函式驗證。

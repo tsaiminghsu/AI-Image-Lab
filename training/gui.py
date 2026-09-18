@@ -23,6 +23,7 @@ import caption_image
 import cloud_video
 import comfyui_client as client
 import generate_character as gc
+import pony_tags
 import pose_skeletons
 import scene_library
 import talking_head
@@ -266,6 +267,88 @@ def save_variant_choices(*choices):
 def refresh_variant_status():
     rows = client.variant_status()
     return [gr.update(label=_variant_label(r), value=r["chosen"]) for r in rows] + [_variant_table()]
+
+
+# --- Pony keyword picker (自訂生圖 tab) -----------------------------------------------------
+# One CheckboxGroup per selectable category, built by a comprehension, so their count is not
+# statically visible and Gradio binds them positionally - hence the *args handlers below and
+# this list, the single place that says which argument is which category. The groups are built
+# for ALL categories once: Gradio cannot grow or shrink a component list afterwards, so a tier
+# or checkpoint change hides/repopulates them instead (pony_tag_refresh). The widest combination
+# (suggestive tier, Pony checkpoint) is what "all" means, and deriving the slug list from the
+# same call that builds the components is what keeps the two in the same order.
+PONY_TAG_INITIAL = [c for c in pony_tags.categories("suggestive") if c["selectable"]]
+PONY_TAG_SLUGS = [c["slug"] for c in PONY_TAG_INITIAL]
+PONY_TAG_PREVIEW_HINT = "勾選上面的關鍵字，這裡會顯示實際會被加進去的字（品質分數標籤不在這裡，它一律自動加）。"
+# Read out of the library rather than restated here, so the tab can never claim something the
+# quality category does not actually do.
+PONY_TAG_QUALITY_NOTE = next(c for c in pony_tags.CATEGORIES if c["slug"] == "quality")["note_zh"]
+
+
+def _pony_tag_checkpoint(checkpoint_choice):
+    """The dropdown's display label -> a CHECKPOINTS key (or None for the pipeline default),
+    the same conversion reset_resolution_for_sd15 and update_picker_preview do."""
+    return None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
+
+
+def _pony_tag_split(args):
+    """Splits a variadic handler's arguments into ({slug: picked}, trailing fields)."""
+    n = len(PONY_TAG_SLUGS)
+    return dict(zip(PONY_TAG_SLUGS, args[:n])), args[n:]
+
+
+def _append_terms(existing, addition):
+    """Appends comma-separated terms without repeating ones already there - the button is meant
+    to survive being pressed twice, and to add to what the user typed rather than replace it."""
+    terms = [t.strip() for t in (existing or "").split(",") if t.strip()]
+    for term in [t.strip() for t in (addition or "").split(",") if t.strip()]:
+        if term not in terms:
+            terms.append(term)
+    return ", ".join(terms)
+
+
+def pony_tag_preview(*args):
+    selected, (tier, checkpoint_choice) = _pony_tag_split(args)
+    body, extra_negative = pony_tags.compose(
+        selected, tier=tier, checkpoint=_pony_tag_checkpoint(checkpoint_choice))
+    lines = []
+    if body:
+        lines.append(f"Prompt：{body}")
+    if extra_negative:
+        lines.append(f"額外負面詞：{extra_negative}")
+    return "\n".join(lines) if lines else PONY_TAG_PREVIEW_HINT
+
+
+def pony_tag_append(*args):
+    selected, (tier, checkpoint_choice, prompt_text, negative_text) = _pony_tag_split(args)
+    body, extra_negative = pony_tags.compose(
+        selected, tier=tier, checkpoint=_pony_tag_checkpoint(checkpoint_choice))
+    if not body and not extra_negative:
+        gr.Warning("還沒有勾選任何關鍵字")
+        return gr.update(), gr.update()
+    return _append_terms(prompt_text, body), _append_terms(negative_text, extra_negative)
+
+
+def pony_tag_refresh(*args):
+    """Repopulates the groups after a tier or checkpoint change. Picks that the new combination
+    no longer offers are dropped, for the reason refresh_picker_scenes drops its selection: a
+    suggestive-only choice that stays ticked while invisible would still reach the generator."""
+    selected, (tier, checkpoint_choice) = _pony_tag_split(args)
+    available = {c["slug"]: c for c in pony_tags.categories(tier, _pony_tag_checkpoint(checkpoint_choice))}
+    updates = []
+    for slug in PONY_TAG_SLUGS:
+        cat = available.get(slug)
+        if cat is None:
+            updates.append(gr.update(choices=[], value=[], visible=False))
+            continue
+        allowed = [t["tag"] for t in cat["tags"]]
+        kept = [t for t in (selected.get(slug) or []) if t in allowed]
+        updates.append(gr.update(choices=pony_tags.choices(cat), value=kept, visible=True))
+    return updates
+
+
+def pony_tag_clear():
+    return [gr.update(value=[]) for _ in PONY_TAG_SLUGS] + [PONY_TAG_PREVIEW_HINT]
 
 
 @_show_usage_errors
@@ -749,6 +832,32 @@ with gr.Blocks(title="AI Image Lab") as demo:
                             label="臉部偵測方式（HQ 模式一律用 YOLO；MediaPipe 只在關掉 HQ 的舊單段式路徑有作用）",
                         )
                     resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（HQ 最終尺寸：正方形→1248×1248、直式→1056×1536、橫式→1536×1056；正方形沒有足夠垂直空間放全身，會被裁成上半身）")
+                    with gr.Accordion("Pony 關鍵字（點選代替打字：必備 4 類 ＋ 其他 9 類）", open=False):
+                        gr.Markdown(
+                            "「必備」是 Pony 系 checkpoint 的標配：品質分數、來源風格、內容分級、主體與人數。"
+                            "少了它們畫面會偏插畫，人數和年齡也比較不受控。"
+                            "「其他」是想到才加的：鏡頭、姿勢、表情、髮型體態、服裝、光線、場景、風格、額外負面詞。\n\n"
+                            f"{PONY_TAG_QUALITY_NOTE}\n\n"
+                            "非 Pony 系（juggernaut / SD1.5 / Z-Image）會自動收起 `score_*`、`source_*`、"
+                            "`rating_*` 這幾類——它們沒有被這樣訓練過；描述性的字則所有 checkpoint 都能用。\n\n"
+                            "打自然語言本來就會自動補上推導出的 booru 標籤（`prompt_adapter`），"
+                            "這裡是想「明確指定」時用的——特別是 `rating_*` / `source_*`，那是句子推不出來的。"
+                        )
+                        pony_tag_groups = [
+                            gr.CheckboxGroup(
+                                pony_tags.choices(_cat), value=[],
+                                label=f"{'必備' if _cat['role'] == 'required' else '其他'}｜{_cat['name_zh']}",
+                                info=_cat["note_zh"],
+                            )
+                            for _cat in PONY_TAG_INITIAL
+                        ]
+                        pony_tag_preview_box = gr.Textbox(
+                            label="會加進去的內容（唯讀預覽）", value=PONY_TAG_PREVIEW_HINT,
+                            lines=3, interactive=False,
+                        )
+                        with gr.Row():
+                            pony_tag_append_btn = gr.Button("加入 Prompt", variant="secondary")
+                            pony_tag_clear_btn = gr.Button("清除勾選", size="sm", scale=0)
                     prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting in a cozy library, reading a book, warm afternoon light")
                     translate_btn = gr.Button("翻譯成英文（CLIP 對中文支援不佳，建議先翻譯再送出；已經是英文按下去不會被改動）")
                     negative_prompt = gr.Textbox(label="額外負面詞（選填，一次性追加，不影響下面的風格詞預設值）", lines=1)
@@ -812,7 +921,26 @@ with gr.Blocks(title="AI Image Lab") as demo:
 
             character.change(refresh_anchors, inputs=character, outputs=[anchor, anchor_preview])
             anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
-            checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution)
+            # The Pony keyword groups follow both the tier and the checkpoint: the tier decides
+            # whether the suggestive-only entries exist at all, the checkpoint whether the
+            # score/source/rating categories apply. Chained onto the existing resolution reset
+            # rather than replacing it - a second .change() on the same component would not
+            # remove the first, but keeping them in one chain makes the order explicit.
+            _pony_tag_inputs = pony_tag_groups + [tier, checkpoint_choice]
+            checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution).then(
+                pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
+                pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
+            tier.change(pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
+                pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
+            for _group in pony_tag_groups:
+                _group.change(pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
+            pony_tag_append_btn.click(
+                pony_tag_append,
+                inputs=pony_tag_groups + [tier, checkpoint_choice, prompt, negative_prompt],
+                outputs=[prompt, negative_prompt],
+            )
+            pony_tag_clear_btn.click(
+                pony_tag_clear, inputs=None, outputs=pony_tag_groups + [pony_tag_preview_box])
             variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
             variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
             caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])

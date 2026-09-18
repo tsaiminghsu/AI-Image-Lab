@@ -5,6 +5,45 @@
 
 ## 2026-09-18
 
+### Pony 關鍵字詞庫：必備四類補齊 `source_*`／`rating_*`，並在 GUI 做成可勾選
+
+- **問題**：Pony 慣例的「必備」有四類，本專案只有其中一類在程式裡——`score_*` 由
+  `_build_prompt_and_negative` 自動加；`source_*` 和 `rating_*` **整個 repo 找不到**
+  （`booru_lexicon.json` 裡也是 0 筆），而它們正好是句子推不出來、只能明確指定的兩類。
+  剩下的「其他」九類散在 `POSES` / `OUTFITS` / `LIGHTINGS` / `BACKGROUNDS` 等文字池裡，
+  那些是給隨機批次產生器用的，沒有中文標籤，GUI 上也點不到，等於要先讀程式碼才會用。
+- **解法**：新增 `training/pony_tags.py` 當單一真相（13 類＝必備 4 ＋ 其他 9，共 137 個標籤），
+  GUI「🖼️ 自訂生圖」多一個「Pony 關鍵字」摺疊區，勾完按「加入 Prompt」拼進現有欄位。
+- **跟 `prompt_adapter` 是互補不是重複**：adapter 從使用者的句子**推導**標籤並自動附加，
+  這個詞庫讓人**明確挑**標籤——特別是 `rating_*` / `source_*`。compose() 吐的是一般 prompt 文字，
+  照樣經過 adapter 和唯一組裝點；adapter 自己的去重讓已經挑過的標籤不會被重加。
+- **不自己加 score 標籤**：品質那一類 `selectable=False`，只在 GUI 顯示「它已經自動加了」。
+  詞庫輸出任何 `score_` 都會被 `validate()` 在 import 時擋下，也由測試釘住——否則會變成兩次 `score_9`。
+- **既有詞庫是引用不是複製**：鏡頭／姿勢／服裝／光線／場景五類直接讀 `generate_character` 的池，
+  只另外維護中文標籤表。哪天池子增減而標籤沒跟上，`_pool()` 在 import 就報錯並指名是哪個字
+  （跟 `_load_template` 同一種守法）。
+- **安全**：`rating_explicit` 只寫進文件、不列為選項——露骨內容本來就被 `SUGGESTIVE_NEGATIVE` 擋著，
+  提供一個跟負面詞打架的正面詞只會生壞圖。分級過濾在 `compose()` 裡而不是只在 UI：
+  suggestive 勾了泳裝／海灘後把分級切回 safe，那些選擇會被丟掉而不是隱形地送出去。
+  safe 提供 118 個標籤、suggestive 137 個、非 Pony checkpoint 128 個（少掉 score/source/rating 三類）。
+- **驗證（離線）**：`check.ps1` 全綠，1762 passed（原 1714，新增 48 例）。`tests/test_pony_tags.py` 釘住
+  標籤表與文字池的雙向同步、compose 不吐 score、`rating_explicit` 在任何 tier/checkpoint 都不出現、
+  降級後丟棄超額選擇、非 Pony 的降級、額外負面詞不跟自動負面詞重複、以及
+  組裝後 `score_9` 只出現一次且 `AGE_SAFETY_NEGATIVE` 完整。GUI 的事件綁定由既有的
+  `test_gui_arity.py` 自動涵蓋（handler 用 `*args`，因為勾選框是 comprehension 產生的）。
+- **實機驗證（GUI handler）**：用 ComfyUI\.venv 的真 Gradio import `gui.py`（Blocks 在 module scope 就建起來，
+  import 成功本身就證明 12 個勾選框都構造成功），再直接呼叫 handler 模擬點擊：預覽字串正確且不含 score、
+  「加入 Prompt」是附加不是覆蓋且按兩次不重複、切到 juggernaut 會把 source/rating 收起來並清值、
+  分級由 suggestive 切回 safe 會丟掉泳裝選擇但留下仍合法的 `1girl`。**沒有真的用瀏覽器點過。**
+- **實機 A/B（冷機）**：RTX 2070、42°C 起、`cyberrealistic_pony`、seed 9000、1024×1024、純 txt2img
+  （`--no-hq --no-facedetailer --lora-strength 0.0`）。只有自然語言 33 秒（42→57°C，含這次的模型首次載入）；
+  同一句再加必備標籤 `rating_safe, 1girl, solo, mature female, adult` 29 秒（57→60°C，模型已在記憶體）。
+  **這 4 秒不能算成標籤的效果**——A 含載入、B 是熱機，同 session 的計時本來就不能直接比（見 CLAUDE.md）。
+  VRAM 峰值約 4.5 GB，ComfyUI RSS 約 8.4 GB。
+- **看得出來的差別是內容不是速度**：同 seed 下加上 `mature female, adult` 之後人物明顯變成成年人的臉，
+  構圖幾乎不動——這正是這幾個標籤存在的理由（`1girl` 自己會偏年輕）。對照圖
+  `training/reference_candidates/ab_plain.png` 與 `ab_tagged.png`（該目錄不進 repo）。
+
 ### 依模型適配 prompt：保留自然語言，Pony 系自動附加 booru 標籤
 
 - **問題**：Pony 三檔是 booru 標籤訓練的，對標籤比對整句自然語言更聽話（見 README「骨架庫在各

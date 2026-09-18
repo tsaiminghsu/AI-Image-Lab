@@ -243,8 +243,14 @@ def test_generation_handlers_are_covered():
 import cloud_video as cloud_module  # noqa: E402
 import comfyui_client as client_module  # noqa: E402
 import generate_character as gc_module  # noqa: E402
+import pony_tags as pony_tags_module  # noqa: E402
 
-_ALIAS_MODULES = {"gc": gc_module, "client": client_module, "cloud_video": cloud_module}
+_ALIAS_MODULES = {
+    "gc": gc_module,
+    "client": client_module,
+    "cloud_video": cloud_module,
+    "pony_tags": pony_tags_module,
+}
 
 
 def _collect_kwarg_calls():
