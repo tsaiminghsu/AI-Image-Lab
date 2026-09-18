@@ -25,7 +25,13 @@
 **自動前綴**: `score_9, score_8_up, score_7_up`（質量等級，不用手動加）
 
 **特性**:
-- 用 Pony 風格的 booru tag 訓練，但 UI 自動加了前綴，所以用戶只需輸入自然語言
+- 用 booru 標籤訓練。自動前綴只是**品質標籤**，跟「能不能打自然語言」無關，兩件事要分開看：
+  - **場景、服裝、光線、畫風用自然語言可以**——實測用同一句自然語言 prompt 跑六個 checkpoint，
+    Pony 系加了 score 標籤後寫實度明顯提升（見 `training/PROMPT_GUIDE.md` 第 7 節）
+  - **姿勢用自然語言不可靠**——實測 5 個 `lying on ...` 標籤在 Pony 系上全部塌成坐姿；
+    4×3×2 矩陣裡 12 個純文字格子有 6 個失敗，`pony` 和 `pony_realism` 在跪姿還會各生出
+    兩個人。姿勢要用 ControlNet 骨架庫（`--pose`、GUI 下拉），見 README「ControlNet 姿勢骨架庫」
+  - 想要原生的 booru 標籤，用 GUI 的「產生標籤（WD14，Pony 系適用）」從參考圖反推
 - SDXL 級別的 VRAM 需求 (5+ GB)
 - 支援 FaceID (IP-Adapter) 和 HQ 兩段式
 
@@ -367,7 +373,8 @@ python -m pytest tests/test_scene_library.py tests/test_picker_plan.py tests/tes
 
 ### 提示詞調整時的注意事項
 
-- **Pony**: 不要手動加 `score_9` 前綴（會被重複加），直接寫自然語言
+- **Pony**: 不要手動加 `score_9` 前綴（會被重複加）。場景/服裝/畫風寫自然語言沒問題，但**姿勢別指望文字**，
+  要用 ControlNet 骨架庫（見上面第 1 節）
 - **SD1.5 男性**: 確保用的是 `realistic_vision` 或 `cyberrealistic` checkpoint（自動應用 gender weight）
 - **影片**: 避免在負面詞裡用 "symmetrical face"（已自動移除）
 - **中文 prompt**: 只有 Z-Image Turbo 原生理解中文，不用翻譯；其他所有 checkpoint（Pony/SDXL/SD1.5/AnimateDiff/GIF）都要先用「翻譯成英文」按鈕轉換，直接打中文送出會被 CLIP 忽略掉大半內容
@@ -397,6 +404,8 @@ python -m pytest tests/test_scene_library.py tests/test_picker_plan.py tests/tes
 - **2026-09-12**: 初版，包含 6 種 checkpoint 類型的提示詞集
 - **2026-09-12**: 加入「中文提示詞支援總覽」，並在每個 checkpoint 章節補上中文範例——修正了 Z-Image 段落原本「支援中文 prompt（會自動翻譯）」的錯誤描述（Z-Image 其實是唯一**不需要**翻譯的路徑，其他 checkpoint 才需要翻譯）
 - **2026-09-18**: 連到新的 `training/PROMPT_GUIDE.md`；修正 Z-Image 段落的解析度（1024×1024，不是
-  512×768）和速度（cfg 2 約 155-195 秒，不是 3-4 秒）；行號引用改成符號名稱
+  512×768）和速度（cfg 2 約 155-195 秒，不是 3-4 秒）；行號引用改成符號名稱；修正 Pony 段落把
+  「自動加 score 前綴」跟「可以打自然語言」當成因果的說法——前綴只是品質標籤，而且姿勢用文字在
+  Pony 系上實測不可靠，要走骨架庫
 - **2026-09-12**: 加入「圖片選擇生圖分頁」章節——這個分頁測的是「點選組合」而非文字，附測試矩陣（人物×姿勢×場景 ×
   4 個 checkpoint 家族）跟邊界案例清單，對應到 `test_picker_plan.py` 的離線測試
