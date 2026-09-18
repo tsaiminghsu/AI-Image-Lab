@@ -19,6 +19,7 @@ import threading
 
 import gradio as gr
 
+import capability_catalog as catalog
 import caption_image
 import cloud_video
 import comfyui_client as client
@@ -173,6 +174,32 @@ def reset_resolution_for_sd15(checkpoint_choice):
     if checkpoint in client.SD15_CHECKPOINTS:
         return gr.update(value=RESOLUTION_AUTO)
     return gr.update()
+
+
+def capability_notice(checkpoint_choice):
+    """What the selected checkpoint cannot be asked for, and why.
+
+    Shown rather than hidden. The controls above stay visible and usable - blanking them would
+    make the tab look broken, and a greyed-out checkbox explains nothing - so this says up front
+    which of them this checkpoint will refuse, instead of letting someone find out by spending a
+    generation on it. The text comes from capability_catalog, the same source _plan_custom raises
+    from, so the warning and the refusal can never describe different things.
+    """
+    checkpoint = checkpoint_choice if checkpoint_choice != CHECKPOINT_DEFAULT else gc.DEFAULT_CUSTOM_CHECKPOINT
+    try:
+        disabled = catalog.disabled_rows(checkpoint)
+    except KeyError:
+        return gr.update(value="", visible=False)
+    if not disabled:
+        return gr.update(value=f"**{checkpoint}**：這個 checkpoint 支援本頁所有選項。", visible=True)
+    # Grouped by reason rather than one bullet per row: Z-Image disables four features for the
+    # same cause, and repeating that paragraph four times buries it instead of explaining it.
+    grouped = {}
+    for row in disabled:
+        grouped.setdefault(row.reason, []).append(row.label)
+    lines = [f"**{checkpoint}** 不支援以下選項（選了會被拒絕或自動降級）："]
+    lines += [f"- **{'、'.join(labels)}**：{reason}" for reason, labels in grouped.items()]
+    return gr.update(value="\n".join(lines), visible=True)
 
 
 RESOLUTION_AUTO = "自動（有姿勢參考圖時用直式，否則正方形）"
@@ -901,8 +928,9 @@ with gr.Blocks(title="AI Image Lab") as demo:
                             variant_save_btn = gr.Button("儲存模型版本設定")
                             variant_refresh_btn = gr.Button("重新檢查檔案")
                     checkpoint_choice = gr.Dropdown(
-                        CHECKPOINT_CHOICES, value="cyberrealistic_pony", label="Checkpoint 模型",
+                        CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
                     )
+                    capability_box = gr.Markdown(capability_notice(CHECKPOINT_DEFAULT)["value"])
                     lora_strength = gr.Slider(
                         0.0, 3.0, value=0.0, step=0.1,
                         label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
@@ -929,7 +957,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
             _pony_tag_inputs = pony_tag_groups + [tier, checkpoint_choice]
             checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution).then(
                 pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
-                pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
+                pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box).then(
+                capability_notice, inputs=checkpoint_choice, outputs=capability_box)
             tier.change(pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
                 pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
             for _group in pony_tag_groups:
@@ -1122,7 +1151,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         gif_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
                         gif_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
                     gif_checkpoint_choice = gr.Dropdown(
-                        CHECKPOINT_CHOICES, value="cyberrealistic_pony",
+                        CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT,
                         label="Checkpoint 模型（選了角色/anchor 就只能 SDXL 系列，跟「自訂生圖」分頁的規則一樣）",
                     )
                     gif_lora_strength = gr.Slider(0.0, 3.0, value=0.0, step=0.1, label="寫實風格 LoRA 強度（pony 系建議 0）")
