@@ -2,6 +2,10 @@
 
 測試和手動驗證用的提示詞集，按 checkpoint 類型組織。每種類型的提示詞都設計用來驗證對應模型的特性。
 
+> 這裡是「手動測試要打什麼」。各模型的關鍵字總表、全部詞庫常數、以及管線**實際送給 ComfyUI 的完整字串**
+> 在 [`training/PROMPT_GUIDE.md`](../training/PROMPT_GUIDE.md)（由 `tests/test_prompt_guide.py` 釘住，
+> 跟程式不一致就會讓 `check.ps1` 紅）。
+
 ## 中文提示詞支援總覽
 
 | Checkpoint 類型 | 中文支援 | 說明 |
@@ -158,8 +162,9 @@ person in cozy home setting, warm ambient light, intimate portrait
 
 **特性**:
 - 純文字生圖，無 FaceID / ControlNet / 精修
-- 極快（~3-4 秒）
-- 原生解析度約 512×768
+- 解析度 1024×1024（`ZIMAGE_WIDTH`/`ZIMAGE_HEIGHT`）、8 步、`res_multistep`/`simple`
+- **在這張 2070 上不快**：cfg 1 約 75 秒，本專案用的 cfg 2 約 155-195 秒（見 README 的
+  Z-Image 實測表）。步數少不代表快，每步約 9 秒
 - **唯一原生理解中文的路徑，Prompt 可以直接打中文，不用翻譯**（其他所有 checkpoint 都建議先翻譯，見文檔開頭「中文提示詞支援總覽」）
 - 手部和文字生成品質比 SDXL 好，中文字也寫得出來
 
@@ -374,8 +379,9 @@ python -m pytest tests/test_scene_library.py tests/test_picker_plan.py tests/tes
 
 ## 檔案位置
 
-- **角色定義**: `training/generate_character.py` 中的 `CHARACTERS` 字典（第 114-181 行）
-- **風格常數**: `training/generate_character.py` 中的 `REALISTIC_STYLE` 等（第 39-94 行）
+- **角色定義**: `training/generate_character.py` 的 `CHARACTERS` 字典
+- **風格常數**: `training/generate_character.py` 的 `REALISTIC_STYLE`／`REALISTIC_NEGATIVE`／
+  `SAFE_SAFETY_NEGATIVE` 等（逐字內容見 `training/PROMPT_GUIDE.md` 第 3 節）
 - **測試案例**: `tests/test_prompt_assembly.py` - 自動化測試用例
 - **Checkpoint 映射**: `training/comfyui_client.py` 中的 `CHECKPOINTS`、`PONY_CHECKPOINTS`、`SD15_CHECKPOINTS` 等
 - **翻譯功能**: `training/translate_prompt.py`（Google Translate 公開端點，GUI 各 prompt 欄位下方的「翻譯成英文」按鈕呼叫這裡）
@@ -390,5 +396,7 @@ python -m pytest tests/test_scene_library.py tests/test_picker_plan.py tests/tes
 
 - **2026-09-12**: 初版，包含 6 種 checkpoint 類型的提示詞集
 - **2026-09-12**: 加入「中文提示詞支援總覽」，並在每個 checkpoint 章節補上中文範例——修正了 Z-Image 段落原本「支援中文 prompt（會自動翻譯）」的錯誤描述（Z-Image 其實是唯一**不需要**翻譯的路徑，其他 checkpoint 才需要翻譯）
+- **2026-09-18**: 連到新的 `training/PROMPT_GUIDE.md`；修正 Z-Image 段落的解析度（1024×1024，不是
+  512×768）和速度（cfg 2 約 155-195 秒，不是 3-4 秒）；行號引用改成符號名稱
 - **2026-09-12**: 加入「圖片選擇生圖分頁」章節——這個分頁測的是「點選組合」而非文字，附測試矩陣（人物×姿勢×場景 ×
   4 個 checkpoint 家族）跟邊界案例清單，對應到 `test_picker_plan.py` 的離線測試

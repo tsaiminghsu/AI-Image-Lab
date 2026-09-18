@@ -9,6 +9,7 @@
 `training/comfyui_client.py`，由它把 workflow JSON 送給 ComfyUI 的 HTTP API：
 
 - `training/generate_character.py`：CLI，角色定義與 prompt 組裝也在這裡
+  （各模型關鍵字總表與 Prompt 範例：[training/PROMPT_GUIDE.md](training/PROMPT_GUIDE.md)）
 - `training/gui.py`：Gradio 本地網頁（127.0.0.1:**7861**，需要時會自動啟動 ComfyUI）
 - `training/image_api.py`：FastAPI 包裝，給外部專案用 HTTP 呼叫
 - `worker/`：RunPod serverless worker（雲端 GPU）
@@ -79,6 +80,9 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
     （只檢查「有沒有傳下去」是自我指涉的：把常數清空，所有斷言都會變成恆真）
   - fp8 變體選擇優先序，以及 ControlNet control-lora 一律強制完整版的規則
   - CLI 子指令與旗標（`tests/test_cli_surface.py` 的 `FROZEN_CLI` 就是簽核點）
+  - `training/PROMPT_GUIDE.md` 引用的常數、模型 key／檔名、詞庫、角色、場景、骨架與 8 組
+    Prompt 範例跟程式一致（`tests/test_prompt_guide.py` 會重新呼叫組裝函式比對，失敗訊息
+    直接印出可貼回的字串）
 - CI（`.github/workflows/checks.yml`）在 ubuntu 與 windows 兩個 runner 上跑同一套，
   worker image 的 build 有 `needs: checks` 擋著。
 - 臉／身分比較用 `training/face_similarity.py`（InsightFace `buffalo_l`，跟 FaceID 同一個

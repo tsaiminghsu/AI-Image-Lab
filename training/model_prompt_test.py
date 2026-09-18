@@ -18,21 +18,18 @@ import random
 import time
 
 import comfyui_client as client
+import generate_character as gc
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "reference_candidates", "model_test")
 os.makedirs(OUT_DIR, exist_ok=True)
 
-SAFETY_NEGATIVE = (
-    "nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, "
-    "teen, teenager, underage, young girl, lowres, blurry, deformed, extra limbs, "
-    "bad anatomy, watermark, text"
-)
-REALISTIC_NEGATIVE = (
-    "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, "
-    "perfect skin, symmetrical face, digital art, render, unreal engine"
-)
-PONY_NEG_TAGS = "score_6, score_5, score_4"
-PONY_POS_TAGS = "score_9, score_8_up, score_7_up"
+# Imported, never re-typed: this script used to carry its own copies of these four strings and
+# they drifted - the local SAFETY_NEGATIVE was still the pre-QUALITY_NEGATIVE version, missing the
+# duplicate-person terms, so the test was no longer measuring what the pipeline actually sends.
+SAFETY_NEGATIVE = gc.SAFE_SAFETY_NEGATIVE
+REALISTIC_NEGATIVE = gc.REALISTIC_NEGATIVE
+PONY_NEG_TAGS = gc.PONY_QUALITY_NEGATIVE_TAGS
+PONY_POS_TAGS = gc.PONY_QUALITY_TAGS
 
 # One natural-language descriptive prompt reused across every checkpoint, so
 # the ONLY variable is the checkpoint (and, for Pony, whether the score tags

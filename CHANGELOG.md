@@ -3,6 +3,39 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-09-18
+
+### 各模型關鍵字總表與 Prompt 範例，並用測試把文件釘在程式上
+
+- **問題**：`training/PROMPT_GUIDE.md` 是 2026-09-08 寫的 prompt 食譜，之後一次都沒更新，
+  而且**沒有任何檔案連到它**（`grep PROMPT_GUIDE` 全 repo 零命中），所以沒人會發現它爛掉。
+  實際爛的地方有三處：只列了 6 個單檔 checkpoint（現在總共 13 個模型，少了 Z-Image、Wan 2.2、
+  AnimateDiff 的 3 個 checkpoint 加 8 個動作 LoRA、SVD）；引用的 `SAFE_SAFETY_NEGATIVE` /
+  `SUGGESTIVE_NEGATIVE` 還是 `QUALITY_NEGATIVE` 長出重複人物詞之前的版本；完全沒提
+  `SD15_GENDER_WEIGHT`、`VIDEO_REALISTIC_NEGATIVE`、`WAN_VIDEO_NEGATIVE`、角色身分前綴、
+  詞庫、場景庫、骨架庫。
+- **同一份舊字串在另外兩個地方**：`README.md` 的「Prompt 結構」負面詞區塊（而且順序也寫錯，
+  `REALISTIC_NEGATIVE` 實際上是接在最後而不是中間），以及 `training/model_prompt_test.py`
+  ——它自己複製了一份 `SAFETY_NEGATIVE`/`REALISTIC_NEGATIVE`/score 標籤，所以那個「實測各
+  checkpoint prompt 語法」的腳本量到的已經不是管線真正送出的東西。
+- **解法**：重寫 PROMPT_GUIDE.md（614 行）成一份總表——13 個模型的 key/檔名/家族/方言/解析度/
+  取樣設定/自動加什麼/功能可用性、組裝規則與各入口差異、13 個常數逐字、11 個詞庫、11 個角色的
+  展開前綴、15 個場景、31 組骨架、以及 8 組**管線實際送出的**完整 positive/negative。
+  `model_prompt_test.py` 改成 `import generate_character as gc` 直接用常數，不再自己抄一份。
+- **文件不會再爛掉**：新增 `tests/test_prompt_guide.py`（213 個案例），每一條斷言都從活的常數
+  重新推導，8 組範例是**重新呼叫 `_build_prompt_and_negative()`／`build_wan_prompts()` 比對**，
+  失敗訊息直接印出可以貼回文件的正確字串。常數那節比對的是「整個 fenced block 相等」而不是
+  子字串——子字串檢查會在把 `score_9, score_8_up, score_7_up` 截短成 `score_9, score_8_up`
+  時通過（因為完整字串還出現在下面的範例裡），實測確認過這個破綻並改掉。
+  另外有一條 meta 測試：`generate_character.py` 新增任何 `*_NEGATIVE`/`*_TAGS`/`*_STYLE`/
+  `*_PROMPT` 常數而沒寫進文件就會紅，否則這個檔案會靜悄悄地漏掉新東西。
+- **順手修正**：`tests/TEST_PROMPTS.md` 說 Z-Image「極快（~3-4 秒）、原生解析度約 512×768」，
+  兩個都錯——`ZIMAGE_WIDTH/HEIGHT` 是 1024×1024，README 的實測是 cfg 1 約 75 秒、本專案用的
+  cfg 2 約 155-195 秒；裡面的「第 114-181 行」這類行號引用也改成符號名稱。
+- **驗證**：`check.ps1` 全綠，1482 passed（原 1269）。三次刻意改壞（改範例一個字、截短常數
+  區塊、改動作 LoRA 的 key）都被抓到並印出正確字串。換行稽核通過（README.md 仍是 CRLF，
+  新的 .md/.py 是 LF）。
+
 ## 2026-09-17
 
 ### 雲端生圖：把本機組好的完整 workflow 送到 RunPod 執行

@@ -1499,6 +1499,8 @@ dict 的 key（例如 `"newname"`）就是 LoRA 訓練用的 trigger word，會�
 
 ## Prompt 結構
 
+> 各模型的關鍵字總表、全部詞庫、以及每個家族「實際送給 ComfyUI 的完整字串」範例，見 [training/PROMPT_GUIDE.md](training/PROMPT_GUIDE.md)（由 `tests/test_prompt_guide.py` 釘住，不會過期）。這一節只講資料集流程（anchor/variations）怎麼組。
+
 positive prompt 組成順序：
 
 ```
@@ -1540,12 +1542,15 @@ negative prompt（`NEGATIVE_PROMPT`，anchor/variations 都用這個）：
 
 ```
 nsfw, nude, naked, explicit, sexual content, {AGE_SAFETY_NEGATIVE},
-{REALISTIC_NEGATIVE}, lowres, blurry, deformed, extra limbs, bad anatomy,
-watermark, text
+{QUALITY_NEGATIVE}, {REALISTIC_NEGATIVE}
 ```
 
 - `AGE_SAFETY_NEGATIVE = "child, children, kid, minor, teen, teenager, underage, young girl"`
   —— 任何內容分級都不會移除這段
+- `QUALITY_NEGATIVE = "lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, multiple people, two people, duplicate, twins, extra person, crowd"`
+  —— 畫質詞加重複人物詞。後半段（multiple people 之後）是後來補的：ControlNet 骨架
+  在畫布留白處常常補出第二個人（跪姿骨架最明顯，1/3 的 seed 會發生），只靠
+  `bad anatomy` 擋不掉
 - `REALISTIC_NEGATIVE = "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine"`
   —— 跟 `REALISTIC_STYLE` 互補，一起把畫風往真實相機拉；後半段（smooth/perfect
   skin、symmetrical face、digital art/render/unreal engine）是後來補的，
@@ -2010,6 +2015,7 @@ AI-Image-Lab/
 │   ├── scene_library.py      # 場景庫（scenes/ 裡的 json + 縮圖）+ 縮圖生成 CLI
 │   ├── pose_pack.py          # 姿勢/角度標籤參考包產生器（每個標籤一張圖）
 │   ├── model_prompt_test.py  # 各 checkpoint 的 prompt 語法探索腳本（手動跑，不在流程裡）
+│   ├── PROMPT_GUIDE.md       # 各模型關鍵字總表 + 各家族 Prompt 範例（tests/test_prompt_guide.py 釘住）
 │   ├── image_api.py          # FastAPI 包裝 gen_custom()，給外部專案用 HTTP 呼叫
 │   ├── runpod_bundle.py      # RunPod LoRA 訓練的 Windows 端打包/安裝工具
 │   ├── runpod_train.sh       # 在 RunPod pod 上跑的訓練腳本
