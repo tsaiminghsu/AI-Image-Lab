@@ -123,7 +123,8 @@ class JobService:
 
     # --- the local run --------------------------------------------------------------------
 
-    def submit_local(self, owner_id, job_id, generate, *, output_path):
+    def submit_local(self, owner_id, job_id, generate, *, output_path, expect_width=None,
+                     expect_height=None):
         """Run `generate` with this job recorded around it.
 
         `generate` is a zero-argument callable - normally a lambda over gc.gen_custom - so this
@@ -132,6 +133,11 @@ class JobService:
 
         `output_path` is where the generator will leave its file. The caller knows it because it
         chose the filename; asking the generator would mean changing every one of them.
+
+        expect_width/expect_height are the *delivered* dimensions, if the caller knows them. They
+        are not the sampling dimensions in params: the HQ path upscales, so a job sampled at
+        832x1216 legitimately arrives 1056x1536. Left unset, the size is measured and recorded but
+        not asserted.
         """
         row = self._begin_submitting(owner_id, job_id)
         sink = _Sink(self, owner_id, job_id, row["submit_attempt"])
@@ -147,7 +153,8 @@ class JobService:
                                        expect_submit_attempt=row["submit_attempt"])
             raise
         return self.apply_terminal(owner_id, job_id, output_path,
-                                   expect_submit_attempt=row["submit_attempt"])
+                                   expect_submit_attempt=row["submit_attempt"],
+                                   expect_width=expect_width, expect_height=expect_height)
 
     def _begin_submitting(self, owner_id, job_id):
         """Commit `submitting` and claim an attempt number, in one write, before anything leaves
@@ -181,10 +188,16 @@ class JobService:
                                   expect_submit_attempt=expect_submit_attempt)
         media_kind = record["media_kind"]
         try:
+            # Only what the caller explicitly expects, never record["params"]. Those are the
+            # *sampling* dimensions, and the HQ two-pass path deliberately delivers something
+            # larger - a live run at 832x1216 came back 1056x1536, and defaulting the expectation
+            # from params failed a perfectly good image. Asserting the wrong thing is worse than
+            # asserting nothing; the measured size is recorded in the report's details either way.
+            # (Deriving the expected output size would mean the catalog declaring the hires scale,
+            # which is worth doing and is not this change.)
             report, facts = oc.check_output(
                 output_path, media_kind=media_kind,
-                expect_width=expect_width or record["params"].get("width"),
-                expect_height=expect_height or record["params"].get("height"),
+                expect_width=expect_width, expect_height=expect_height,
             )
         except oc.OutputCheckError as exc:
             return self._conclude_failure(owner_id, job_id, str(exc), kind="output_missing")

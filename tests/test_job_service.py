@@ -254,17 +254,36 @@ def test_a_missing_output_file_fails_the_job_rather_than_crashing(service):
 
 
 def test_an_output_that_fails_its_check_fails_the_job_and_keeps_the_report(service, fake_comfy, tmp_path):
-    """The bytes arrived but are not what was asked for. Recording the report is what makes that
-    distinguishable afterwards from a generation that never ran."""
+    """The bytes arrived but are not the size the caller said to expect. Recording the report is
+    what makes that distinguishable afterwards from a generation that never ran.
+
+    The expectation is passed explicitly and deliberately not taken from params: those are the
+    sampling dimensions, and the HQ path upscales past them on purpose."""
     import comfyui_client as client
 
-    a_job(service, params={"width": 1024, "height": 1024})
+    a_job(service)
     output = finishing_run(fake_comfy, tmp_path, width=64, height=64)
-    record = service.submit_local("local", "job1", generate(client), output_path=output)
+    record = service.submit_local(
+        "local", "job1", generate(client), output_path=output, expect_width=1024, expect_height=1024
+    )
     assert record["status"] == jc.FAILED
     assert record["last_error_kind"] == "output_check_failed"
     assert record["output_check"]["state"] == "failed"
     assert "asked for 1024, got 64" in record["last_error"]
+
+
+def test_the_sampling_dimensions_are_not_used_as_an_expectation(service, fake_comfy, tmp_path):
+    """The bug a live run caught: the HQ two-pass path sampled 832x1216 and delivered 1056x1536,
+    and defaulting the expectation from params failed a perfectly good image. Asserting the wrong
+    thing is worse than asserting nothing."""
+    import comfyui_client as client
+
+    a_job(service, params={"width": 832, "height": 1216})
+    output = finishing_run(fake_comfy, tmp_path, width=1056, height=1536)
+    record = service.submit_local("local", "job1", generate(client), output_path=output)
+    assert record["status"] == jc.COMPLETED
+    assert record["output_check"]["details"]["width"] == 1056, "measured and recorded, just not asserted"
+    assert "dimensions" not in record["output_check"]["policy"]["checks"], "and not claimed as a check"
 
 
 # --- cancellation ---------------------------------------------------------------------------------

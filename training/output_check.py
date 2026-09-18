@@ -303,7 +303,11 @@ def check_output(path, *, media_kind, expect_sha256=None, expect_width=None, exp
         expected_formats = _IMAGE_FORMATS if media_kind == "image" else _VIDEO_FORMATS
         if fmt not in expected_formats:
             failures.append(f"format: {fmt} is not a {media_kind} container")
-        if width and height:
+        if width and height and (expect_width is not None or expect_height is not None):
+            # Only claimed when an expectation was actually supplied. Parsing the dimensions and
+            # then comparing them against nothing, while still listing "dimensions" among the
+            # checks, would be the exact overstatement policy.sha256 exists to make impossible.
+            # The measured values still go into details either way.
             checks.add(CHECK_DIMENSIONS)
             if expect_width is not None and width != expect_width:
                 failures.append(f"width: asked for {expect_width}, got {width}")

@@ -118,14 +118,25 @@ def test_policy_hash_ignores_check_ordering():
 
 
 def test_a_smaller_check_set_hashes_differently(tmp_path):
-    """A video whose dimensions we could not derive must not produce a report that looks
-    identical to one where we did check them."""
-    full, _ = oc.check_output(write(tmp_path, "a.webm", make_webm(512, 768)), media_kind="video")
+    """A video whose dimensions we could not derive must not produce a report that looks identical
+    to one where we did check them. Both sides are asked for the same expectation, so the only
+    difference is whether the container would give its size up."""
+    expectation = {"media_kind": "video", "expect_width": 512, "expect_height": 768}
+    full, _ = oc.check_output(write(tmp_path, "a.webm", make_webm(512, 768)), **expectation)
     headerless = make_webm(512, 768).replace(b"\xb0", b"\xb1", 1)
-    partial, _ = oc.check_output(write(tmp_path, "b.webm", headerless), media_kind="video")
+    partial, _ = oc.check_output(write(tmp_path, "b.webm", headerless), **expectation)
     assert oc.CHECK_DIMENSIONS in full["policy"]["checks"]
     assert oc.CHECK_DIMENSIONS not in partial["policy"]["checks"]
     assert full["policy"]["sha256"] != partial["policy"]["sha256"]
+
+
+def test_dimensions_are_measured_but_not_claimed_when_nothing_was_expected(tmp_path):
+    """A check that asserted nothing must not appear in the checks list, or policy.sha256 stops
+    meaning what it says. The measured size still lands in details."""
+    report, facts = oc.check_output(write(tmp_path, "x.png", make_png(48, 96)), media_kind="image")
+    assert report["state"] == oc.PASSED
+    assert oc.CHECK_DIMENSIONS not in report["policy"]["checks"]
+    assert report["details"]["width"] == 48 and facts["height"] == 96
 
 
 # --- check_output -------------------------------------------------------------------------------
