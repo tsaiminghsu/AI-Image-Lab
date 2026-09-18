@@ -74,7 +74,13 @@ TERMINAL_STATUSES = frozenset({COMPLETED, FAILED, CANCELLED})
 #     queue an 8 GB card, against a job that was in fact accepted.
 _ALLOWED = {
     QUEUED: frozenset({SUBMITTING, CANCELLED, FAILED}),
-    SUBMITTING: frozenset({RUNNING, SUBMISSION_UNKNOWN, FAILED, CANCELLED}),
+    # CHECKING is reachable directly from SUBMITTING because a generator can return having never
+    # announced a submission - a backend that does not route through _submit_and_wait, or a result
+    # that came back before the sink saw anything. The work is over either way, so there is an
+    # output to check, and routing through RUNNING purely to satisfy the table would add no
+    # information. The invariant that matters is untouched: COMPLETED is still only reachable
+    # through CHECKING, so the output check cannot be skipped.
+    SUBMITTING: frozenset({RUNNING, CHECKING, SUBMISSION_UNKNOWN, FAILED, CANCELLED}),
     RUNNING: frozenset({CHECKING, SUBMISSION_UNKNOWN, FAILED, CANCELLED}),
     SUBMISSION_UNKNOWN: frozenset({RUNNING, CHECKING, FAILED, CANCELLED}),
     CHECKING: frozenset({COMPLETED, FAILED, CANCELLED}),

@@ -20,17 +20,18 @@ import glob
 import hmac
 import os
 import random
-import threading
 import time
-import uuid
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, field_validator
 
+import capability_catalog as catalog
 import generate_character as gc
+import job_contracts as jc
+import job_service
+import job_store
 
 # User-facing strings in this project are normally Traditional Chinese, but this file is the
 # deliberate exception: every HTTP `detail` string below (validation errors, 401s, 404s) is
@@ -64,12 +65,39 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 _executor = ThreadPoolExecutor(max_workers=1)  # one at a time - matches BATCH_SIZE=1's
 # "one RTX 2070, no concurrent generations" assumption already baked into comfyui_client.py
 
-# OrderedDict (not dict) so "oldest" for cap eviction is just "iterate from the front" - insertion
-# order is preserved and a job's position never needs to move after it's created. See _evict_jobs.
-_jobs: "OrderedDict[str, dict]" = OrderedDict()
-_jobs_lock = threading.Lock()
-MAX_JOBS = 500
-JOB_TTL_SECONDS = 6 * 3600
+MAX_JOBS = job_store.MAX_RECORDS
+JOB_TTL_SECONDS = job_store.TTL_SECONDS
+
+# Jobs used to live in a module-level OrderedDict, which meant a restart turned every outstanding
+# job id into a 404 that a polling client could not tell apart from "that id never existed". They
+# are now records on disk, so the answer survives the process. The eviction policy is unchanged -
+# job_store.FileJobStore.purge is image_api._evict_jobs_locked's rules moved, not redesigned.
+JOB_STORE_DIR = os.environ.get(
+    "IMAGE_API_JOB_STORE_DIR",
+    os.path.join(os.path.dirname(__file__), "..", "outputs", "_jobs"),
+)
+_store = job_store.FileJobStore(JOB_STORE_DIR)
+_service = job_service.JobService(_store, artifact_root=os.path.join(os.path.dirname(__file__), "..", "outputs"))
+
+# One owner, "local", unless a caller names itself. The ai-companion backend is the only consumer
+# and does not need partitioning today; the header exists so that adding a second consumer later
+# is a header rather than a migration. It is never read from the request body - a caller must not
+# be able to choose whose jobs it is looking at by editing a payload.
+DEFAULT_OWNER = "local"
+
+# Every internal status a client polling this API must keep waiting through, collapsed to the
+# three words it has always seen. The richer record is available on /v2/jobs/{job_id} for a caller
+# that wants it, but the ai-companion backend's contract does not change.
+_LEGACY_STATUS = {
+    jc.QUEUED: "pending",
+    jc.SUBMITTING: "pending",
+    jc.RUNNING: "pending",
+    jc.SUBMISSION_UNKNOWN: "pending",
+    jc.CHECKING: "pending",
+    jc.COMPLETED: "done",
+    jc.FAILED: "error",
+    jc.CANCELLED: "error",
+}
 
 _ANCHOR_EXTENSIONS = (".png", ".jpg", ".jpeg")
 
@@ -157,58 +185,53 @@ def _validate_anchor_path(raw_path: str) -> str:
     return real
 
 
-def _evict_jobs_locked(now: float) -> None:
-    """Drop old finished jobs so a long-running process doesn't grow _jobs forever. Must be
-    called with _jobs_lock already held. Pending/running jobs are never evicted - only "done"
-    or "error" ones - so a slow generation is never forgotten out from under a polling client.
+def _evict_jobs(now: float) -> int:
+    """Drop old finished records so a long-running process doesn't accumulate them forever.
 
-    Order: TTL first (drops anything finished and older than JOB_TTL_SECONDS, regardless of
-    count), then oldest-finished-first while still over MAX_JOBS.
+    Delegates to the store, whose purge is this function's former body: TTL first regardless of
+    count, then oldest-finished-first while over the cap, and never a job that has not finished -
+    so a slow generation is never forgotten out from under a polling client.
     """
-    for job_id in list(_jobs):
-        job = _jobs[job_id]
-        if job["status"] in ("done", "error") and now - job["created_at"] > JOB_TTL_SECONDS:
-            del _jobs[job_id]
-    while len(_jobs) > MAX_JOBS:
-        for job_id in _jobs:  # OrderedDict: iterates oldest-inserted first
-            if _jobs[job_id]["status"] in ("done", "error"):
-                del _jobs[job_id]
-                break
-        else:
-            break  # everything left is pending/running - nothing safe to evict, stop even if over cap
+    return _store.purge(now=now, ttl_seconds=JOB_TTL_SECONDS, max_records=MAX_JOBS)
 
 
-def _run_job(job_id: str, req: GenerateRequest) -> None:
+def _owner(x_owner_id: str | None) -> str:
+    return (x_owner_id or DEFAULT_OWNER).strip() or DEFAULT_OWNER
+
+
+def _run_job(owner_id: str, job_id: str, req: GenerateRequest) -> None:
     try:
         anchor_path = req.anchor_path or (_default_anchor_for(req.trigger) if req.trigger else None)
-        gc.gen_custom(
+        record = _store.get(owner_id, job_id)
+        generate_one = lambda: gc.gen_custom(  # noqa: E731 - a lambda is the whole point; submit_local takes a thunk
             prompt=req.prompt,
             extra_negative="",
             tier=req.tier,
             trigger=req.trigger,
             anchor_path=anchor_path,
             out_dir=OUTPUT_DIR,
-            seed=random.randint(0, 2**31 - 1),
+            seed=record["params"]["seed"],
             filename=job_id,
             ip_adapter_weight=gc.client.IP_ADAPTER_WEIGHT,
             use_facedetailer=req.use_facedetailer,
             hq=req.hq,
         )
-        image_path = os.path.join(OUTPUT_DIR, f"{job_id}.png")
-        with _jobs_lock:
-            # Update in place, don't replace the dict wholesale - it would drop created_at,
-            # which _evict_jobs_locked needs and which GET /generate/{job_id} deliberately
-            # doesn't expose. The job is guaranteed to still be present: pending/running jobs
-            # (this one, until this line) are never evicted.
-            _jobs[job_id].update(status="done", image_path=image_path, error=None)
+        _service.submit_local(owner_id, job_id, generate_one,
+                              output_path=os.path.join(OUTPUT_DIR, f"{job_id}.png"))
     except BaseException as exc:  # noqa: BLE001 - surface any failure to the polling client, don't crash the worker thread
         # BaseException, not Exception: caller errors arrive as gc.UsageError, but the scripts
         # underneath (pose_skeletons, talking_head) can still raise SystemExit, which derives from
         # BaseException. `except Exception` let those escape, killing this worker thread while the
         # job stayed "pending" forever with no error ever reported to the polling client.
         # worker/handler.py catches BaseException for exactly this reason.
-        with _jobs_lock:
-            _jobs[job_id].update(status="error", image_path=None, error=str(exc))
+        #
+        # submit_local has usually already concluded the record by the time we get here, and its
+        # classification is the better one - it knows whether the prompt may have reached ComfyUI.
+        # This only has to cover a failure that happened before any of that, such as a bad anchor
+        # resolved inside this function, and it must never overwrite a terminal record.
+        current = _store.get(owner_id, job_id)
+        if current is not None and current["status"] not in jc.TERMINAL_STATUSES:
+            _service._conclude_failure(owner_id, job_id, str(exc), kind=type(exc).__name__)
 
 
 @app.get("/characters")
@@ -220,7 +243,8 @@ def list_characters():
 
 
 @app.post("/generate")
-def generate(req: GenerateRequest):
+def generate(req: GenerateRequest, x_owner_id: str | None = Header(default=None, alias="X-Owner-Id")):
+    owner_id = _owner(x_owner_id)
     # Reject an unknown trigger here, synchronously, instead of accepting the job and letting
     # it fail inside the worker thread several seconds later - the caller finds out immediately
     # instead of having to poll a job just to learn its trigger was invalid.
@@ -231,21 +255,87 @@ def generate(req: GenerateRequest):
         # not the caller's original string - and so validation happens exactly once, here.
         req.anchor_path = _validate_anchor_path(req.anchor_path)
 
-    job_id = uuid.uuid4().hex
-    with _jobs_lock:
-        _evict_jobs_locked(time.time())
-        _jobs[job_id] = {"status": "pending", "image_path": None, "error": None, "created_at": time.time()}
-    _executor.submit(_run_job, job_id, req)
-    return {"job_id": job_id}
+    _evict_jobs(time.time())
+    checkpoint = gc.DEFAULT_CUSTOM_CHECKPOINT
+    mode = catalog.MODE_TXT2IMG_HQ if req.hq else catalog.MODE_TXT2IMG
+    # Chosen here rather than inside the worker thread, so the record says which seed produced the
+    # image. It used to be picked at generation time and never written down anywhere, which made a
+    # result impossible to reproduce.
+    params = {
+        "prompt": req.prompt,
+        "seed": random.randint(0, 2**31 - 1),
+        "tier": req.tier,
+        "character": req.trigger,
+        "checkpoint": checkpoint,
+    }
+    record = _service.create(
+        owner_id,
+        mode=mode,
+        catalog_id=f"{checkpoint}:{mode}",
+        params=params,
+        request={"hq": req.hq, "use_facedetailer": req.use_facedetailer, "anchor_path": req.anchor_path},
+    )
+    _executor.submit(_run_job, owner_id, record["job_id"], req)
+    return {"job_id": record["job_id"]}
 
 
 @app.get("/generate/{job_id}")
-def get_job(job_id: str):
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-    if job is None:
+def get_job(job_id: str, x_owner_id: str | None = Header(default=None, alias="X-Owner-Id")):
+    record = _store.get(_owner(x_owner_id), job_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Unknown job_id")
-    return {"status": job["status"], "image_path": job["image_path"], "error": job["error"]}
+    # Deliberately the legacy OUTPUT_DIR/<job_id>.png path, not the artifact's content-addressed
+    # one. The ai-companion backend opens whatever this returns, and both names refer to the same
+    # bytes (the service adds the second name, it does not move the file), so keeping this one
+    # means the migration is invisible to that caller. The content-addressed artifact is on
+    # /v2/jobs/{job_id} for anything that wants provenance instead of a file to read.
+    completed = record["status"] == jc.COMPLETED
+    return {
+        "status": _LEGACY_STATUS[record["status"]],
+        "image_path": os.path.join(OUTPUT_DIR, f"{job_id}.png") if completed else None,
+        "error": record["last_error"],
+    }
+
+
+@app.get("/v2/jobs/{job_id}")
+def get_job_v2(job_id: str, x_owner_id: str | None = Header(default=None, alias="X-Owner-Id")):
+    """The whole record: the real status, the submit attempt, the output check report, the
+    content-addressed artifact. Separate from /generate/{job_id} so the ai-companion backend's
+    existing three-field contract keeps working untouched."""
+    record = _store.get(_owner(x_owner_id), job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+    return record
+
+
+@app.post("/v2/jobs/{job_id}/cancel")
+def cancel_job_v2(job_id: str, x_owner_id: str | None = Header(default=None, alias="X-Owner-Id")):
+    """Record the intent to cancel. A job still queued is concluded at once; one already running
+    stops at its next poll, which is why this is a timestamp on the record rather than a status."""
+    try:
+        record = _service.request_cancel(_owner(x_owner_id), job_id)
+    except job_store.JobNotFound:
+        raise HTTPException(status_code=404, detail="Unknown job_id") from None
+    return {"status": record["status"], "cancel_requested_at": record["cancel_requested_at"]}
+
+
+@app.get("/v2/catalog")
+def get_catalog(checkpoint: str | None = None):
+    """What each checkpoint can be asked for, disabled rows included with their reasons.
+
+    Disabled rows are returned rather than filtered out: a caller that only ever sees what works
+    cannot tell "this build has no ControlNet" from "not with this checkpoint, and here is why".
+    """
+    try:
+        targets = [checkpoint] if checkpoint else list(catalog.checkpoints())
+        return [
+            {"catalog_id": row.catalog_id, "checkpoint": row.checkpoint, "family": row.family,
+             "kind": row.kind, "name": row.name, "enabled": row.enabled, "reason": row.reason,
+             "params": row.params}
+            for name in targets for row in catalog.rows_for(name)
+        ]
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown checkpoint '{checkpoint}'") from None
 
 
 if __name__ == "__main__":

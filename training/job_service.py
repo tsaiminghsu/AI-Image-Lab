@@ -17,6 +17,7 @@ reason that file exists - be partitioned later without revisiting every call sit
 """
 
 import os
+import shutil
 import time
 import uuid
 
@@ -193,19 +194,7 @@ class JobService:
                                           kind="output_check_failed", report=report)
 
         extension = os.path.splitext(output_path)[1].lstrip(".").lower()
-        artifact = jc.Artifact(
-            bucket=self.bucket,
-            # Content-addressed, and the full 64 hex rather than cloud_workflow.stage_upload:54's
-            # truncated 16: that is a transport cache key, this is the thing output_check asserts
-            # against. It also ends the seed-keyed collision gui.py:1205 measured, where two tabs
-            # both defaulting to seed 9000 overwrote each other's file.
-            key=f"generated/{job_id}/{facts['sha256']}.{extension or 'png'}",
-            sha256=facts["sha256"],
-            media_kind=media_kind,
-            content_type=jc.CONTENT_TYPES.get(extension, "application/octet-stream"),
-            byte_length=facts["byte_length"],
-        )
-
+        artifact = self._materialise(job_id, output_path, facts, media_kind, extension)
         def finish(record):
             record["status"] = jc.COMPLETED
             record["artifacts"] = [artifact.to_dict()]
@@ -215,6 +204,44 @@ class JobService:
                 record[field] = value
 
         return self.store.update(owner_id, job_id, finish, expect_status=jc.CHECKING)
+
+    def _materialise(self, job_id, output_path, facts, media_kind, extension):
+        """Put the produced bytes at their content-addressed key and describe them as an artifact.
+
+        The key is content-addressed with the full 64 hex, not cloud_workflow.stage_upload:54's
+        truncated 16 - that is a transport cache key, this is the thing output_check asserts
+        against. It is also what ends the collision gui.py:1205 measured on 2026-09-12, where two
+        tabs both defaulting to seed 9000 overwrote each other's file.
+
+        The generator's own output file is left where it is, so existing callers and the CLI's
+        --filename keep working. The second name is made with os.link where the filesystem allows
+        it, falling back to a copy: both names refer to immutable generated output that nothing
+        edits in place, which is what makes a hardlink safe here and specifically not safe for the
+        model weights CLAUDE.md warns about.
+        """
+        key = f"generated/{job_id}/{facts['sha256']}.{extension or 'png'}"
+        destination = os.path.join(self.artifact_root, *key.split("/"))
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        if not os.path.exists(destination):
+            try:
+                os.link(output_path, destination)
+            except (OSError, NotImplementedError):
+                shutil.copy2(output_path, destination)
+        return jc.Artifact(
+            bucket=self.bucket,
+            key=key,
+            sha256=facts["sha256"],
+            media_kind=media_kind,
+            content_type=jc.CONTENT_TYPES.get(extension, "application/octet-stream"),
+            byte_length=facts["byte_length"],
+        )
+
+    def resolve(self, owner_id, job_id):
+        """Where a completed job's output can actually be read, or None while it has none."""
+        record = self.store.get(owner_id, job_id)
+        if not record or not record["artifacts"]:
+            return None
+        return js.resolve_artifact(owner_id, record["artifacts"][0], local_root=self.artifact_root)
 
     def request_cancel(self, owner_id, job_id):
         """Record the intent. The generation loop notices on its next pass; a job that has not

@@ -8,6 +8,8 @@ before the prompt reaches the network. Afterwards both orders look identical in 
 which is why the ordering needs a witness rather than an inspection.
 """
 
+import os
+
 import job_contracts as jc
 import job_service as svc
 import job_store as js
@@ -301,3 +303,59 @@ def test_resolved_params_follow_the_checkpoint_the_job_is_for(service):
     assert service.resolve_params("realistic_vision")["width"] == 512
     assert service.resolve_params("cyberrealistic_pony", width=4000)["width"] <= 1536
     assert service.resolve_params("cyberrealistic_pony", seed=-1)["seed"] == 0
+
+
+# --- the artifact is actually there ----------------------------------------------------------------
+
+
+def test_the_artifact_is_readable_at_its_content_addressed_key(service, fake_comfy, tmp_path):
+    """A content-addressed key that no file sits at would make resolve() point at nothing - the
+    record would describe an artifact that does not exist."""
+    import comfyui_client as client
+
+    a_job(service)
+    output = finishing_run(fake_comfy, tmp_path)
+    service.submit_local("local", "job1", generate(client), output_path=output)
+
+    resolved = service.resolve("local", "job1")
+    assert resolved["kind"] == "path"
+    assert open(resolved["path"], "rb").read() == open(output, "rb").read()
+
+
+def test_the_generators_own_output_file_is_left_alone(service, fake_comfy, tmp_path):
+    """Existing callers and the CLI's --filename still expect their file where they asked for it,
+    so the content-addressed name is a second name for the same bytes, not a move."""
+    import comfyui_client as client
+
+    a_job(service)
+    output = finishing_run(fake_comfy, tmp_path)
+    service.submit_local("local", "job1", generate(client), output_path=output)
+    assert os.path.exists(output)
+
+
+def test_materialising_twice_does_not_fail(service, fake_comfy, tmp_path):
+    """apply_terminal is idempotent, and on a retry the destination may already exist."""
+    import comfyui_client as client
+
+    a_job(service)
+    output = finishing_run(fake_comfy, tmp_path)
+    service.submit_local("local", "job1", generate(client), output_path=output)
+    assert service.apply_terminal("local", "job1", output)["status"] == jc.COMPLETED
+
+
+def test_a_copy_fallback_is_used_when_hardlinking_is_refused(service, fake_comfy, tmp_path, monkeypatch):
+    """os.link fails across volumes and on some filesystems; losing the artifact there would be a
+    silent data loss rather than a degraded one."""
+    import comfyui_client as client
+
+    monkeypatch.setattr(os, "link", lambda src, dst: (_ for _ in ()).throw(OSError("cross-device")))
+    a_job(service)
+    output = finishing_run(fake_comfy, tmp_path)
+    service.submit_local("local", "job1", generate(client), output_path=output)
+    resolved = service.resolve("local", "job1")
+    assert open(resolved["path"], "rb").read() == open(output, "rb").read()
+
+
+def test_resolve_returns_none_before_there_is_an_artifact(service):
+    a_job(service)
+    assert service.resolve("local", "job1") is None

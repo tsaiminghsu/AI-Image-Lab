@@ -170,6 +170,20 @@ def test_running_cannot_jump_straight_to_completed():
     assert jc.can_transition(jc.CHECKING, jc.COMPLETED)
 
 
+def test_checking_is_reachable_without_passing_through_running():
+    """A generator can return having never announced a submission - a backend that does not route
+    through _submit_and_wait, or a result that arrived before the sink saw anything. The work is
+    over either way, so there is an output to check."""
+    assert jc.can_transition(jc.SUBMITTING, jc.CHECKING)
+
+
+def test_completed_is_only_ever_reachable_through_checking():
+    """The invariant the extra edge above must not weaken: every path to COMPLETED goes through
+    the state where the produced bytes are re-read, so the output check cannot be skipped."""
+    predecessors = [status for status, allowed in jc._ALLOWED.items() if jc.COMPLETED in allowed]
+    assert predecessors == [jc.CHECKING]
+
+
 def test_submission_unknown_never_goes_back_to_submitting():
     """An uncertain submission is resolved by reconciling with the provider, never by submitting
     again - a re-submit can double-charge a GPU against a job that was in fact accepted."""
