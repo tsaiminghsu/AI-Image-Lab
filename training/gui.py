@@ -658,6 +658,9 @@ CLOUD_JOB_ANIMATEDIFF = "AnimateDiff 雲端高畫質（FaceID 鎖臉，解除 8G
 CLOUD_PRESETS = {
     "直式 704×1280": dict(width=704, height=1280),
     "橫式 1280×704": dict(width=1280, height=704),
+    # Cheap drafts: the preset's frames/steps override the length choice (about a tenth of a full render).
+    "預覽・直式 480×832（約 2 秒）": dict(cloud_video.WAN_PREVIEW_PORTRAIT),
+    "預覽・橫式 832×480（約 2 秒）": dict(cloud_video.WAN_PREVIEW_LANDSCAPE),
 }
 CLOUD_PRESET_DEFAULT = "直式 704×1280"
 CLOUD_LENGTHS = {"短（約 2 秒）": 49, "中（約 3.4 秒）": 81, "長（約 5 秒）": 121}
@@ -726,8 +729,8 @@ def generate_cloud_video(provider, job_label, character, first_frame, prompt, ti
             raise gr.Error(f"AnimateDiff 需要英文 prompt，自動翻譯失敗（{exc}）——請改打英文") from exc
 
     if job_type == "video_wan_i2v":
-        params = dict(frames=CLOUD_LENGTHS.get(length, 81), fps=client.WAN_FPS, cfg=client.WAN_CFG,
-                      **CLOUD_PRESETS.get(preset, CLOUD_PRESETS[CLOUD_PRESET_DEFAULT]))
+        params = dict(frames=CLOUD_LENGTHS.get(length, 81), fps=client.WAN_FPS, cfg=client.WAN_CFG)
+        params.update(CLOUD_PRESETS.get(preset, CLOUD_PRESETS[CLOUD_PRESET_DEFAULT]))
     else:
         params = dict(upscaleTo=1024)
 

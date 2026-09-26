@@ -27,6 +27,7 @@ Replicate GET /v1/models/{owner}/{name} -> latest_version.openapi_schema.compone
 CLI (run with ComfyUI's venv, like the other training scripts):
     python training/cloud_video.py status
     python training/cloud_video.py run --provider runpod --job wan-i2v --image anchor.png --prompt "..."
+    python training/cloud_video.py run ... --preview --count 3     # three cheap 480x832 drafts, one batch
     python training/cloud_video.py cancel --provider runpod --job-id <id>
 """
 
@@ -68,6 +69,13 @@ DEFAULT_REPLICATE_FIELDS = {
     "seed": "seed",
 }
 
+# A cheap draft to judge motion and framing before paying for the 704x1280 render: about 19% of
+# the full job's latent tokens and 12 of its 20 steps, so roughly a tenth of the cost (estimated
+# from the token count, not measured). Resolution and length differ from the final, so the same
+# seed does NOT give a smaller copy of the final video - only the direction of it.
+WAN_PREVIEW_PORTRAIT = {"width": 480, "height": 832, "frames": 49, "steps": 12}
+WAN_PREVIEW_LANDSCAPE = {"width": 832, "height": 480, "frames": 49, "steps": 12}
+
 DEFAULT_SETTINGS = {
     "version": SETTINGS_VERSION,
     "runpod": {"endpoint_id": "", "execution_timeout_s": 1800},
@@ -103,6 +111,20 @@ class CloudResult:
     queue_s: float = None
     execution_s: float = None
     raw: dict = None
+
+
+@dataclasses.dataclass
+class CloudJobSpec:
+    """One job of a run_cloud_batch call. stem names the downloaded file; the extension comes from
+    the provider's output."""
+    stem: str
+    prompt: str
+    image_path: str = None
+    trigger: str = None
+    seed: int = None
+    params: dict = None
+    extra_negative: str = ""
+    tier: str = "safe"
 
 
 # --- settings ---------------------------------------------------------------------------------
@@ -548,46 +570,67 @@ def make_backend(provider, *, session=None, settings=None, env=None, sleep=time.
     raise gc.UsageError(f"unknown provider {provider!r}; choices: {list(PROVIDERS)}")
 
 
-def run_cloud_video(provider, job_type, *, prompt, extra_negative="", tier="safe", trigger=None, image_path=None,
-                    seed=None, params=None, out_dir, max_wait_s=None, on_status=None, cancel_event=None,
-                    session=None, settings=None, env=None, sleep=time.sleep, clock=time.monotonic):
-    """Submit one video job, wait for it, download the mp4. Returns a CloudResult."""
-    if tier not in ("safe", "suggestive"):
-        tier = "safe"
+def _normalise_tier(tier):
+    return tier if tier in ("safe", "suggestive") else "safe"
+
+
+def _validate_request(prompt, trigger):
+    """The checks that need no settings and no network, so a bad request never gets as far as a
+    configuration error (or, in a batch, a half-submitted queue)."""
     if not (prompt or "").strip():
         raise gc.UsageError("請輸入 prompt（描述要發生的動作）")
     if len(prompt) > gc.MAX_PROMPT_CHARS:
         raise gc.UsageError(f"prompt 太長（上限 {gc.MAX_PROMPT_CHARS} 字）")
     if trigger:
         gc.get_character(trigger)
+
+
+def _build_input(provider, job_type, backend, settings, *, prompt, extra_negative, tier, trigger, image_path, seed,
+                 params, replicate_props=None):
+    if provider == "runpod":
+        return build_runpod_input(job_type, prompt=prompt, extra_negative=extra_negative, tier=tier, trigger=trigger,
+                                  image_path=image_path, seed=seed, params=params)
+    if job_type != "video_wan_i2v":
+        raise gc.UsageError("AnimateDiff 雲端高畫質只能跑在 RunPod（需要本專案自己的 FaceID 流程）")
+    if not image_path:
+        raise gc.UsageError("Replicate 需要一張第一幀圖片")
+    fields = _merge(DEFAULT_REPLICATE_FIELDS, settings["replicate"].get("fields") or {})
+    props = replicate_props if replicate_props is not None else backend.fetch_schema()
+    return build_replicate_input(props, fields, prompt=prompt, extra_negative=extra_negative, tier=tier,
+                                 trigger=trigger, image_path=image_path, seed=seed,
+                                 cfg=params.get("cfg", client.WAN_CFG), frames=params.get("frames"),
+                                 fps=params.get("fps"))
+
+
+def _report(on_status, label, elapsed, limit):
+    if on_status is not None:
+        try:
+            on_status(label, int(elapsed), int(limit))
+        except Exception:
+            pass
+
+
+def _random_seed():
+    return int(time.time()) % (2**31)
+
+
+def run_cloud_video(provider, job_type, *, prompt, extra_negative="", tier="safe", trigger=None, image_path=None,
+                    seed=None, params=None, out_dir, max_wait_s=None, on_status=None, cancel_event=None,
+                    session=None, settings=None, env=None, sleep=time.sleep, clock=time.monotonic):
+    """Submit one video job, wait for it, download the mp4. Returns a CloudResult."""
+    tier = _normalise_tier(tier)
+    _validate_request(prompt, trigger)
     params = dict(params or {})
     settings = settings or load_cloud_settings()
     backend = make_backend(provider, session=session, settings=settings, env=env, sleep=sleep)
-    seed = int(seed) if seed is not None else int(time.time()) % (2**31)
+    seed = int(seed) if seed is not None else _random_seed()
     max_wait_s = max_wait_s or settings["max_wait_s"]
-
-    if provider == "runpod":
-        inp = build_runpod_input(job_type, prompt=prompt, extra_negative=extra_negative, tier=tier, trigger=trigger,
-                                 image_path=image_path, seed=seed, params=params)
-    else:
-        if job_type != "video_wan_i2v":
-            raise gc.UsageError("AnimateDiff 雲端高畫質只能跑在 RunPod（需要本專案自己的 FaceID 流程）")
-        if not image_path:
-            raise gc.UsageError("Replicate 需要一張第一幀圖片")
-        fields = _merge(DEFAULT_REPLICATE_FIELDS, settings["replicate"].get("fields") or {})
-        props = backend.fetch_schema()
-        inp = build_replicate_input(props, fields, prompt=prompt, extra_negative=extra_negative, tier=tier,
-                                    trigger=trigger, image_path=image_path, seed=seed,
-                                    cfg=params.get("cfg", client.WAN_CFG), frames=params.get("frames"),
-                                    fps=params.get("fps"))
+    inp = _build_input(provider, job_type, backend, settings, prompt=prompt, extra_negative=extra_negative, tier=tier,
+                       trigger=trigger, image_path=image_path, seed=seed, params=params)
 
     started = clock()
     job_id = backend.submit(inp, settings["runpod"]["execution_timeout_s"])
-    if on_status is not None:
-        try:
-            on_status(f"已送出（{provider} 工作 {job_id}）", 0, int(max_wait_s))
-        except Exception:
-            pass
+    _report(on_status, f"已送出（{provider} 工作 {job_id}）", 0, max_wait_s)
     data = wait_for_job(backend, job_id, max_wait_s=max_wait_s, on_status=on_status, cancel_event=cancel_event,
                         clock=clock, sleep=sleep)
     os.makedirs(out_dir, exist_ok=True)
@@ -597,6 +640,99 @@ def run_cloud_video(provider, job_type, *, prompt, extra_negative="", tier="safe
     path, queue_s, execution_s = backend.result(data, out_dir, stem)
     return CloudResult(path=path, provider=provider, job_id=job_id, seed=seed,
                        elapsed_s=round(clock() - started, 1), queue_s=queue_s, execution_s=execution_s, raw=data)
+
+
+def run_cloud_batch(provider, job_type, specs, *, out_dir, max_wait_s=None, on_status=None, cancel_event=None,
+                    session=None, settings=None, env=None, sleep=time.sleep, clock=time.monotonic):
+    """Submit every job first, then poll them together, and return [(spec, CloudResult or
+    CloudJobFailed)] in spec order.
+
+    Queuing everything up front is the point: the endpoint's warm worker works through the queue
+    back to back, so only the first job pays the cold start (18 GB of Wan weights). Submitting one,
+    waiting, then submitting the next lets the worker idle out in between and pay it every time.
+
+    Every spec is validated and turned into a payload before the first POST, so a bad prompt or an
+    oversized image can't leave half a batch billing. One job failing doesn't stop the others. The
+    local deadline is max_wait_s per job times the batch size, because an endpoint capped at one
+    worker runs the queue in sequence; each job's own execution is capped server-side by the
+    endpoint policy regardless. Any way of walking away - deadline, cancel_event, Ctrl-C, an HTTP
+    error mid-batch - cancels every job that hasn't finished."""
+    specs = list(specs)
+    if not specs:
+        return []
+    stems = [s.stem for s in specs]
+    if len(set(stems)) != len(stems):
+        raise gc.UsageError("同一批工作的輸出檔名（stem）不能重複")
+    for spec in specs:
+        _validate_request(spec.prompt, spec.trigger)
+    settings = settings or load_cloud_settings()
+    backend = make_backend(provider, session=session, settings=settings, env=env, sleep=sleep)
+    max_wait_s = max_wait_s or settings["max_wait_s"]
+    props = backend.fetch_schema() if provider == "replicate" and job_type == "video_wan_i2v" else None
+    prepared = []
+    for spec in specs:
+        seed = int(spec.seed) if spec.seed is not None else _random_seed()
+        inp = _build_input(provider, job_type, backend, settings, prompt=spec.prompt,
+                           extra_negative=spec.extra_negative, tier=_normalise_tier(spec.tier), trigger=spec.trigger,
+                           image_path=spec.image_path, seed=seed, params=dict(spec.params or {}),
+                           replicate_props=props)
+        prepared.append((spec, seed, inp))
+
+    os.makedirs(out_dir, exist_ok=True)
+    results = [None] * len(specs)
+    pending = {}   # job_id -> (index, spec, seed)
+    deadline = max_wait_s * len(specs)
+    started = clock()
+    try:
+        for index, (spec, seed, inp) in enumerate(prepared):
+            job_id = backend.submit(inp, settings["runpod"]["execution_timeout_s"])
+            pending[job_id] = (index, spec, seed)
+        _report(on_status, f"已送出 {len(specs)} 支（{provider}），雲端會依序處理", 0, deadline)
+        while pending:
+            if cancel_event is not None and cancel_event.is_set():
+                raise CloudJobCancelled("已取消雲端工作", provider=backend.name)
+            running = queued = 0
+            for job_id in list(pending):
+                index, spec, seed = pending[job_id]
+                state, _label, data = backend.poll(job_id)
+                if state == "succeeded":
+                    del pending[job_id]
+                    try:
+                        path, queue_s, execution_s = backend.result(data, out_dir, spec.stem)
+                    except CloudJobFailed as exc:
+                        results[index] = exc
+                        continue
+                    results[index] = CloudResult(path=path, provider=provider, job_id=job_id, seed=seed,
+                                                 elapsed_s=round(clock() - started, 1), queue_s=queue_s,
+                                                 execution_s=execution_s, raw=data)
+                elif state in ("failed", "cancelled", "timed_out"):
+                    del pending[job_id]
+                    detail = (data.get("error") or data.get("output") or {}) if isinstance(data, dict) else data
+                    results[index] = CloudJobFailed(f"{backend.name} 工作沒有成功（{state}）：{detail}",
+                                                    provider=backend.name, job_id=job_id, detail=data)
+                elif state == "queued":
+                    queued += 1
+                else:
+                    running += 1
+            elapsed = clock() - started
+            done = len(specs) - len(pending)
+            _report(on_status, f"完成 {done}/{len(specs)}（生成中 {running}、排隊 {queued}）", elapsed, deadline)
+            if not pending:
+                break
+            if elapsed >= deadline:
+                for job_id, (index, _spec, _seed) in pending.items():
+                    backend.cancel(job_id)
+                    results[index] = CloudJobFailed(
+                        f"等了 {int(elapsed)} 秒還沒完成，已取消雲端工作（整批上限 {int(deadline)} 秒）",
+                        provider=backend.name, job_id=job_id)
+                pending.clear()
+                break
+            sleep(POLL_INTERVAL_SECONDS)
+    except BaseException:
+        for job_id in pending:
+            backend.cancel(job_id)
+        raise
+    return list(zip(specs, results))
 
 
 # --- CLI --------------------------------------------------------------------------------------
@@ -622,7 +758,14 @@ def build_parser():
     run.add_argument("--height", type=int)
     run.add_argument("--fps", type=int)
     run.add_argument("--cfg", type=float)
-    run.add_argument("--timeout", type=int, help="max seconds to wait before cancelling the remote job")
+    run.add_argument("--steps", type=int)
+    run.add_argument("--preview", action="store_true",
+                     help="cheap Wan draft: 480x832, 49 frames, 12 steps (about a tenth of a full render)")
+    run.add_argument("--landscape", action="store_true", help="with --preview: 832x480 instead of 480x832")
+    run.add_argument("--count", type=int, default=1,
+                     help="submit this many seeds (seed, seed+1, ...) as one batch so the warm worker runs "
+                          "them back to back and only the first pays the cold start")
+    run.add_argument("--timeout", type=int, help="max seconds to wait per job before cancelling")
     run.add_argument("--out", default=os.path.join(TRAINING_DIR, "reference_candidates", "videos"))
 
     cancel = sub.add_parser("cancel", help="cancel a remote job by id")
@@ -648,16 +791,56 @@ def main(argv=None):
         return 0
 
     job_type = "video_wan_i2v" if args.job == "wan-i2v" else "video_animatediff"
-    params = {"frames": args.frames, "width": args.width, "height": args.height, "fps": args.fps, "cfg": args.cfg}
-    result = run_cloud_video(
-        args.provider, job_type, prompt=args.prompt, extra_negative=args.negative, tier=args.tier,
-        trigger=args.character, image_path=args.image, seed=args.seed, params=params, out_dir=args.out,
-        max_wait_s=args.timeout,
-        on_status=lambda label, elapsed, limit: print(f"[{elapsed:>4}s/{limit}s] {label}", flush=True),
-    )
-    print(f"saved {result.path}")
-    print(f"job {result.job_id} | total {result.elapsed_s}s | queue {result.queue_s}s | execution {result.execution_s}s")
-    return 0
+    params = cli_params(args, job_type)
+    on_status = print_status
+    if args.count < 1:
+        raise gc.UsageError("--count 至少要 1")
+    if args.count == 1:
+        result = run_cloud_video(
+            args.provider, job_type, prompt=args.prompt, extra_negative=args.negative, tier=args.tier,
+            trigger=args.character, image_path=args.image, seed=args.seed, params=params, out_dir=args.out,
+            max_wait_s=args.timeout, on_status=on_status,
+        )
+        print(f"saved {result.path}")
+        print(f"job {result.job_id} | total {result.elapsed_s}s | queue {result.queue_s}s | "
+              f"execution {result.execution_s}s")
+        return 0
+
+    base_seed = args.seed if args.seed is not None else _random_seed()
+    short = "wan" if job_type == "video_wan_i2v" else "animatediff"
+    batch_tag = time.strftime("%Y%m%d%H%M%S")
+    specs = [CloudJobSpec(stem=f"cloud_{args.provider}_{short}_seed{base_seed + i}_{batch_tag}", prompt=args.prompt,
+                          image_path=args.image, trigger=args.character, seed=base_seed + i, params=params,
+                          extra_negative=args.negative, tier=args.tier)
+             for i in range(args.count)]
+    results = run_cloud_batch(args.provider, job_type, specs, out_dir=args.out, max_wait_s=args.timeout,
+                              on_status=on_status)
+    failed = 0
+    for spec, outcome in results:
+        if isinstance(outcome, CloudResult):
+            print(f"seed {spec.seed}: saved {outcome.path} (execution {outcome.execution_s}s)")
+        else:
+            failed += 1
+            print(f"seed {spec.seed}: 失敗 - {outcome}")
+    return 1 if failed else 0
+
+
+def print_status(label, elapsed, limit):
+    print(f"[{elapsed:>4}s/{limit}s] {label}", flush=True)
+
+
+def cli_params(args, job_type):
+    """The params dict for `run`. --preview only fills in what wasn't given explicitly."""
+    params = {"frames": args.frames, "width": args.width, "height": args.height, "fps": args.fps, "cfg": args.cfg,
+              "steps": args.steps}
+    if args.preview:
+        if job_type != "video_wan_i2v":
+            raise gc.UsageError("--preview 只適用於 Wan 圖生影片")
+        preset = WAN_PREVIEW_LANDSCAPE if args.landscape else WAN_PREVIEW_PORTRAIT
+        for key, value in preset.items():
+            if params.get(key) is None:
+                params[key] = value
+    return params
 
 
 if __name__ == "__main__":

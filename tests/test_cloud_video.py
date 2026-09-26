@@ -442,3 +442,148 @@ def test_cli_surface():
     assert args.tier == "safe" and args.image is None
     with pytest.raises(SystemExit):
         parser.parse_args(["run", "--provider", "modal", "--job", "wan-i2v", "--prompt", "p"])
+
+
+# --- batches ----------------------------------------------------------------------------------
+
+
+def batch_routes(outcomes):
+    """outcomes: job id -> list of RunPod statuses; the last is COMPLETED/FAILED."""
+    routes = {("POST", "/run"): [Resp(200, {"id": job_id, "status": "IN_QUEUE"}) for job_id in outcomes]}
+    for job_id, statuses in outcomes.items():
+        bodies = []
+        for status in statuses:
+            body = {"status": status}
+            if status == "COMPLETED":
+                body.update(
+                    delayTime=1000,
+                    executionTime=30000,
+                    output={"outputUrl": f"https://signed/{job_id}.mp4", "outputKey": f"generated/{job_id}.mp4"},
+                )
+            bodies.append(Resp(200, body))
+        routes[("GET", f"/status/{job_id}")] = bodies
+        routes[("GET", f"https://signed/{job_id}.mp4")] = [Resp(200, content=job_id.encode())]
+    routes[("POST", "/cancel/")] = [Resp(200, {"status": "CANCELLED"})]
+    return routes
+
+
+def specs_for(frame, n):
+    return [
+        cv.CloudJobSpec(stem=f"shot{i}", prompt="turns around", image_path=frame, seed=100 + i, params={"frames": 49})
+        for i in range(n)
+    ]
+
+
+def run_batch(session, settings, tmp_path, specs, **kw):
+    clock = Clock()
+    return cv.run_cloud_batch(
+        "runpod",
+        "video_wan_i2v",
+        specs,
+        out_dir=str(tmp_path / "out"),
+        session=session,
+        settings=settings,
+        env=ENV,
+        sleep=clock.sleep,
+        clock=clock,
+        **kw,
+    )
+
+
+def test_batch_submits_everything_before_polling(tmp_path, settings, frame):
+    session = FakeSession(
+        batch_routes({"ja": ["IN_QUEUE", "COMPLETED"], "jb": ["IN_QUEUE", "IN_PROGRESS", "COMPLETED"]})
+    )
+    results = run_batch(session, settings, tmp_path, specs_for(frame, 2))
+    methods = [(m, "/run" in u) for m, u, _ in session.calls]
+    first_poll = next(i for i, (m, _) in enumerate(methods) if m == "GET")
+    assert [m for m, is_run in methods[:first_poll]] == ["POST", "POST"]
+    assert [os.path.basename(r.path) for _s, r in results] == ["shot0.mp4", "shot1.mp4"]
+    assert [r.seed for _s, r in results] == [100, 101]
+    assert open(results[1][1].path, "rb").read() == b"jb"
+    assert session.count("POST", "/cancel/") == 0
+
+
+def test_batch_keeps_going_when_one_job_fails(tmp_path, settings, frame):
+    session = FakeSession(batch_routes({"ja": ["FAILED"], "jb": ["COMPLETED"]}))
+    results = run_batch(session, settings, tmp_path, specs_for(frame, 2))
+    assert isinstance(results[0][1], cv.CloudJobFailed) and results[0][1].job_id == "ja"
+    assert isinstance(results[1][1], cv.CloudResult)
+
+
+def test_batch_refuses_a_bad_spec_before_any_http(tmp_path, settings, frame):
+    specs = specs_for(frame, 2)
+    specs[1].prompt = "  "
+    session = FakeSession(batch_routes({"ja": ["COMPLETED"]}))
+    with pytest.raises(gc.UsageError):
+        run_batch(session, settings, tmp_path, specs)
+    assert session.calls == []
+    specs = specs_for(frame, 2)
+    specs[1].stem = specs[0].stem
+    with pytest.raises(gc.UsageError, match="stem"):
+        run_batch(session, settings, tmp_path, specs)
+
+
+def test_batch_cancel_event_cancels_every_pending_job(tmp_path, settings, frame):
+    session = FakeSession(batch_routes({"ja": ["IN_PROGRESS"], "jb": ["IN_QUEUE"]}))
+    event = threading.Event()
+    calls = []
+
+    def on_status(label, elapsed, limit):
+        calls.append(label)
+        if len(calls) == 2:
+            event.set()
+
+    with pytest.raises(cv.CloudJobCancelled):
+        run_batch(session, settings, tmp_path, specs_for(frame, 2), on_status=on_status, cancel_event=event)
+    assert session.count("POST", "/cancel/ja") == 1 and session.count("POST", "/cancel/jb") == 1
+
+
+def test_batch_deadline_scales_with_batch_size_and_cancels_the_rest(tmp_path, settings, frame):
+    session = FakeSession(batch_routes({"ja": ["COMPLETED"], "jb": ["IN_QUEUE"]}))
+    results = run_batch(session, settings, tmp_path, specs_for(frame, 2), max_wait_s=20)
+    assert isinstance(results[0][1], cv.CloudResult)
+    assert isinstance(results[1][1], cv.CloudJobFailed) and "40" in str(results[1][1])
+    assert session.count("POST", "/cancel/jb") == 1 and session.count("POST", "/cancel/ja") == 0
+
+
+def test_batch_submit_failure_cancels_what_was_already_submitted(tmp_path, settings, frame):
+    routes = batch_routes({"ja": ["IN_QUEUE"]})
+    routes[("POST", "/run")] = [Resp(200, {"id": "ja"}), Resp(402, {"error": "insufficient balance"})]
+    session = FakeSession(routes)
+    with pytest.raises(gc.UsageError, match="餘額不足"):
+        run_batch(session, settings, tmp_path, specs_for(frame, 2))
+    assert session.count("POST", "/cancel/ja") == 1
+
+
+def test_empty_batch_does_nothing(tmp_path, settings):
+    session = FakeSession({})
+    assert run_batch(session, settings, tmp_path, []) == []
+
+
+def test_cli_preview_fills_only_what_was_not_given():
+    parser = cv.build_parser()
+    args = parser.parse_args(
+        ["run", "--provider", "runpod", "--job", "wan-i2v", "--prompt", "p", "--preview", "--steps", "15"]
+    )
+    params = cv.cli_params(args, "video_wan_i2v")
+    assert (params["width"], params["height"], params["frames"], params["steps"]) == (480, 832, 49, 15)
+    args = parser.parse_args(
+        ["run", "--provider", "runpod", "--job", "wan-i2v", "--prompt", "p", "--preview", "--landscape"]
+    )
+    assert (cv.cli_params(args, "video_wan_i2v")["width"]) == 832
+    with pytest.raises(gc.UsageError):
+        cv.cli_params(args, "video_animatediff")
+
+
+@pytest.mark.parametrize("preset", [cv.WAN_PREVIEW_PORTRAIT, cv.WAN_PREVIEW_LANDSCAPE])
+def test_preview_presets_pass_the_wan_bounds(preset):
+    gc.check_wan_params(
+        preset["width"],
+        preset["height"],
+        preset["frames"],
+        client.WAN_FPS,
+        preset["steps"],
+        client.WAN_CFG,
+        client.WAN_DEFAULT_MODEL,
+    )
