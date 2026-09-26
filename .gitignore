@@ -44,3 +44,7 @@ web/amplify_outputs.json
 Thumbs.db
 .DS_Store
 training/settings/
+
+# Voice-clone reference recordings for training/drama.py (training/voices/<id>/voice.json +
+# prompt.wav). Real people's voices, recorded with their consent - never committed.
+/training/voices/

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "title": "咖啡廳的重逢（範例）",
+  "checkpoint": "cyberrealistic_pony",
+  "tier": "safe",
+  "seed": 8100,
+  "voices": {},
+  "bgm": null,
+  "shots": [
+    {
+      "id": "s01",
+      "type": "still",
+      "scene": "cozy_cafe",
+      "framing": "wide",
+      "prompt": "empty cafe interior in the morning, sunlight through large windows, coffee cups on wooden tables",
+      "camera": "push_in",
+      "duration": 2.5
+    },
+    {
+      "id": "s02",
+      "type": "motion",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "pose": "sitting_on_a_chair",
+      "framing": "wide",
+      "prompt": "sitting alone at a window table, holding a coffee cup, looking out of the window",
+      "motion": "she takes a slow sip of coffee, then gazes out of the window, her hair moving slightly",
+      "duration": 3
+    },
+    {
+      "id": "s03",
+      "type": "motion",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "medium",
+      "prompt": "standing just inside the cafe entrance, looking around the room",
+      "motion": "he steps into the cafe and looks around, then his gaze stops on something across the room",
+      "duration": 3
+    },
+    {
+      "id": "s04",
+      "type": "dialogue",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "surprised expression, lips slightly parted",
+      "motion": "his eyes widen in surprise, then a soft smile spreads across his face as he speaks",
+      "line": "欣怡？真的是妳？",
+      "emotion": "驚訝",
+      "duration": 3
+    },
+    {
+      "id": "s05",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "looking up with a surprised but gentle expression",
+      "motion": "she looks up from her coffee, surprised, then smiles warmly as she speaks",
+      "line": "好久不見，你一點都沒變。",
+      "emotion": "溫柔",
+      "duration": 3
+    },
+    {
+      "id": "s06",
+      "type": "motion",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "medium",
+      "prompt": "standing beside a cafe table, one hand on the back of a chair",
+      "motion": "he pulls out the chair and sits down across the table, a little hesitant",
+      "duration": 3
+    },
+    {
+      "id": "s07",
+      "type": "dialogue",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "sitting at a cafe table, earnest and slightly sad expression",
+      "motion": "he leans forward a little and speaks quietly, his expression earnest",
+      "line": "這三年，妳過得好嗎？",
+      "emotion": "感慨",
+      "duration": 3
+    },
+    {
+      "id": "s08",
+      "type": "still",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "looking down at her coffee cup, complicated emotional expression, eyes glistening",
+      "camera": "push_in",
+      "line": "其實……我一直在等你。",
+      "emotion": "哽咽",
+      "duration": 3.5
+    }
+  ]
+}

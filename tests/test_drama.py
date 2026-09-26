@@ -1,0 +1,617 @@
+"""training/drama.py and drama_compose.py - the short-drama pipeline, with every GPU, cloud and ffmpeg
+call replaced by a recorder. What matters most: a bad shot list is refused before anything runs or
+bills; keyframes go through the same plan_picker/gen_custom path as the picker tab (so the safety
+negatives are the existing ones); cloud motion never leaves without confirmation and always carries
+the episode's tier and a cfg at or above the floor; and the assembled commands put picture, voice
+and subtitle where the timing says.
+"""
+
+import copy
+import json
+import os
+import wave
+
+import pytest
+
+import cloud_video
+import comfyui_client as client
+import drama
+import drama_compose as compose
+import generate_character as gc
+
+EXAMPLE = os.path.join(drama.EPISODES_DIR, "example_cafe_reunion.json")
+
+
+@pytest.fixture(autouse=True)
+def sandbox(tmp_path, monkeypatch):
+    monkeypatch.setattr(drama, "OUTPUT_ROOT", str(tmp_path / "out"))
+    monkeypatch.setattr(drama, "VOICES_DIR", str(tmp_path / "voices"))
+    monkeypatch.setattr(gc, "picker_anchor_path", lambda trigger: f"/anchors/{trigger}.png")
+
+
+def write_episode(tmp_path, data, name="ep01"):
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return drama.load_episode(str(path))
+
+
+def example_data():
+    with open(EXAMPLE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def touch(path, content=b"x"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(content)
+
+
+def write_wav(path, seconds, rate=24000):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(seconds * rate))
+
+
+class Recorder:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append((cmd, kwargs))
+
+
+# --- the episode file -------------------------------------------------------------------------
+
+
+def test_example_episode_is_valid():
+    errors, _warnings = drama.validate_episode(drama.load_episode(EXAMPLE))
+    assert errors == []
+
+
+def test_example_uses_adult_characters_and_the_safe_tier():
+    data = example_data()
+    assert data["tier"] == "safe"
+    for shot in data["shots"]:
+        if shot.get("character"):
+            assert gc.CHARACTERS[shot["character"]]["age"] >= gc.MINIMUM_AGE
+
+
+def _mutate(path, value):
+    def apply(data):
+        target = data
+        for key in path[:-1]:
+            target = target[key]
+        if value is _DELETE:
+            del target[path[-1]]
+        else:
+            target[path[-1]] = value
+
+    return apply
+
+
+_DELETE = object()
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        (_mutate(["version"], 2), "version"),
+        (_mutate(["tier"], "explicit"), "tier"),
+        (_mutate(["checkpoint"], "nope"), "checkpoint"),
+        (_mutate(["shots"], []), "至少要有一個鏡頭"),
+        (_mutate(["shots", 1, "id"], "s01"), "重複"),
+        (_mutate(["shots", 1, "id"], "S 2"), "id 只能"),
+        (_mutate(["shots", 1, "type"], "montage"), "type"),
+        (_mutate(["shots", 1, "duration"], 6), "duration"),
+        (_mutate(["shots", 1, "duration"], "3"), "duration"),
+        (_mutate(["shots", 1, "framing"], "extreme"), "framing"),
+        (_mutate(["shots", 0, "camera"], "spin"), "camera"),
+        (_mutate(["shots", 1, "character"], "nobody"), "角色表"),
+        (_mutate(["shots", 1, "scene"], "moon_base"), "場景庫"),
+        (_mutate(["shots", 1, "scene"], "poolside"), "suggestive"),
+        (_mutate(["shots", 1, "pose"], "flying"), "姿勢庫"),
+        (_mutate(["shots", 3, "line"], ""), "台詞"),
+        (_mutate(["shots", 3, "line"], "長" * 121), "拆成兩個鏡頭"),
+        (_mutate(["shots", 0, "scene"], _DELETE), "prompt 或 scene"),
+        (_mutate(["voices"], {"xinyi": "Bad Voice"}), "聲音 id"),
+        (_mutate(["bgm"], "missing.mp3"), "配樂"),
+    ],
+)
+def test_validation_refuses_mistakes(tmp_path, mutation, message):
+    data = example_data()
+    mutation(data)
+    if message == "prompt 或 scene":
+        data["shots"][0]["prompt"] = ""
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data))
+    assert any(message in e for e in errors), errors
+
+
+def test_episode_filename_becomes_a_folder_name_so_it_must_be_ascii(tmp_path):
+    errors, _ = drama.validate_episode(write_episode(tmp_path, example_data(), name="第一集"))
+    assert any("檔名" in e for e in errors)
+
+
+def test_missing_anchor_is_a_warning_at_plan_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(gc, "picker_anchor_path", lambda trigger: None)
+    errors, warnings = drama.validate_episode(write_episode(tmp_path, example_data()))
+    assert errors == [] and any("anchor" in w for w in warnings)
+
+
+def test_require_valid_raises_usage_error(tmp_path):
+    data = example_data()
+    data["shots"][1]["type"] = "montage"
+    with pytest.raises(gc.UsageError, match="分鏡表有問題"):
+        drama.require_valid(write_episode(tmp_path, data))
+
+
+def test_select_shots_filters_and_refuses_unknown_ids():
+    ep = drama.load_episode(EXAMPLE)
+    assert [s["id"] for _i, s in drama.select_shots(ep, "s04,s02")] == ["s02", "s04"]
+    assert all(s["type"] in drama.MOVING_TYPES for _i, s in drama.select_shots(ep, types=drama.MOVING_TYPES))
+    with pytest.raises(gc.UsageError, match="s99"):
+        drama.select_shots(ep, "s01,s99")
+
+
+# --- frames and cost --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seconds, frames", [(1.5, 37), (2.0, 49), (3.0, 73), (5.0, 121), (5.04, 121), (0.5, 17)])
+def test_frames_for_snaps_to_wan_lengths(seconds, frames):
+    assert drama.frames_for(seconds) == frames
+    assert (frames - 1) % 4 == 0
+
+
+def test_estimate_matches_the_cost_report_model():
+    ep = drama.load_episode(EXAMPLE)
+    shots = drama.select_shots(ep)
+    n, preview = drama.estimate(ep, shots, preview=True)
+    n_final, final = drama.estimate(ep, shots, preview=False)
+    cold = drama.RUNPOD_PER_HOUR / 60 * drama.COLD_START_MINUTES
+    assert n == n_final == 6
+    assert preview == pytest.approx(cold + 6 * drama.PREVIEW_COST)
+    # a 3 s shot is 19 of the full render's 31 latent frames: 9 min * 19/31 at $1.10/h
+    assert drama.final_cost(73) == pytest.approx(1.10 / 60 * 9 * 19 / 31)
+    assert final == pytest.approx(cold + 6 * drama.final_cost(73))
+    assert drama.estimate(ep, [(0, ep.shots[0])], preview=False) == (0, 0.0)
+
+
+# --- keyframes --------------------------------------------------------------------------------
+
+
+def test_keyframe_request_resolves_through_plan_picker():
+    ep = drama.load_episode(EXAMPLE)
+    req = drama.keyframe_request(ep, 1, ep.shots[1])  # xinyi, pose sitting_on_a_chair, wide
+    assert req["trigger"] == "xinyi" and req["anchor_path"] == "/anchors/xinyi.png"
+    assert req["pose_name"] == "sitting_on_a_chair"
+    assert (req["width"], req["height"]) == (None, None)  # the skeleton's own canvas
+    assert drama.FRAMINGS["wide"] in req["prompt"] and "window table" in req["prompt"]
+    assert "cozy cafe interior" in req["prompt"]
+    assert req["seed"] == 8110
+
+    req = drama.keyframe_request(ep, 3, ep.shots[3])  # close-up, no pose
+    assert (req["width"], req["height"]) == drama.KEYFRAME_SIZE
+    assert drama.FRAMINGS["close"] in req["prompt"]
+
+
+def test_chinese_keyframe_prompt_is_translated(tmp_path):
+    data = example_data()
+    data["shots"][1]["prompt"] = "坐在窗邊喝咖啡"
+    ep = write_episode(tmp_path, data)
+    req = drama.keyframe_request(ep, 1, ep.shots[1], translate=lambda t: "drinking coffee by the window")
+    assert "drinking coffee by the window" in req["prompt"] and "坐" not in req["prompt"]
+
+    def broken(_text):
+        raise RuntimeError("offline")
+
+    with pytest.raises(gc.UsageError, match="英文"):
+        drama.keyframe_request(ep, 1, ep.shots[1], translate=broken)
+
+
+def test_keyframe_request_refuses_a_character_without_anchor(monkeypatch):
+    monkeypatch.setattr(gc, "picker_anchor_path", lambda trigger: None)
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="anchor"):
+        drama.keyframe_request(ep, 1, ep.shots[1])
+
+
+def test_run_keyframes_uses_gen_custom_with_the_episode_tier_and_skips_done_shots(tmp_path):
+    ep = drama.load_episode(EXAMPLE)
+    touch(ep.keyframe("s01"))
+    calls = []
+
+    def fake_gen(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_weight, **kw):
+        calls.append(
+            dict(prompt=prompt, tier=tier, trigger=trigger, anchor=anchor_path, seed=seed, filename=filename, **kw)
+        )
+        touch(os.path.join(out_dir, f"{filename}.png"))
+
+    run = Recorder()
+    made = drama.run_keyframes(
+        ep, drama.select_shots(ep, "s01,s02"), ffmpeg="ffmpeg", gen=fake_gen, run=run, server_up=lambda: True
+    )
+    assert made == 1 and len(calls) == 1
+    call = calls[0]
+    assert call["tier"] == "safe" and call["trigger"] == "xinyi" and call["filename"] == "s02_raw"
+    assert call["checkpoint"] == "cyberrealistic_pony" and call["hq"] is True
+    assert call["style_positive"] == gc.REALISTIC_STYLE and call["style_negative"] == gc.REALISTIC_NEGATIVE
+    cmd, _ = run.calls[0]
+    assert cmd[-1] == ep.keyframe("s02") and "crop=1080:1920" in " ".join(cmd)
+
+
+def test_run_keyframes_needs_comfyui():
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="ComfyUI"):
+        drama.run_keyframes(ep, drama.select_shots(ep), ffmpeg="ffmpeg", server_up=lambda: False)
+
+
+# --- voice ------------------------------------------------------------------------------------
+
+
+def test_voice_items_use_demo_voice_when_none_is_configured():
+    ep = drama.load_episode(EXAMPLE)
+    items, demo = drama.voice_items(ep, drama.select_shots(ep))
+    assert demo is True
+    assert [it["id"] for it in items] == ["s04", "s05", "s07", "s08"]
+    first = items[0]
+    assert first["text"] == "欣怡？真的是妳？"
+    assert first["instruct"] and "驚訝" in first["instruct"] and first["instruct"].endswith("<|endofprompt|>")
+    assert first["prompt_text"].startswith(drama.COSYVOICE_PROMPT_PREFIX)
+    assert first["out"] == ep.voice("s04")
+
+
+def test_configured_voice_is_used_and_needs_its_transcript(tmp_path):
+    data = example_data()
+    data["voices"] = {"taeoh": "taeoh_v1"}
+    data["shots"][3].pop("emotion")
+    ep = write_episode(tmp_path, data)
+    vdir = os.path.join(drama.VOICES_DIR, "taeoh_v1")
+    touch(os.path.join(vdir, "prompt.wav"))
+    with open(os.path.join(vdir, "voice.json"), "w", encoding="utf-8") as f:
+        json.dump({"prompt_wav": "prompt.wav", "prompt_text": "這是授權錄音的逐字稿。"}, f, ensure_ascii=False)
+    items, _ = drama.voice_items(ep, drama.select_shots(ep, "s04"))
+    assert items[0]["prompt_wav"] == os.path.join(vdir, "prompt.wav")
+    assert items[0]["prompt_text"].endswith("這是授權錄音的逐字稿。")
+    assert items[0]["instruct"] is None  # no emotion -> zero-shot clone
+
+    with open(os.path.join(vdir, "voice.json"), "w", encoding="utf-8") as f:
+        json.dump({"prompt_wav": "prompt.wav"}, f)
+    with pytest.raises(gc.UsageError, match="逐字稿"):
+        drama.voice_items(ep, drama.select_shots(ep, "s04"))
+
+
+def test_run_voice_refuses_while_comfyui_holds_the_gpu(monkeypatch):
+    monkeypatch.setattr(drama, "cosyvoice_python", lambda: "/cosy/python")
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="stop_comfyui"):
+        drama.run_voice(ep, drama.select_shots(ep), server_up=lambda: True)
+
+
+def test_run_voice_writes_one_job_for_the_whole_episode(monkeypatch):
+    monkeypatch.setattr(drama, "cosyvoice_python", lambda: "/cosy/python")
+    ep = drama.load_episode(EXAMPLE)
+    touch(ep.voice("s05"))
+
+    def fake_run(cmd, **kwargs):
+        with open(cmd[-1], encoding="utf-8") as f:
+            job = json.load(f)
+        for item in job["items"]:
+            touch(item["out"])
+        fake_run.job, fake_run.kwargs = job, kwargs
+
+    done = drama.run_voice(ep, drama.select_shots(ep), run=fake_run, server_up=lambda: False)
+    assert done == 3  # s05 already had audio
+    assert [it["id"] for it in fake_run.job["items"]] == ["s04", "s07", "s08"]
+    assert fake_run.kwargs["cwd"] == drama.COSYVOICE_DIR
+
+
+def test_run_voice_needs_the_cosyvoice_venv(monkeypatch):
+    monkeypatch.setattr(drama, "cosyvoice_python", lambda: None)
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="CosyVoice"):
+        drama.run_voice(ep, drama.select_shots(ep), server_up=lambda: False)
+
+
+# --- motion -----------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_motion_specs_are_valid_wan_jobs_carrying_the_tier(preview):
+    ep = drama.load_episode(EXAMPLE)
+    specs = drama.motion_specs(ep, drama.select_shots(ep), preview)
+    assert [s.stem for s in specs] == [
+        f"{sid}{'_preview' if preview else ''}" for sid in ("s02", "s03", "s04", "s05", "s06", "s07")
+    ]
+    for spec in specs:
+        p = spec.params
+        gc.check_wan_params(
+            p["width"], p["height"], p["frames"], p["fps"], p["steps"], p["cfg"], client.WAN_DEFAULT_MODEL
+        )
+        assert p["cfg"] >= client.SAFETY_MIN_CFG
+        assert spec.tier == "safe" and spec.trigger in ("xinyi", "taeoh")
+        assert spec.image_path.endswith("_wan.png")
+        assert "safety" not in spec.prompt.lower()  # raw motion text; the worker adds negatives
+    first = specs[0].params
+    if preview:
+        assert (first["width"], first["height"], first["steps"], first["frames"]) == (480, 832, 12, 49)
+    else:
+        assert (first["width"], first["height"], first["frames"]) == (704, 1280, 73)
+
+
+def test_motion_is_never_sent_without_confirmation(tmp_path):
+    ep = drama.load_episode(EXAMPLE)
+    for _i, shot in drama.select_shots(ep):
+        touch(ep.keyframe(shot["id"]))
+    sent = []
+    with pytest.raises(gc.UsageError, match="--yes"):
+        drama.run_motion(
+            ep,
+            drama.select_shots(ep),
+            preview=True,
+            ffmpeg="ffmpeg",
+            run=Recorder(),
+            run_batch=lambda *a, **k: sent.append(a),
+            stdin_isatty=False,
+        )
+    assert sent == []
+    result = drama.run_motion(
+        ep,
+        drama.select_shots(ep),
+        preview=True,
+        ffmpeg="ffmpeg",
+        run=Recorder(),
+        run_batch=lambda *a, **k: sent.append(a),
+        confirm=lambda _p: "n",
+        stdin_isatty=True,
+    )
+    assert result == [] and sent == []
+
+
+def test_run_motion_batches_missing_shots_and_logs_cost(tmp_path):
+    ep = drama.load_episode(EXAMPLE)
+    for _i, shot in drama.select_shots(ep):
+        touch(ep.keyframe(shot["id"]))
+    touch(ep.motion("s02", preview=True))  # already drafted
+    seen = {}
+
+    def fake_batch(provider, job_type, specs, **kwargs):
+        seen.update(provider=provider, job_type=job_type, specs=specs, **kwargs)
+        out = []
+        for i, spec in enumerate(specs):
+            if i == 0:
+                out.append((spec, cloud_video.CloudJobFailed("boom", job_id="j0")))
+            else:
+                out.append(
+                    (
+                        spec,
+                        cloud_video.CloudResult(
+                            path=f"/m/{spec.stem}.mp4",
+                            provider=provider,
+                            job_id=f"j{i}",
+                            seed=spec.seed,
+                            elapsed_s=1.0,
+                            queue_s=3.0,
+                            execution_s=36.0,
+                        ),
+                    )
+                )
+        return out
+
+    run = Recorder()
+    results = drama.run_motion(
+        ep, drama.select_shots(ep), preview=True, yes=True, ffmpeg="ffmpeg", run=run, run_batch=fake_batch
+    )
+    assert seen["provider"] == "runpod" and seen["job_type"] == "video_wan_i2v"
+    assert [s.stem for s in seen["specs"]] == [
+        "s03_preview",
+        "s04_preview",
+        "s05_preview",
+        "s06_preview",
+        "s07_preview",
+    ]
+    assert seen["out_dir"] == ep.sub("motion")
+    assert len(run.calls) == 5 and all("crop=704:1280" in " ".join(c) for c, _ in run.calls)
+    assert len(results) == 5
+    with open(ep.sub("motion", "jobs.json"), encoding="utf-8") as f:
+        log = json.load(f)
+    assert log[0]["error"] and log[0]["job_id"] == "j0"
+    assert log[1]["cost_floor"] == pytest.approx(36 / 3600 * drama.RUNPOD_PER_HOUR, abs=1e-4)
+
+
+def test_run_motion_needs_keyframes_first():
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="keyframes"):
+        drama.run_motion(
+            ep,
+            drama.select_shots(ep),
+            preview=True,
+            yes=True,
+            ffmpeg="ffmpeg",
+            run=Recorder(),
+            run_batch=lambda *a, **k: [],
+        )
+
+
+# --- assemble ---------------------------------------------------------------------------------
+
+
+def test_shot_plan_prefers_final_clip_and_stretches_for_long_lines():
+    ep = drama.load_episode(EXAMPLE)
+    s04 = ep.shots[3]
+    plan = drama.shot_plan(ep, s04)
+    assert plan["video"] is None and plan["still"] == ep.keyframe("s04") and plan["duration"] == 3.0
+
+    touch(ep.motion("s04", preview=True))
+    assert drama.shot_plan(ep, s04)["video"] is None
+    assert drama.shot_plan(ep, s04, allow_preview=True)["video"] == ep.motion("s04", preview=True)
+    touch(ep.motion("s04"))
+    assert drama.shot_plan(ep, s04, allow_preview=True)["video"] == ep.motion("s04")
+
+    write_wav(ep.voice("s04"), 4.0)
+    plan = drama.shot_plan(ep, s04)
+    assert plan["voice"] == ep.voice("s04")
+    # 0.25 + 4.0 + 0.35 = 4.6 s is 110.4 frames; rounded up to 111 so picture and audio end together
+    assert plan["duration"] == pytest.approx(111 / 24)
+
+
+def test_run_assemble_cuts_every_shot_and_concatenates(tmp_path):
+    ep = drama.load_episode(EXAMPLE)
+    for shot in ep.shots:
+        touch(ep.keyframe(shot["id"]))
+    write_wav(ep.voice("s05"), 2.0)
+    run = Recorder()
+    out, total = drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
+    assert out == ep.output()
+    assert len(run.calls) == len(ep.shots) + 1  # one per shot + concat, no bgm
+    assert total == pytest.approx(sum(s["duration"] for s in ep.shots))
+    with open(ep.subtitle("s05"), encoding="utf-8") as f:
+        assert f.read() == compose.wrap_subtitle("好久不見，你一點都沒變。")
+    s05_cmd = " ".join(run.calls[4][0])
+    assert "drawtext" in s05_cmd and ep.voice("s05") in s05_cmd
+    s01_cmd = " ".join(run.calls[0][0])
+    assert "zoompan" in s01_cmd and "drawtext" not in s01_cmd and "anullsrc" in s01_cmd
+    with open(ep.sub("segments", "concat.txt"), encoding="utf-8") as f:
+        assert f.read().count("file '") == len(ep.shots)
+
+
+def test_run_assemble_mixes_music_when_the_episode_has_it(tmp_path):
+    data = example_data()
+    bgm = tmp_path / "music.mp3"
+    bgm.write_bytes(b"ID3")
+    data["bgm"] = "music.mp3"
+    data["bgm_volume"] = 0.1
+    ep = write_episode(tmp_path, data)
+    for shot in ep.shots:
+        touch(ep.keyframe(shot["id"]))
+    run = Recorder()
+    drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
+    last = run.calls[-1][0]
+    assert str(bgm) in last and "volume=0.100" in " ".join(last) and last[-1] == ep.output()
+
+
+def test_run_assemble_refuses_missing_pictures_and_missing_font():
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="關鍵幀"):
+        drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=Recorder())
+    for shot in ep.shots:
+        touch(ep.keyframe(shot["id"]))
+    with pytest.raises(gc.UsageError, match="字型"):
+        drama.run_assemble(ep, ffmpeg="ffmpeg", font=None, run=Recorder())
+
+
+def test_cli_surface():
+    parser = drama.build_parser()
+    args = parser.parse_args(["motion", EXAMPLE, "--preview", "--shots", "s02"])
+    assert args.preview and not args.final and args.shots == "s02" and not args.yes
+    with pytest.raises(SystemExit):
+        parser.parse_args(["motion", EXAMPLE])  # --preview or --final is required
+    with pytest.raises(SystemExit):
+        parser.parse_args(["motion", EXAMPLE, "--preview", "--final"])
+
+
+def test_plan_command_prints_estimate(capsys):
+    assert drama.main(["plan", EXAMPLE]) == 0
+    out = capsys.readouterr().out
+    assert "s08" in out and "預覽 6 支" in out and "正式版 6 支" in out
+
+
+# --- drama_compose ----------------------------------------------------------------------------
+
+
+def test_wrap_subtitle_breaks_long_lines_at_punctuation():
+    assert compose.wrap_subtitle("好久不見") == "好久不見"
+    wrapped = compose.wrap_subtitle("這三年妳過得好嗎，我一直想問妳這句話，卻一直沒有機會")
+    lines = wrapped.split("\n")
+    assert all(len(line) <= compose.SUBTITLE_CHARS_PER_LINE for line in lines)
+    assert lines[0].endswith("，")
+    assert "".join(lines) == "這三年妳過得好嗎，我一直想問妳這句話，卻一直沒有機會"
+
+
+@pytest.mark.parametrize("move", compose.CAMERA_MOVES)
+def test_every_camera_move_has_expressions(move):
+    z, x, y = compose.camera_expressions(move, 72)
+    assert z and x and y
+    if move != "static":
+        assert "71" in (z + x)  # travels over the whole shot
+
+
+def test_unknown_camera_move_is_rejected():
+    with pytest.raises(ValueError):
+        compose.camera_expressions("dolly_zoom", 72)
+
+
+def test_segment_command_for_a_still_with_voice_and_subtitle():
+    cmd = compose.segment_command(
+        "ffmpeg",
+        out="seg.mp4",
+        duration=3.0,
+        still="k.png",
+        camera="pan_left",
+        voice="v.wav",
+        voice_delay=0.25,
+        subtitle_file="C:\\subs\\s.txt",
+        font="C:\\Windows\\Fonts\\msjhbd.ttc",
+    )
+    joined = " ".join(cmd)
+    assert cmd[cmd.index("-loop") + 1] == "1" and "k.png" in cmd
+    assert "zoompan" in joined and "s=1080x1920" in joined
+    assert "adelay=250|250" in joined and "atrim=0:3.000" in joined
+    assert "textfile='C\\:/subs/s.txt'" in joined and "fontfile='C\\:/Windows/Fonts/msjhbd.ttc'" in joined
+    assert cmd[-1] == "seg.mp4" and "libx264" in cmd and "pcm_s16le" in cmd and "aac" not in cmd
+
+
+def test_segment_command_for_a_clip_holds_the_last_frame_and_adds_silence():
+    cmd = compose.segment_command("ffmpeg", out="seg.mp4", duration=4.2, video="clip.mp4")
+    joined = " ".join(cmd)
+    assert "tpad=stop_mode=clone" in joined and "trim=duration=4.200" in joined
+    assert "anullsrc=r=48000:cl=stereo" in joined and "drawtext" not in joined
+
+
+def test_segment_command_argument_errors():
+    with pytest.raises(ValueError):
+        compose.segment_command("ffmpeg", out="o.mp4", duration=3, video="a.mp4", still="b.png")
+    with pytest.raises(ValueError):
+        compose.segment_command("ffmpeg", out="o.mp4", duration=3, still="b.png", subtitle_file="s.txt")
+
+
+def test_concat_list_quotes_paths():
+    text = compose.concat_list(["C:\\a\\s01.mp4", "/tmp/it's.mp4"])
+    assert text == "file 'C:/a/s01.mp4'\nfile '/tmp/it'\\''s.mp4'\n"
+
+
+def test_concat_copies_video_and_encodes_aac_only_for_the_final_file():
+    final = compose.concat_command("ffmpeg", "concat.txt", "out.mp4")
+    assert final[final.index("-c:v") + 1] == "copy" and "aac" in final and "+faststart" in final
+    body = compose.concat_command("ffmpeg", "concat.txt", "body.mkv", final=False)
+    assert body[body.index("-c:a") + 1] == "copy" and "aac" not in body
+
+
+@pytest.mark.parametrize("seconds, frames", [(2.5, 60), (3.0, 72), (4.6, 111), (4.8, 116)])
+def test_frame_exact_rounds_up_to_whole_frames(seconds, frames):
+    assert compose.frame_exact(seconds) * 24 == pytest.approx(frames)
+
+
+def test_bgm_command_fades_out_and_keeps_video():
+    cmd = compose.bgm_command("ffmpeg", "body.mp4", "m.mp3", "out.mp4", 20.0, 0.18)
+    joined = " ".join(cmd)
+    assert "-stream_loop -1" in joined and "volume=0.180" in joined and "afade=t=out:st=18.500" in joined
+    assert cmd[cmd.index("-c:v") + 1] == "copy" and cmd[-1] == "out.mp4"
+
+
+def test_find_ffmpeg_and_font_honour_the_environment(tmp_path):
+    exe = tmp_path / "ffmpeg.exe"
+    exe.write_bytes(b"")
+    font = tmp_path / "font.ttc"
+    font.write_bytes(b"")
+    assert compose.find_ffmpeg({"DRAMA_FFMPEG": str(exe)}) == str(exe)
+    assert compose.find_font({"DRAMA_FONT": str(font)}) == str(font)
+
+
+def test_example_is_not_mutated_by_the_suite():
+    before = example_data()
+    ep = drama.load_episode(EXAMPLE)
+    drama.validate_episode(ep)
+    drama.motion_specs(ep, drama.select_shots(ep), preview=True)
+    assert example_data() == copy.deepcopy(before)

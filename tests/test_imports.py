@@ -17,6 +17,8 @@ import pytest
         "benchmark",
         "scene_library",
         "cloud_video",
+        "drama",
+        "drama_compose",
         "validate_workflow_nodes",
         "workflow_contracts",
     ],
