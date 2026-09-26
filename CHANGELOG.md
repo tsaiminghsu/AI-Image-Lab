@@ -3,6 +3,50 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-09-27
+
+### AI 短劇第一階段：分鏡表 → 關鍵幀 → 配音 → 雲端動態鏡頭 → 9:16 成片
+
+- **為什麼**：依「AI 短劇製作方案」選了真人風並先做第一階段。分工照成本報告：關鍵幀和配音在本機
+  免費做，雲端只跑 Wan 動態鏡頭，而且先出便宜的預覽再出正式版。
+- **新增 `training/drama.py`**：一集寫成 `training/episodes/<集名>.json`（分鏡表），子指令
+  `plan`／`keyframes`／`voice`／`motion`／`assemble`／`status`。工作檔放 `outputs/drama/<集名>/`，
+  每一步都能用 `--shots` 只做部分鏡頭，已完成的會略過。範例 `example_cafe_reunion.json`
+  （8 個鏡頭約 25 秒，角色 xinyi 21 歲、taeoh 22 歲，safe）。
+- **安全保證沿用既有路徑，沒有另寫一套**：關鍵幀走 `gc.plan_picker` + `gc.gen_custom`（跟「圖片選擇
+  生圖」同一條），動態鏡頭走 `cloud_video` 送 RunPod worker，由 worker 組 tier／年齡安全負面詞並套
+  cfg 下限。分鏡表驗證會擋掉等級高於這集 tier 的場景。
+- **雲端：預覽與一次送多支**（`cloud_video.py`）：
+  - `WAN_PREVIEW_PORTRAIT/LANDSCAPE`：480×832、49 幀、12 步。依 token 數估約正式版的十分之一（未實測）。
+    解析度和長度不同，同一個 seed 不會得到縮小版的正式影片。
+  - `run_cloud_batch()`：先全部送出再一起輪詢，暖著的 worker 連續處理，只有第一支付冷啟動。一支
+    失敗不影響其他；逾時、取消、Ctrl-C、中途 HTTP 錯誤都會取消還沒完成的工作；所有請求在第一個
+    POST 之前就驗證並組好，壞掉的一支不會讓半批已經在計費。整批等待上限是每支上限 × 支數。
+  - CLI 新增 `--preview`、`--landscape`、`--steps`、`--count`；GUI「☁️ 雲端影片」解析度多兩個預覽
+    選項（handler 參數數量不變，preset 的 frames／steps 覆蓋長度選項）。
+  - `drama.py motion` 送出前印出估計費用並要求確認，非互動環境要加 `--yes`。每支工作的執行秒數與
+    「執行秒數 × 單價」的費用下限記在 `motion/jobs.json`。
+- **配音**：`training/cosyvoice_runner.py` 在 CosyVoice 自己的 venv 裡跑，整集只載入一次模型。有
+  `emotion` 時用 `inference_instruct2`，否則用 zero-shot 複製參考聲音。角色聲音放
+  `training/voices/<id>/voice.json`（已 gitignore，錄音要本人同意）；沒設定就用 CosyVoice 示範聲音並
+  警告只能內部測試。ComfyUI 還在跑時會拒絕執行（8 GB 卡會被兩邊搶）。
+- **組裝**（`training/drama_compose.py`，只產生 ffmpeg 指令，可離線測試）：靜態鏡頭用 zoompan 推拉
+  運鏡、動態片段補最後一格到台詞長度、微軟正黑體字幕（底緣 y=1440，避開直式平台底部約 450 像素的
+  UI）、配音延遲 0.25 秒、可選配樂。
+- **9:16 跟姿勢骨架的衝突**：骨架是 832×1216，直接生 768×1344 會被 ControlNet 裁掉約 18%（觸發
+  `check_canvas` 保護）。所以有姿勢的鏡頭照骨架尺寸生，沒姿勢的用 768×1344，最後統一置中裁成
+  1080×1920。
+- **實跑組裝抓到的兩個問題**（用 anchor 圖當關鍵幀、假配音、假影片，實際跑 `assemble`，只用 CPU）：
+  1. ffmpeg 的 concat 在 Windows 上把清單檔所在資料夾算錯（路徑混用 `/` 和 `\`），絕對路徑的條目也
+     被當成相對路徑。改成在 `segments/` 裡執行、條目只寫檔名。
+  2. AAC 片段用 stream copy 串接時，每段約 20 ms 的補白累積成時間戳漂移：25 秒的成片平均 23.85 fps、
+     tbr 48。片段改存 PCM 音訊的 .mkv、長度往上對齊整數影格，串接時影像直接複製，AAC 只在最後
+     編一次。修正後成片 25.36 秒（預期 25.33）、24 fps、1080×1920。
+- **驗證**：`check.ps1` 全綠，1847 passed（原 1762，新增 85 例：`tests/test_drama.py` 73、
+  `test_cloud_video.py` 批次 10、`test_imports.py` 2）。
+- **還沒做的**：對嘴（第二階段）。關鍵幀、配音、雲端動態鏡頭都還沒實跑：前兩者要用顯卡（會先問），
+  雲端要 RunPod 帳號。
+
 ## 2026-09-18
 
 ### Pony 關鍵字詞庫：必備四類補齊 `source_*`／`rating_*`，並在 GUI 做成可勾選

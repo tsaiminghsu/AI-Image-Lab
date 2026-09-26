@@ -120,6 +120,10 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   分頁。Replicate 模型沒有負面詞＋cfg 欄位就拒用。**程式碼與離線測試完成，但從未在真的雲端 GPU 上跑過**
   （沒有帳號），worker image 也還沒 build 過。改 workflow 模板後可用
   `training/validate_workflow_nodes.py` 對本機 ComfyUI 做結構檢查。
+- AI 短劇（2026-09-27）：`training/drama.py`（分鏡表 → 關鍵幀 → 配音 → 雲端動態 → 9:16 成片）＋
+  `drama_compose.py`（ffmpeg 指令）＋`cosyvoice_runner.py`（在 CosyVoice 自己的 venv 跑）。分鏡表在
+  `training/episodes/`，工作檔在 `outputs/drama/`。組裝在本機用假素材實跑過；關鍵幀、配音、雲端動態
+  還沒實跑，也還沒有對嘴。「一次送多支」只有 `cloud_video.run_cloud_batch` 一個實作。
 - GUI 有 7 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
   `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是
   降級成文字（Z-Image、SD1.5），降級時 GUI 會明講。場景庫在 `training/scenes/`（縮圖已

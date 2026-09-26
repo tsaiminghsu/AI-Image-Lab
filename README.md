@@ -1956,9 +1956,16 @@ shift 8、20 步、cfg 5、uni_pc／simple、預設 1280×704、121 幀（5 秒�
 ```powershell
 ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --frames 81
 ComfyUI\.venv\Scripts\python.exe training\cloud_video.py cancel --provider runpod --job-id <工作 ID>
+# 先出三個便宜的預覽（480×832、49 幀、12 步，約正式版的十分之一），一次送出
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --preview --count 3
 ```
 
 - 結果存到 `training/reference_candidates/videos/`，檔名含雲端工作 ID（不會跟別的工作撞名）
+- `--preview`：先用便宜的草稿判斷動作和構圖，滿意再出正式版。解析度和長度不同，同一個 seed
+  **不會**得到縮小版的正式影片，只能看方向。GUI 的解析度選項也有「預覽・直式／橫式」
+- `--count N`：用 seed、seed+1……一次送出 N 支。先全部排進佇列再一起等，暖著的 worker 會接著做，
+  只有第一支付冷啟動；一次送一支、等完再送下一支，中間 worker 閒置超過 5 秒就會關機，下一支又要
+  重新載入 18 GB 的模型。整批的等待上限是「每支上限 × 支數」
 - 逾時、Ctrl-C、GUI 取消都會先送出遠端取消——**放著不管的雲端工作會一直計費**
 - 送出工作的請求**不會自動重試**：回應遺失時重送會變成兩個計費工作，所以連線失敗時會請你先到
   後台確認
@@ -2015,6 +2022,101 @@ ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod
 - 雲端生圖跟本機生成共用同一條排隊（`concurrency_id="gpu"`），雲端工作進行中本機其他生成要等
 - 進度只顯示雲端狀態文字（排隊中／冷啟動／雲端步數），沒有本機那種逐步進度條
 - 本機 8GB 卡的限制常數（例如高清 1.5 倍）仍然照樣套用，大卡目前沒有自動放寬
+
+## AI 短劇（分鏡表 → 9:16 成片）
+
+一集短劇寫成一個分鏡表（JSON），`training/drama.py` 依序產生關鍵幀、配音、動態鏡頭，再組成一支
+1080×1920 的直式影片。分工照成本報告：關鍵幀和配音在本機免費做，只有動態鏡頭送 RunPod 的 Wan 2.2，
+而且先出便宜的預覽再出正式版。這一版**還沒有對嘴**（下一階段），對話鏡頭是 Wan 的動作加上配音和字幕。
+
+範例：`training/episodes/example_cafe_reunion.json`（8 個鏡頭約 25 秒，角色 xinyi、taeoh，一般級）。
+
+### 流程
+
+```powershell
+# 1. 檢查分鏡表，列出鏡頭和雲端費用估計（不花錢、不用顯卡）
+ComfyUI\.venv\Scripts\python.exe training\drama.py plan training\episodes\example_cafe_reunion.json
+
+# 2. 關鍵幀：每個鏡頭一張 9:16 圖（本機 ComfyUI，要先啟動）
+ComfyUI\.venv\Scripts\python.exe training\drama.py keyframes training\episodes\example_cafe_reunion.json
+
+# 3. 配音：CosyVoice3（本機；先關掉 ComfyUI 讓出 8 GB 顯卡）
+powershell -ExecutionPolicy Bypass -File training\stop_comfyui.ps1
+ComfyUI\.venv\Scripts\python.exe training\drama.py voice training\episodes\example_cafe_reunion.json
+
+# 4. 動態鏡頭：先預覽，滿意再出正式版（RunPod，會計費；送出前顯示估計並要求確認）
+ComfyUI\.venv\Scripts\python.exe training\drama.py motion training\episodes\example_cafe_reunion.json --preview
+ComfyUI\.venv\Scripts\python.exe training\drama.py motion training\episodes\example_cafe_reunion.json --final
+
+# 5. 組裝：運鏡、字幕、配音、配樂 → outputs\drama\example_cafe_reunion\example_cafe_reunion.mp4
+ComfyUI\.venv\Scripts\python.exe training\drama.py assemble training\episodes\example_cafe_reunion.json
+
+# 隨時看每個鏡頭做到哪
+ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\example_cafe_reunion.json
+```
+
+- 每個步驟都能用 `--shots s02,s04` 只做部分鏡頭；已經有的檔案會略過，`--force` 重做
+- 還沒出正式版時，`assemble --allow-preview` 先用預覽片段組一版粗剪
+- `motion` 在非互動環境（例如排程）需要加 `--yes` 才會送出，避免意外計費
+- 工作檔都在 `outputs/drama/<集名>/`：`keyframes/`、`voice/`、`motion/`、`segments/`
+
+### 分鏡表格式
+
+| 欄位 | 說明 |
+|---|---|
+| `version` | 固定 `1` |
+| `title` | 標題，只用來顯示 |
+| `checkpoint` | 生關鍵幀的模型，預設 `cyberrealistic_pony`。SDXL／Pony 才會鎖臉、吃姿勢骨架 |
+| `tier` | `safe` 或 `suggestive`，跟其他流程同一套安全負面詞 |
+| `seed` | 起始 seed，第 n 個鏡頭用 seed + 10n（鏡頭也能自己指定 `seed`） |
+| `voices` | `{角色: 聲音 id}`，見下方「角色聲音」；沒設定的角色用示範聲音 |
+| `bgm`、`bgm_volume` | 配樂檔（路徑相對於分鏡表）與音量（預設 0.18）；要用有授權的音樂 |
+| `shots` | 鏡頭清單，欄位如下 |
+
+| 鏡頭欄位 | 說明 |
+|---|---|
+| `id` | 小寫英數字和 `_`，會變成檔名 |
+| `type` | `still`（靜態圖＋推拉運鏡）、`motion`（Wan 動作）、`dialogue`（Wan 動作＋台詞） |
+| `character` | 角色 id，要有 anchor 圖 |
+| `scene` | 場景庫的 slug（`training/scenes/scenes.json`），等級不能高於這集的 `tier` |
+| `pose` | 姿勢庫的骨架名稱（`training/poses/`）；骨架是全身的，搭 `wide` 最穩 |
+| `framing` | `close`、`medium`、`wide` |
+| `prompt` | 關鍵幀的畫面描述；英文最好，中文會自動翻譯 |
+| `motion` | 動態鏡頭要發生的動作（Wan 中英文都可以） |
+| `line`、`emotion` | 台詞（字幕＋配音）與語氣（例如「驚訝」，交給 CosyVoice3 的語氣控制） |
+| `camera` | 靜態鏡頭的運鏡：`push_in`、`pull_out`、`pan_left`、`pan_right`、`static` |
+| `duration` | 秒數 1.5–5（Wan 最長約 5 秒）；配音比較長時會自動延長 |
+
+### 角色聲音
+
+`training/voices/<聲音 id>/voice.json`（整個 `training/voices/` 已 gitignore，錄音不會進版控）：
+
+```json
+{"prompt_wav": "prompt.wav", "prompt_text": "這段錄音的逐字稿"}
+```
+
+`prompt.wav` 放 5–15 秒清楚的人聲，`prompt_text` 必須跟錄音逐字一致。**錄音要經過本人同意才能拿來
+複製聲音。**沒設定聲音的角色會用 CosyVoice 內建的示範聲音（中國口音女聲），只能內部測試。
+
+### 注意
+
+- **9:16 與姿勢骨架**：骨架是 832×1216，直接生 9:16 會被 ControlNet 裁掉約 18%，觸發保護錯誤。
+  所以有姿勢的鏡頭照骨架尺寸生、沒姿勢的用 768×1344，最後統一置中裁成 1080×1920——左右會被裁掉
+  一些，主體請放畫面中間
+- **費用數字是估計**：`plan` 和 `motion` 用成本報告的模型（4090 每小時 $1.10、Wan 官方 5 秒 720p
+  不到 9 分鐘、冷啟動估 2 分鐘）。每次送出的工作和「執行秒數 × 單價」的費用下限記在
+  `motion/jobs.json`，冷啟動和閒置秒數也會計費，所以實際會更高
+- **字幕位置**：字幕底緣在 y=1440，直式平台底部約 450 像素會被標題和按鈕蓋住
+- **ffmpeg 與字型**：ffmpeg 用 `SadTalker/ffmpeg.exe`（或 PATH、`DRAMA_FFMPEG`）；字型用微軟正黑體
+  （或 `DRAMA_FONT`）
+- **授權**：關鍵幀用的 Pony 衍生模型、FaceID 等元件限制營利使用，這條流程目前只適合試做和非營利用途
+
+### 驗證狀態
+
+- 離線測試涵蓋分鏡表驗證、各步驟的參數與指令組成（`tests/test_drama.py`）
+- `assemble` 在本機實跑過：用 anchor 圖當關鍵幀、假配音和一段假影片，8 個鏡頭組成 25.4 秒、
+  1080×1920、24 fps 的影片，字幕、運鏡、影片補格都正常
+- **關鍵幀、配音、雲端動態鏡頭還沒實跑**：前兩個要用顯卡，雲端要 RunPod 帳號
 
 ## 資料夾結構
 
