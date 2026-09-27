@@ -1,10 +1,14 @@
 {
   "version": 1,
   "title": "英文情境短劇 EP1：咖啡廳點餐（JV Tutor Corner）",
-  "checkpoint": "cyberrealistic_pony",
+  "commercial": true,
+  "checkpoint": "z_image_turbo",
   "tier": "safe",
   "seed": 9300,
-  "voices": {},
+  "voices": {
+    "xinyi": "jv_customer_en",
+    "taeoh": "jv_barista_en"
+  },
   "bgm": null,
   "shots": [
     {

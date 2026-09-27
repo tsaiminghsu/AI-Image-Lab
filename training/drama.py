@@ -28,6 +28,11 @@ line and a subtitle over Wan's motion.
 For language-learning episodes a shot can carry a `translation` (a second, smaller subtitle line under
 the spoken one) and a `speed` for the reading, and a `card` shot puts a phrase of the day or an end
 card on screen - drawn by ffmpeg over a blurred keyframe of another shot, so it needs no GPU.
+`interpolate` doubles the moving shots' frame rate locally with RIFE (MIT) into enhance/out/.
+
+An episode marked "commercial": true may only use components licensed for commercial use: a
+keyframe checkpoint from COMMERCIAL_CHECKPOINTS (Z-Image Turbo, Apache-2.0), Wan 2.2 (Apache-2.0),
+RIFE (MIT), CosyVoice3 (Apache-2.0) with voices whose speakers consented - never the demo voice.
 """
 
 import argparse
@@ -58,6 +63,11 @@ COSYVOICE_RUNNER = os.path.join(TRAINING_DIR, "cosyvoice_runner.py")
 DEMO_VOICE_WAV = "asset/zero_shot_prompt.wav"
 DEMO_VOICE_TEXT = "希望你以后能够做的比我还好呦。"
 COSYVOICE_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
+# Keyframe checkpoints whose licences allow commercial use (checked 2026-09-27: Z-Image Turbo's
+# repository - transformer, text encoder and VAE - is Apache-2.0). The Pony-derived and SDXL
+# checkpoints here, FaceID/InsightFace, the OpenPose ControlNet and UltraSharp all restrict it.
+COMMERCIAL_CHECKPOINTS = frozenset({"z_image_turbo"})
+INTERP_MULTIPLIER = 2
 
 EPISODE_VERSION = 1
 CARD = "card"
@@ -208,6 +218,12 @@ def validate_episode(ep):
         errors.append(f"找不到配樂檔：{ep.resolve(bgm)}")
     if ep.fps not in OUTPUT_FPS_CHOICES:
         errors.append(f"fps（成片影格率）只能是 {list(OUTPUT_FPS_CHOICES)}")
+    commercial = d.get("commercial", False)
+    if not isinstance(commercial, bool):
+        errors.append("commercial 要是 true 或 false")
+    elif commercial and ckpt not in COMMERCIAL_CHECKPOINTS:
+        errors.append(f"這集標示 commercial，但 checkpoint「{ckpt}」的授權不允許營利；"
+                      f"可營利的是 {sorted(COMMERCIAL_CHECKPOINTS)}")
 
     shots = d.get("shots")
     if not isinstance(shots, list) or not shots:
@@ -285,6 +301,14 @@ def validate_episode(ep):
                 errors.append(f"{label} 的 motion 太長")
         if kind == "dialogue" and not (shot.get("line") or "").strip():
             errors.append(f"{label} 是對話鏡頭，要有 line（台詞）")
+    if d.get("commercial") is True:
+        for shot in shots:
+            if not isinstance(shot, dict) or not (shot.get("line") or "").strip():
+                continue
+            voice_id = shot.get("voice") or voices.get(shot.get("character") or "")
+            if not voice_id:
+                errors.append(f"鏡頭 {shot.get('id')}：這集標示 commercial，有台詞的鏡頭都要有已授權的聲音"
+                              f"（voices 對應角色，或鏡頭自己的 voice），不能用示範聲音")
     for label, background in card_backgrounds:
         if background not in picture_ids:
             errors.append(f"{label} 的 background「{background}」要是另一個非字卡鏡頭的 id（用它的關鍵幀當背景）")
@@ -471,25 +495,65 @@ def run_keyframes(ep, shots, *, force=False, draft=False, ffmpeg, translate=None
 # --- voice ------------------------------------------------------------------------------------
 
 
-def resolve_voice(ep, shot):
+def resolve_voice(ep, shot, allow_demo=False):
     """(prompt_wav, prompt_transcript, is_demo) for a shot's speaker.
 
-    A voice lives in training/voices/<id>/voice.json: {"prompt_wav": "prompt.wav", "prompt_text":
-    "exact transcript of that recording"}. The recording must be one its speaker agreed to have
-    cloned. Without a configured voice the CosyVoice demo prompt is used, which is only for testing."""
+    A voice lives in training/voices/<id>/voice.json:
+        {"prompt_wav": "prompt.wav", "prompt_text": "exact transcript of that recording",
+         "consent": {"speaker": "who", "date": "YYYY-MM-DD", "scope": "what it may be used for"}}
+    The consent block records that the speaker agreed to have the voice cloned; a voice without it
+    is refused. The CosyVoice demo prompt is only used when allow_demo is set, and never for an
+    episode marked commercial."""
     voice_id = shot.get("voice") or (ep.data.get("voices") or {}).get(shot.get("character") or "")
     if not voice_id:
+        if ep.data.get("commercial") is True:
+            raise gc.UsageError(f"鏡頭 {shot['id']}：這集標示 commercial，不能用示範聲音，請設定已授權的聲音")
+        if not allow_demo:
+            raise gc.UsageError(f"鏡頭 {shot['id']}：角色「{shot.get('character') or '（無）'}」沒有設定聲音。"
+                                "請在 voices 指定已授權的聲音；只是內部測試的話加 --allow-demo")
         return os.path.join(COSYVOICE_DIR, DEMO_VOICE_WAV), DEMO_VOICE_TEXT, True
-    config = os.path.join(VOICES_DIR, voice_id, "voice.json")
+    folder = os.path.join(VOICES_DIR, voice_id)
+    config = os.path.join(folder, "voice.json")
     if not os.path.isfile(config):
         raise gc.UsageError(f"鏡頭 {shot['id']}：找不到聲音設定 {config}")
     with open(config, encoding="utf-8") as f:
         cfg = json.load(f)
-    wav = os.path.join(VOICES_DIR, voice_id, cfg.get("prompt_wav", "prompt.wav"))
+    wav = os.path.join(folder, cfg.get("prompt_wav", "prompt.wav"))
     text = (cfg.get("prompt_text") or "").strip()
     if not os.path.isfile(wav) or not text:
         raise gc.UsageError(f"聲音「{voice_id}」要有 prompt_wav 錄音檔和它的逐字稿 prompt_text")
+    consent = cfg.get("consent") or {}
+    if not (isinstance(consent, dict) and str(consent.get("speaker") or "").strip()
+            and str(consent.get("date") or "").strip()):
+        raise gc.UsageError(f"聲音「{voice_id}」缺少授權紀錄：voice.json 要有 consent.speaker（本人）和 consent.date")
     return wav, text, False
+
+
+def voice_status(ep):
+    """[(voice id or None, [character or shot ids], state)] for every voice the episode's lines use."""
+    voices = ep.data.get("voices") or {}
+    groups = {}
+    for shot in ep.shots:
+        if not (shot.get("line") or "").strip():
+            continue
+        voice_id = shot.get("voice") or voices.get(shot.get("character") or "")
+        who = shot.get("character") or shot["id"]
+        groups.setdefault(voice_id, [])
+        if who not in groups[voice_id]:
+            groups[voice_id].append(who)
+    out = []
+    for voice_id, who in groups.items():
+        if not voice_id:
+            state = "沒有設定（只能用 --allow-demo 的示範聲音）"
+        else:
+            probe = {"id": "-", "voice": voice_id}
+            try:
+                resolve_voice(ep, probe)
+                state = "已設定、有授權紀錄"
+            except gc.UsageError as exc:
+                state = str(exc).replace("鏡頭 -：", "")
+        out.append((voice_id, who, state))
+    return out
 
 
 def voice_mode(line, transcript, emotion):
@@ -501,14 +565,14 @@ def voice_mode(line, transcript, emotion):
     return "instruct" if emotion else "zero_shot"
 
 
-def voice_items(ep, shots):
+def voice_items(ep, shots, allow_demo=False):
     """One CosyVoice job item per shot with a line (cards included - their line is the reading)."""
     items, demo_used = [], False
     for _index, shot in shots:
         line = (shot.get("line") or "").strip()
         if not line:
             continue
-        wav, transcript, is_demo = resolve_voice(ep, shot)
+        wav, transcript, is_demo = resolve_voice(ep, shot, allow_demo)
         demo_used = demo_used or is_demo
         emotion = (shot.get("emotion") or "").strip()
         mode = voice_mode(line, transcript, emotion)
@@ -536,7 +600,7 @@ def cosyvoice_python():
     return None
 
 
-def run_voice(ep, shots, *, force=False, ignore_comfyui=False, run=subprocess.run,
+def run_voice(ep, shots, *, force=False, ignore_comfyui=False, allow_demo=False, run=subprocess.run,
               server_up=client.is_server_running):
     python = cosyvoice_python()
     if not python:
@@ -544,7 +608,7 @@ def run_voice(ep, shots, *, force=False, ignore_comfyui=False, run=subprocess.ru
     if server_up() and not ignore_comfyui:
         raise gc.UsageError("ComfyUI 正在跑，會跟 CosyVoice 搶 8 GB 顯卡。先跑 training\\stop_comfyui.ps1，"
                             "或加 --ignore-comfyui")
-    items, demo_used = voice_items(ep, shots)
+    items, demo_used = voice_items(ep, shots, allow_demo)
     if not force:
         items = [it for it in items if not os.path.isfile(it["out"])]
     if not items:
@@ -776,6 +840,48 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, f
     return out, total
 
 
+def run_interpolate(ep, shots, *, force=False, submit=None, upload=None, server_up=client.is_server_running):
+    """Double each moving shot's frame rate with RIFE on the local ComfyUI (MIT code and weights) and
+    save the result as its enhanced clip, which assembly then prefers. The source is the final clip,
+    else the low-res draft - never a preview, which is shorter than the shot."""
+    submit = submit or client.submit_interpolation_rife
+    upload = upload or client.upload_reference_image
+    todo, missing = [], []
+    for _index, shot in shots:
+        if shot["type"] not in MOVING_TYPES:
+            continue
+        sid = shot["id"]
+        if os.path.isfile(ep.enhanced(sid, "mp4")) and not force:
+            print(f"{sid}: 已有加強版，略過（--force 重做）", flush=True)
+            continue
+        source = next((ep.motion(sid, m) for m in ("final", "draft") if os.path.isfile(ep.motion(sid, m))), None)
+        if source:
+            todo.append((sid, source))
+        else:
+            missing.append(sid)
+    if missing:
+        print(f"[注意] 這些鏡頭還沒有正式版或低解析度版影片，略過：{missing}", flush=True)
+    if not todo:
+        return 0
+    if not server_up():
+        raise gc.UsageError("ComfyUI 沒有在跑。RIFE 補幀在本機 ComfyUI 上執行，先啟動它")
+    os.makedirs(ep.sub("enhance", "out"), exist_ok=True)
+    staging = ep.sub("enhance", "staging")
+    os.makedirs(staging, exist_ok=True)
+    for sid, source in todo:
+        # Uploaded under an episode-specific name: ComfyUI's input/ is shared, and the plain
+        # "s02_draft.mp4" of two episodes would overwrite each other.
+        staged = os.path.join(staging, f"{ep.name}_{os.path.basename(source)}")
+        shutil.copy2(source, staged)
+        print(f"{sid}: RIFE 補幀 {FPS}→{FPS * INTERP_MULTIPLIER} fps（來源 {os.path.basename(source)}）", flush=True)
+        name = upload(staged)
+        raw = submit(video_filename=name, filename_prefix=f"drama_{ep.name}_{sid}_rife",
+                     multiplier=INTERP_MULTIPLIER, fps=FPS)
+        shutil.move(raw, ep.enhanced(sid, "mp4"))
+    print(f"完成 {len(todo)} 支；組裝時加 --fps {FPS * INTERP_MULTIPLIER} 才會保留補出來的影格", flush=True)
+    return len(todo)
+
+
 ENHANCE_README = """這些是 {name} 要交給外部工具加強的素材。
 
 - in/ 裡的 .mp4：動態鏡頭，拿去補幀（例如 Topaz Video AI、RIFE、FILM）和放大（例如 Topaz、SeedVR2）
@@ -844,6 +950,13 @@ def print_plan(ep):
     print(f"共 {len(ep.shots)} 個鏡頭，約 {total:.1f} 秒（配音較長的鏡頭會自動延長），成片 {ep.fps} fps")
     print(f"雲端估計（未實測）：預覽 {n_prev} 支約 ${cost_prev:.2f}；低解析度完整版約 ${cost_draft:.2f}；"
           f"正式版 {n_final} 支約 ${cost_final:.2f}")
+    status = voice_status(ep)
+    if status:
+        print("配音聲音：")
+        for voice_id, who, state in status:
+            print(f"  {voice_id or '（未設定）'}  ← {'、'.join(who)}：{state}")
+    if ep.data.get("commercial") is True:
+        print("這集標示 commercial：只允許可營利的元件（見 drama.py 開頭說明）")
     print(f"工作資料夾：{ep.work_dir}")
 
 
@@ -894,6 +1007,8 @@ def build_parser():
     vo.add_argument("--shots")
     vo.add_argument("--force", action="store_true")
     vo.add_argument("--ignore-comfyui", action="store_true", help="run even though ComfyUI is up")
+    vo.add_argument("--allow-demo", action="store_true",
+                    help="internal tests only: use CosyVoice's demo voice for characters without a consented voice")
     mo = add("motion", "send motion/dialogue shots to Wan 2.2 on the cloud as one batch")
     mode = mo.add_mutually_exclusive_group(required=True)
     mode.add_argument("--preview", action="store_true", help="cheap 480x832 drafts (about $0.015 each, estimated)")
@@ -911,6 +1026,9 @@ def build_parser():
     asm.add_argument("--fps", type=int, choices=OUTPUT_FPS_CHOICES,
                      help="output frame rate (default: the episode's fps, else 24); 48/60 keeps interpolated clips smooth")
     add("export", "copy clips and stills to enhance/in/ for an external upscaler or frame interpolator")
+    it = add("interpolate", "double moving shots' frame rate with RIFE on the local ComfyUI (MIT) into enhance/out/")
+    it.add_argument("--shots")
+    it.add_argument("--force", action="store_true")
     return p
 
 
@@ -935,7 +1053,8 @@ def main(argv=None):
         run_keyframes(ep, select_shots(ep, args.shots), force=args.force, draft=args.draft, ffmpeg=_need_ffmpeg())
         return 0
     if args.cmd == "voice":
-        run_voice(ep, select_shots(ep, args.shots), force=args.force, ignore_comfyui=args.ignore_comfyui)
+        run_voice(ep, select_shots(ep, args.shots), force=args.force, ignore_comfyui=args.ignore_comfyui,
+                  allow_demo=args.allow_demo)
         return 0
     if args.cmd == "motion":
         mode = "preview" if args.preview else "draft" if args.draft else "final"
@@ -949,6 +1068,9 @@ def main(argv=None):
         return 0
     if args.cmd == "export":
         run_export(ep)
+        return 0
+    if args.cmd == "interpolate":
+        run_interpolate(ep, select_shots(ep, args.shots), force=args.force)
         return 0
     return 2
 

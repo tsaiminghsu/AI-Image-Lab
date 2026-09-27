@@ -29,6 +29,20 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(gc, "picker_anchor_path", lambda trigger: f"/anchors/{trigger}.png")
 
 
+CONSENT = {"speaker": "測試錄音者", "date": "2026-09-27", "scope": "單元測試"}
+
+
+def make_voice(voice_id, transcript, consent=CONSENT):
+    folder = os.path.join(drama.VOICES_DIR, voice_id)
+    touch(os.path.join(folder, "prompt.wav"))
+    config = {"prompt_wav": "prompt.wav", "prompt_text": transcript}
+    if consent is not None:
+        config["consent"] = consent
+    with open(os.path.join(folder, "voice.json"), "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False)
+    return folder
+
+
 def write_episode(tmp_path, data, name="ep01"):
     path = tmp_path / f"{name}.json"
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -255,7 +269,7 @@ def test_run_keyframes_needs_comfyui():
 
 def test_voice_items_use_demo_voice_when_none_is_configured():
     ep = drama.load_episode(EXAMPLE)
-    items, demo = drama.voice_items(ep, drama.select_shots(ep))
+    items, demo = drama.voice_items(ep, drama.select_shots(ep), allow_demo=True)
     assert demo is True
     assert [it["id"] for it in items] == ["s04", "s05", "s07", "s08"]
     first = items[0]
@@ -273,7 +287,11 @@ def test_configured_voice_is_used_and_needs_its_transcript(tmp_path):
     vdir = os.path.join(drama.VOICES_DIR, "taeoh_v1")
     touch(os.path.join(vdir, "prompt.wav"))
     with open(os.path.join(vdir, "voice.json"), "w", encoding="utf-8") as f:
-        json.dump({"prompt_wav": "prompt.wav", "prompt_text": "這是授權錄音的逐字稿。"}, f, ensure_ascii=False)
+        json.dump(
+            {"prompt_wav": "prompt.wav", "prompt_text": "這是授權錄音的逐字稿。", "consent": CONSENT},
+            f,
+            ensure_ascii=False,
+        )
     items, _ = drama.voice_items(ep, drama.select_shots(ep, "s04"))
     assert items[0]["prompt_wav"] == os.path.join(vdir, "prompt.wav")
     assert items[0]["prompt_text"].endswith("這是授權錄音的逐字稿。")
@@ -304,7 +322,7 @@ def test_run_voice_writes_one_job_for_the_whole_episode(monkeypatch):
             touch(item["out"])
         fake_run.job, fake_run.kwargs = job, kwargs
 
-    done = drama.run_voice(ep, drama.select_shots(ep), run=fake_run, server_up=lambda: False)
+    done = drama.run_voice(ep, drama.select_shots(ep), run=fake_run, server_up=lambda: False, allow_demo=True)
     assert done == 3  # s05 already had audio
     assert [it["id"] for it in fake_run.job["items"]] == ["s04", "s07", "s08"]
     assert fake_run.kwargs["cwd"] == drama.COSYVOICE_DIR
@@ -701,13 +719,17 @@ def test_voice_mode(line, transcript, emotion, mode):
     assert drama.voice_mode(line, transcript, emotion) == mode
 
 
-def test_jv_voice_items_read_english_cross_lingually_and_cards_slowly():
+def test_jv_voice_items_use_the_consented_english_voices_and_read_cards_slowly():
     ep = drama.load_episode(JV)
+    make_voice("jv_customer_en", "Hello, this is a sample of my voice for English lessons.")
+    make_voice("jv_barista_en", "Good morning, this recording is for the cafe episode.")
     items, demo = drama.voice_items(ep, drama.select_shots(ep))
-    assert demo is True
+    assert demo is False
     by_id = {it["id"]: it for it in items}
     assert set(by_id) == {"s03", "s04", "c05", "s06", "s07", "c08", "c09", "s11"}
-    assert all(it["mode"] == "cross_lingual" and it["instruct"] is None for it in items)
+    assert all(it["mode"] == "zero_shot" and it["instruct"] is None for it in items)  # English voice, English line
+    assert by_id["s03"]["prompt_wav"].endswith(os.path.join("jv_barista_en", "prompt.wav"))
+    assert by_id["s04"]["prompt_wav"].endswith(os.path.join("jv_customer_en", "prompt.wav"))
     assert by_id["c05"]["speed"] == 0.85 and by_id["s03"]["speed"] == 1.0
     assert by_id["c05"]["text"] == "Can I get a medium latte, please?"
 
@@ -912,3 +934,107 @@ def test_cli_accepts_the_draft_modes_and_fps():
     with pytest.raises(SystemExit):
         parser.parse_args(["assemble", EXAMPLE, "--fps", "29"])
     assert parser.parse_args(["export", EXAMPLE]).cmd == "export"
+
+
+# --- licensed components only ----------------------------------------------------------------
+
+
+def test_demo_voice_is_refused_unless_asked_for():
+    ep = drama.load_episode(EXAMPLE)
+    with pytest.raises(gc.UsageError, match="--allow-demo"):
+        drama.voice_items(ep, drama.select_shots(ep, "s04"))
+
+
+def test_commercial_episodes_never_use_the_demo_voice(tmp_path):
+    data = jv_data()
+    data["voices"] = {}
+    ep = write_episode(tmp_path, data, name="jv_novoice")
+    errors, _ = drama.validate_episode(ep)
+    assert any("已授權的聲音" in e for e in errors)
+    with pytest.raises(gc.UsageError, match="commercial"):
+        drama.voice_items(ep, drama.select_shots(ep, "s03"), allow_demo=True)
+
+
+def test_a_voice_without_a_consent_record_is_refused():
+    ep = drama.load_episode(JV)
+    make_voice("jv_barista_en", "Good morning.", consent=None)
+    with pytest.raises(gc.UsageError, match="授權紀錄"):
+        drama.voice_items(ep, drama.select_shots(ep, "s03"))
+    make_voice("jv_barista_en", "Good morning.", consent={"speaker": "", "date": "2026-09-27"})
+    with pytest.raises(gc.UsageError, match="授權紀錄"):
+        drama.voice_items(ep, drama.select_shots(ep, "s03"))
+
+
+@pytest.mark.parametrize("checkpoint", ["cyberrealistic_pony", "juggernaut", "pony"])
+def test_commercial_episodes_refuse_checkpoints_that_forbid_paid_use(tmp_path, checkpoint):
+    data = jv_data()
+    data["checkpoint"] = checkpoint
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="jv_ckpt"))
+    assert any("不允許營利" in e for e in errors)
+
+
+def test_commercial_flag_must_be_a_boolean(tmp_path):
+    data = jv_data()
+    data["commercial"] = "yes"
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="jv_flag"))
+    assert any("commercial" in e for e in errors)
+
+
+def test_jv_episode_is_commercial_on_licensed_components():
+    ep = drama.load_episode(JV)
+    assert ep.data["commercial"] is True
+    assert ep.checkpoint in drama.COMMERCIAL_CHECKPOINTS
+    assert set(ep.data["voices"]) == {"xinyi", "taeoh"}
+
+
+def test_voice_status_reports_what_is_missing():
+    ep = drama.load_episode(JV)
+    make_voice("jv_customer_en", "Hello there.")
+    status = {voice_id: (who, state) for voice_id, who, state in drama.voice_status(ep)}
+    assert status["jv_customer_en"] == (["xinyi"], "已設定、有授權紀錄")
+    assert status["jv_barista_en"][0] == ["taeoh"] and "找不到聲音設定" in status["jv_barista_en"][1]
+
+
+def test_interpolate_doubles_the_frame_rate_from_the_best_full_length_clip():
+    ep = drama.load_episode(JV)
+    touch(ep.motion("s02", "draft"), b"draft")
+    touch(ep.motion("s03"), b"final")
+    touch(ep.motion("s03", "draft"), b"draft")
+    touch(ep.motion("s04", "preview"), b"preview")  # a preview is shorter than the shot: never used
+    touch(ep.enhanced("s06", "mp4"), b"done")  # already enhanced: skipped
+    uploads, submits = [], []
+
+    def fake_upload(path):
+        uploads.append(os.path.basename(path))
+        return os.path.basename(path)
+
+    def fake_submit(video_filename, filename_prefix, multiplier, fps):
+        submits.append((video_filename, multiplier, fps))
+        out = os.path.join(os.path.dirname(ep.sub("x")), f"{filename_prefix}.mp4")
+        touch(out, b"rife")
+        return out
+
+    done = drama.run_interpolate(
+        ep, drama.select_shots(ep), submit=fake_submit, upload=fake_upload, server_up=lambda: True
+    )
+    assert done == 2
+    assert uploads == ["jv_en_ep01_cafe_order_s02_draft.mp4", "jv_en_ep01_cafe_order_s03.mp4"]
+    assert all(m == 2 and f == 24 for _v, m, f in submits)
+    with open(ep.enhanced("s03", "mp4"), "rb") as f:
+        assert f.read() == b"rife"
+    assert not os.path.isfile(ep.enhanced("s04", "mp4"))
+
+
+def test_interpolate_needs_comfyui_only_when_there_is_work():
+    ep = drama.load_episode(JV)
+    assert drama.run_interpolate(ep, drama.select_shots(ep), server_up=lambda: False) == 0
+    touch(ep.motion("s02", "draft"))
+    with pytest.raises(gc.UsageError, match="ComfyUI"):
+        drama.run_interpolate(ep, drama.select_shots(ep), server_up=lambda: False)
+
+
+def test_cli_voice_demo_flag_and_interpolate():
+    parser = drama.build_parser()
+    assert parser.parse_args(["voice", EXAMPLE, "--allow-demo"]).allow_demo
+    assert not parser.parse_args(["voice", EXAMPLE]).allow_demo
+    assert parser.parse_args(["interpolate", JV, "--shots", "s02"]).cmd == "interpolate"
