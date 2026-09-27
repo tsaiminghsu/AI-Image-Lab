@@ -14,13 +14,21 @@ Listens on 127.0.0.1:7862 - distinct from gui.py's 7861 and ComfyUI's 8188,
 so all three can run at once (VRAM budget permitting - see README's
 ComfyUI-vs-kohya_ss troubleshooting note; running this alongside a resident
 local LLM for the companion platform's chat has the same constraint).
+
+Resource routing (resource_policy): every /generate is decided against the job's cost and the
+machine's live state first. A cloud suggestion is a 409 carrying the reasons - this API never sends
+work to a paid GPU on its own; the caller either retries with force_local=true or does nothing.
+Outside the configured image window the job is deferred (queued with not_before) and job_scheduler,
+started with the app, runs it when the window opens. GET /v2/route previews the decision.
 """
 
+import contextlib
 import glob
 import hmac
 import os
 import random
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
@@ -30,8 +38,10 @@ from pydantic import BaseModel, field_validator
 import capability_catalog as catalog
 import generate_character as gc
 import job_contracts as jc
+import job_scheduler
 import job_service
 import job_store
+import resource_policy as rp
 
 # User-facing strings in this project are normally Traditional Chinese, but this file is the
 # deliberate exception: every HTTP `detail` string below (validation errors, 401s, 404s) is
@@ -57,7 +67,27 @@ def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-K
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
 
-app = FastAPI(title="AI-Image-Lab image_api", version="0.1.0", dependencies=[Depends(_require_api_key)])
+_PROCESS_STARTED = time.time()
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app):
+    """Start the deferred-job scheduler with the server (not at import, so tests and the restart
+    test that re-imports this module never spawn a thread). Queued jobs older than this process
+    lost their executor with the previous one; adopt_orphans hands them to the scheduler."""
+    adopted = job_scheduler.adopt_orphans(_store, before=_PROCESS_STARTED)
+    if adopted:
+        print(f"[image_api] {len(adopted)} queued job(s) from before the restart handed to the scheduler", flush=True)
+    scheduler = job_scheduler.Scheduler(_service)
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.stop()
+
+
+app = FastAPI(title="AI-Image-Lab image_api", version="0.1.0", dependencies=[Depends(_require_api_key)],
+              lifespan=_lifespan)
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "outputs", "companion_chat")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -113,6 +143,10 @@ class GenerateRequest(BaseModel):
     # left None = auto), so callers usually don't need to set use_facedetailer.
     hq: bool = True
     use_facedetailer: bool | None = None
+    # Overrides resource_policy's *advice*: a cloud suggestion (409 otherwise), the image time
+    # window, RAM warnings. It does not skip waiting for a hot card to cool (bounded by
+    # cooldown_timeout_s), which is protection rather than advice.
+    force_local: bool = False
 
     @field_validator("prompt")
     @classmethod
@@ -199,25 +233,43 @@ def _owner(x_owner_id: str | None) -> str:
     return (x_owner_id or DEFAULT_OWNER).strip() or DEFAULT_OWNER
 
 
-def _run_job(owner_id: str, job_id: str, req: GenerateRequest) -> None:
+def _gen_custom_kwargs(job_id: str, req: GenerateRequest, seed: int) -> dict:
+    """The exact gen_custom call for a request, as JSON-safe keyword arguments.
+
+    Built once, at request time, and stored on the record: the executor runs it now, and
+    job_scheduler can run the very same call after a deferral or a restart without this module.
+    """
+    return {
+        "prompt": req.prompt,
+        "extra_negative": "",
+        "tier": req.tier,
+        "trigger": req.trigger,
+        "anchor_path": req.anchor_path or (_default_anchor_for(req.trigger) if req.trigger else None),
+        "out_dir": OUTPUT_DIR,
+        "seed": seed,
+        "filename": job_id,
+        "ip_adapter_weight": gc.client.IP_ADAPTER_WEIGHT,
+        "use_facedetailer": req.use_facedetailer,
+        "hq": req.hq,
+    }
+
+
+def _decide(req: GenerateRequest) -> rp.Decision:
+    checkpoint = gc.DEFAULT_CUSTOM_CHECKPOINT
+    kind = rp.image_kind(checkpoint, req.hq, default_checkpoint=checkpoint)
+    return rp.decide(kind, rp.load_settings(), rp.probe(), force_local=req.force_local)
+
+
+def _run_job(owner_id: str, job_id: str, req: GenerateRequest, decision: rp.Decision | None = None) -> None:
     try:
-        anchor_path = req.anchor_path or (_default_anchor_for(req.trigger) if req.trigger else None)
         record = _store.get(owner_id, job_id)
-        generate_one = lambda: gc.gen_custom(  # noqa: E731 - a lambda is the whole point; submit_local takes a thunk
-            prompt=req.prompt,
-            extra_negative="",
-            tier=req.tier,
-            trigger=req.trigger,
-            anchor_path=anchor_path,
-            out_dir=OUTPUT_DIR,
-            seed=record["params"]["seed"],
-            filename=job_id,
-            ip_adapter_weight=gc.client.IP_ADAPTER_WEIGHT,
-            use_facedetailer=req.use_facedetailer,
-            hq=req.hq,
-        )
-        _service.submit_local(owner_id, job_id, generate_one,
-                              output_path=os.path.join(OUTPUT_DIR, f"{job_id}.png"))
+        kwargs = record["request"]["kwargs"]
+        if decision is not None and decision.route == rp.WAIT:
+            decision = rp.wait_until_ready(decision.kind, decision, force_local=req.force_local)
+        kind = decision.kind if decision is not None else "txt2img"
+        with rp.track(kind, decision.est_seconds if decision is not None else None):
+            _service.submit_local(owner_id, job_id, lambda: gc.gen_custom(**kwargs),
+                                  output_path=record["request"]["output_path"])
     except BaseException as exc:  # noqa: BLE001 - surface any failure to the polling client, don't crash the worker thread
         # BaseException, not Exception: caller errors arrive as gc.UsageError, but the scripts
         # underneath (pose_skeletons, talking_head) can still raise SystemExit, which derives from
@@ -255,6 +307,12 @@ def generate(req: GenerateRequest, x_owner_id: str | None = Header(default=None,
         # not the caller's original string - and so validation happens exactly once, here.
         req.anchor_path = _validate_anchor_path(req.anchor_path)
 
+    decision = _decide(req)
+    if decision.route == rp.CLOUD:
+        # Not created, not queued: a cloud send costs money and needs a human (or a caller that
+        # has decided on its own) to say so. force_local=true is the "run it here anyway" retry.
+        raise HTTPException(status_code=409, detail={"error": "cloud_suggested", **decision.to_dict()})
+
     _evict_jobs(time.time())
     checkpoint = gc.DEFAULT_CUSTOM_CHECKPOINT
     mode = catalog.MODE_TXT2IMG_HQ if req.hq else catalog.MODE_TXT2IMG
@@ -268,15 +326,33 @@ def generate(req: GenerateRequest, x_owner_id: str | None = Header(default=None,
         "character": req.trigger,
         "checkpoint": checkpoint,
     }
+    job_id = uuid.uuid4().hex
+    spec = job_scheduler.call_spec(
+        "gen_custom", _gen_custom_kwargs(job_id, req, params["seed"]),
+        output_path=os.path.join(OUTPUT_DIR, f"{job_id}.png"), force_local=req.force_local,
+    )
+    deferred = decision.route == rp.DEFER
     record = _service.create(
         owner_id,
         mode=mode,
         catalog_id=f"{checkpoint}:{mode}",
         params=params,
-        request={"hq": req.hq, "use_facedetailer": req.use_facedetailer, "anchor_path": req.anchor_path},
+        request={"hq": req.hq, "use_facedetailer": req.use_facedetailer, "anchor_path": req.anchor_path, **spec},
+        job_id=job_id,
+        not_before=decision.not_before if deferred else None,
+        route=decision.to_dict(),
     )
-    _executor.submit(_run_job, owner_id, record["job_id"], req)
-    return {"job_id": record["job_id"]}
+    if deferred:
+        # The legacy poll keeps answering "pending" until the scheduler has run it.
+        return {"job_id": record["job_id"], "route": decision.route, "not_before": decision.not_before}
+    _executor.submit(_run_job, owner_id, record["job_id"], req, decision)
+    return {"job_id": record["job_id"], "route": decision.route}
+
+
+@app.get("/v2/route")
+def preview_route(hq: bool = True, force_local: bool = False):
+    """What /generate would do with this request right now, without creating anything."""
+    return _decide(GenerateRequest(prompt="preview", hq=hq, force_local=force_local)).to_dict()
 
 
 @app.get("/generate/{job_id}")
