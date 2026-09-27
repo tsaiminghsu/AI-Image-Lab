@@ -24,7 +24,10 @@ refused here, not by convention at the call sites.
 import json
 import re
 
-SCHEMA_VERSION = 1
+# 2: adds `not_before` (epoch seconds a deferred job may start) and `route` (resource_policy's
+# decision, kept so an operator can see why a job is still waiting). Both are nullable and a v1
+# record simply lacks them, so readers use .get() and nothing needs migrating.
+SCHEMA_VERSION = 2
 
 # An artifact is a content-addressed pointer - (bucket, key, sha256) - never a URL. A URL is a
 # short-lived grant derived from an artifact, so storing one would bake an expiry into a record
@@ -241,7 +244,8 @@ def _validate_output_check(report):
              f"output_check.scope must be the literal {OUTPUT_CHECK_SCOPE!r}")
 
 
-def new_record(*, job_id, owner_id, mode, media_kind, catalog_id, backend, params, request=None, now):
+def new_record(*, job_id, owner_id, mode, media_kind, catalog_id, backend, params, request=None, now,
+               not_before=None, route=None):
     """Build a fresh record in `queued`. Every other field starts at its zero value, so the
     shape of a record never depends on which code path created it."""
     _require(isinstance(job_id, str) and job_id, "job_id must be a non-empty string")
@@ -273,6 +277,8 @@ def new_record(*, job_id, owner_id, mode, media_kind, catalog_id, backend, param
         "poll_count": 0,
         "last_error": None,
         "last_error_kind": None,
+        "not_before": not_before,
+        "route": dict(route) if route is not None else None,
     }
     record.update({name: None for name in COST_FIELDS})
     return validate_record(record)
@@ -299,6 +305,12 @@ def validate_record(record):
     _require(cancel_at is None or (isinstance(cancel_at, (int, float)) and not isinstance(cancel_at, bool)),
              "cancel_requested_at must be a timestamp or None")
     _validate_params(record["params"])
+    not_before = record.get("not_before")
+    _require(not_before is None or (isinstance(not_before, (int, float)) and not isinstance(not_before, bool)),
+             "not_before must be a timestamp or None")
+    route = record.get("route")
+    _require(route is None or (isinstance(route, dict) and isinstance(route.get("route"), str)),
+             "route must be None or an object with a string `route`")
 
     artifacts = record.get("artifacts")
     _require(isinstance(artifacts, list), "artifacts must be a list")

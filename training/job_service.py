@@ -88,7 +88,7 @@ class JobService:
     # --- creation -------------------------------------------------------------------------
 
     def create(self, owner_id, *, mode, catalog_id, params, media_kind="image", backend="local",
-               request=None, job_id=None):
+               request=None, job_id=None, not_before=None, route=None):
         record = jc.new_record(
             job_id=job_id or uuid.uuid4().hex,
             owner_id=owner_id,
@@ -99,6 +99,8 @@ class JobService:
             params=params,
             request=request,
             now=self._clock(),
+            not_before=not_before,
+            route=route,
         )
         return self.store.create(owner_id, record)
 
@@ -132,7 +134,8 @@ class JobService:
         likely to change underneath it.
 
         `output_path` is where the generator will leave its file. The caller knows it because it
-        chose the filename; asking the generator would mean changing every one of them.
+        chose the filename; asking the generator would mean changing every one of them. None means
+        "whatever path `generate` returns" - gen_video_animatediff names its own file.
 
         expect_width/expect_height are the *delivered* dimensions, if the caller knows them. They
         are not the sampling dimensions in params: the HQ path upscales, so a job sampled at
@@ -143,7 +146,7 @@ class JobService:
         sink = _Sink(self, owner_id, job_id, row["submit_attempt"])
         try:
             with client.job_sink_scope(sink):
-                generate()
+                returned = generate()
         except BaseException as exc:
             # BaseException for the same reason image_api._run_job:190 and worker/handler.py do
             # it: pose_skeletons and talking_head can still raise SystemExit, which derives from
@@ -152,6 +155,11 @@ class JobService:
                 self._conclude_failure(owner_id, job_id, str(exc), kind=type(exc).__name__,
                                        expect_submit_attempt=row["submit_attempt"])
             raise
+        if output_path is None:
+            output_path = returned if isinstance(returned, (str, os.PathLike)) else None
+        if output_path is None:
+            return self._conclude_failure(owner_id, job_id, "the generator returned no output path",
+                                          kind="output_missing", expect_submit_attempt=row["submit_attempt"])
         return self.apply_terminal(owner_id, job_id, output_path,
                                    expect_submit_attempt=row["submit_attempt"],
                                    expect_width=expect_width, expect_height=expect_height)
