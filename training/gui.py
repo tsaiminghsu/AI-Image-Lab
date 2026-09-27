@@ -12,10 +12,13 @@ running for no reason.
 """
 
 import atexit
+import contextlib
+import datetime
 import functools
 import glob
 import os
 import threading
+import time
 
 import gradio as gr
 
@@ -24,8 +27,12 @@ import caption_image
 import cloud_video
 import comfyui_client as client
 import generate_character as gc
+import job_scheduler
+import job_service
+import job_store
 import pony_tags
 import pose_skeletons
+import resource_policy as rp
 import scene_library
 import talking_head
 import translate_prompt
@@ -84,7 +91,7 @@ def _step_reporter(progress):
     return report
 
 
-def _ensure_comfyui():
+def _ensure_comfyui(announce=True):
     """Start ComfyUI on first actual generation instead of requiring it
     pre-started just to open the GUI - keeps the ~2GB process off when the
     GUI is only sitting open unused.
@@ -103,7 +110,8 @@ def _ensure_comfyui():
             return
         if _comfyui_process is not None and _comfyui_process.poll() is None:
             return  # already starting from a previous click
-        gr.Info("ComfyUI 尚未啟動，正在自動啟動（第一次可能要等幾秒）...")
+        if announce:   # False from the scheduler thread: there is no request to show a toast in
+            gr.Info("ComfyUI 尚未啟動，正在自動啟動（第一次可能要等幾秒）...")
         _comfyui_process = client.start_server()
 
 
@@ -113,6 +121,133 @@ def _shutdown_comfyui():
     # the user is running separately in its own terminal.
     if _comfyui_process is not None and _comfyui_process.poll() is None:
         _comfyui_process.terminate()
+
+
+# --- 🖥️ resource routing -------------------------------------------------------------------------
+# Every local generation button asks resource_policy first (see that module for the rules). A cloud
+# suggestion stops the click with the reasons and how to confirm it; the operator either presses
+# the cloud control or ticks FORCE_LOCAL_LABEL and clicks again. Deferred jobs go to the job store
+# and job_scheduler (started in __main__) runs them when their window opens.
+
+_JOB_STORE = job_store.FileJobStore(job_scheduler.DEFAULT_STORE_DIR)
+_JOB_SERVICE = job_service.JobService(
+    _JOB_STORE, artifact_root=os.path.join(os.path.dirname(__file__), "..", "outputs"))
+_SCHEDULER = job_scheduler.Scheduler(_JOB_SERVICE, ensure_backend=lambda: _ensure_comfyui(announce=False))
+GUI_OWNER = "gui"
+FORCE_LOCAL_LABEL = "⚡ 忽略資源建議（雲端建議、時段、RAM 警告），現在就在本地跑；GPU 過熱時仍會先等它降溫"
+
+_CLOUD_HOW = {
+    rp.CLOUD_WORKFLOW: "勾選「用 RunPod 雲端 GPU 生成」再按一次",
+    rp.CLOUD_ANIMATEDIFF: "按「☁️ 改送雲端（RunPod）」",
+    rp.CLOUD_WAN: "到「☁️ 雲端影片」分頁選 Wan 2.2",
+}
+
+
+def _cloud_advice(decision):
+    lines = ["建議改送雲端：" + "；".join(decision.reasons)]
+    how = _CLOUD_HOW.get(decision.cloud_target)
+    if how:
+        problems = cloud_video.config_status("runpod")
+        lines.append(f"要送雲端：{how}（按 GPU 秒數計費）"
+                     + (f"——但雲端還沒設定好：{'；'.join(problems)}" if problems else ""))
+    lines.append("要照樣在本地跑：勾選「⚡ 忽略資源建議」再按一次")
+    return "\n".join(lines)
+
+
+def _route(kind, force_local, *, est_seconds=None, can_defer=False, progress=None):
+    """Ask resource_policy whether this click may run on the local card now.
+
+    Returns the decision to proceed on: LOCAL, or DEFER when the caller can record the job for
+    later (can_defer). A cloud suggestion, or a deferral the caller cannot record, stops the click
+    with gr.Error. A hot card is waited out here, with the countdown in the progress bar.
+    """
+    settings = rp.load_settings()
+    decision = rp.decide(kind, settings, rp.probe(), est_seconds=est_seconds, force_local=force_local)
+    if decision.route == rp.WAIT:
+        gr.Info("⏳ " + "；".join(decision.reasons))
+
+        def on_status(d, remaining):
+            if progress is not None:
+                progress(None, desc=f"等待中：{'；'.join(d.reasons)}（最多再等 {remaining} 秒）")
+
+        decision = rp.wait_until_ready(kind, decision, settings=settings, on_status=on_status,
+                                       est_seconds=est_seconds, force_local=force_local)
+    if decision.route == rp.CLOUD:
+        raise gr.Error(_cloud_advice(decision))
+    if decision.route == rp.DEFER and not can_defer:
+        raise gr.Error("；".join(decision.reasons) + "。這個分頁不能排程，要現在跑請勾選「⚡ 忽略資源建議」再按一次")
+    for note in decision.reasons if decision.route == rp.LOCAL else ():
+        gr.Warning(note)
+    return decision
+
+
+class _Plan:
+    """How _run_or_defer should record a job if the decision deferred it."""
+
+    def __init__(self, decision, *, mode, media_kind, catalog_id, params, output_path=None, input_keys=()):
+        self.decision = decision
+        self.mode = mode
+        self.media_kind = media_kind
+        self.catalog_id = catalog_id
+        self.params = {k: v for k, v in params.items() if v is not None}
+        self.output_path = output_path
+        self.input_keys = input_keys
+
+
+def _run_or_defer(fn, plan, /, **kwargs):
+    """Run a generator now, or record it for the scheduler when the policy deferred it.
+
+    The generator's keyword arguments are written exactly once, here, so a deferred job replays
+    the identical call - and test_gui_arity's keyword contract still checks them against fn's
+    signature (it recognises this helper; a bare fn(**kwargs) would be skipped)."""
+    decision = plan.decision
+    if decision is not None and decision.route == rp.DEFER:
+        record = job_scheduler.enqueue(
+            _JOB_SERVICE, GUI_OWNER, call=fn.__name__, kwargs=kwargs, mode=plan.mode, media_kind=plan.media_kind,
+            catalog_id=plan.catalog_id, params=plan.params, decision=decision, output_path=plan.output_path,
+            input_keys=plan.input_keys,
+        )
+        when = datetime.datetime.fromtimestamp(decision.not_before) if decision.not_before else None
+        gr.Info(f"🕒 已排程：{when:%m/%d %H:%M} 開始（工作 {record['job_id'][:8]}）。"
+                "結果會存到原本的輸出資料夾；在「🖥️ 資源排程」分頁可以查看、提前執行或取消" if when else
+                f"🕒 已排程（工作 {record['job_id'][:8]}）")
+        return None
+    guard = rp.track(decision.kind, decision.est_seconds) if decision is not None else contextlib.nullcontext()
+    with guard:
+        return fn(**kwargs)
+
+
+def _custom_kind(checkpoint_choice, use_hq, pose_reference, pose_library):
+    checkpoint = None if checkpoint_choice == CHECKPOINT_DEFAULT else checkpoint_choice
+    if checkpoint in client.ZIMAGE_MODELS:
+        return rp.image_kind(checkpoint, False)
+    uses_pose = bool(pose_reference or (use_hq and pose_library and pose_library != POSE_NONE))
+    key = checkpoint or (gc.DEFAULT_CUSTOM_CHECKPOINT if use_hq else "juggernaut")
+    return rp.image_kind(key, use_hq, uses_pose=uses_pose)
+
+
+def _upscale_to(upscale_choice):
+    return 0 if upscale_choice == UPSCALE_OFF else int(upscale_choice.split()[1].rstrip("px"))
+
+
+def _preview(kind, force_local, *, est_seconds=None):
+    try:
+        return rp.decide(kind, rp.load_settings(), rp.probe(), est_seconds=est_seconds,
+                         force_local=force_local).summary()
+    except Exception as exc:  # noqa: BLE001 - a preview must never break the tab
+        return f"⚠️ 無法判斷資源狀態：{exc}"
+
+
+def custom_route_preview(checkpoint_choice, use_hq, pose_library, pose_reference, use_cloud, force_local):
+    if use_cloud:
+        return "**☁️ 這次會送 RunPod 雲端**（按 GPU 秒數計費；不佔本機顯卡）"
+    return _preview(_custom_kind(checkpoint_choice, use_hq, pose_reference, pose_library), force_local)
+
+
+def animatediff_route_preview(hires, use_facedetailer, upscale_choice, interp, lcm, force_local):
+    kind = rp.animatediff_kind(hires=hires, use_facedetailer=use_facedetailer,
+                               upscale_to=_upscale_to(upscale_choice), interp=interp, lcm=lcm)
+    return _preview(kind, force_local)
 
 
 NO_CHARACTER = "(無 - 純文字生圖)"
@@ -383,7 +518,7 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
              pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
              character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
              style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud=False,
-             progress=gr.Progress()):
+             force_local=False, progress=gr.Progress()):
     # The scope has to wrap the whole handler, not just gen_custom: upload_reference_image and the
     # has_node / log_gpu_memory calls inside the generation path all consult the backend too.
     with client.backend_scope("runpod" if use_cloud else "local"):
@@ -391,22 +526,28 @@ def generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, se
                          pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
                          character_lora_strength, use_facedetailer, face_denoise, hand_denoise,
                          facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength,
-                         use_cloud, progress)
+                         use_cloud, force_local, progress)
 
 
 def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
               pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise,
               character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend,
-              style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud, progress):
+              style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud, force_local, progress):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
+    decision = None
     if use_cloud:
         problems = cloud_video.config_status("runpod")
         if problems:
             raise gr.Error("雲端生成還沒設定好：" + "；".join(problems) + "（設定方式見「☁️ 雲端影片」分頁）")
         gr.Info("雲端生成：沒有暖機的 worker 時要先冷啟動，第一張可能要等好幾分鐘")
     else:
-        _ensure_comfyui()
+        # Before _ensure_comfyui: a cloud suggestion or a deferral must not start a ~2 GB process.
+        decision = _route(_custom_kind(checkpoint_choice, use_hq, pose_reference, pose_library), force_local,
+                          can_defer=True, progress=progress)
+        if decision.route != rp.DEFER:
+            _ensure_comfyui()
+    deferred = decision is not None and decision.route == rp.DEFER
     trigger = None if character == NO_CHARACTER else character
     is_zimage = checkpoint_choice in client.ZIMAGE_MODELS
     if is_zimage:
@@ -416,7 +557,7 @@ def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, s
             raise gr.Error("Z-Image 目前只支援純文字生圖——自行上傳的 anchor（FaceID 鎖臉）、骨架姿勢參考圖、"
                            "骨架庫都沒有 Z-Image 版的模型檔，請先清掉這些欄位")
         # The check asks the LOCAL server which model files it has; that says nothing about a worker.
-        missing = [] if use_cloud else client.zimage_missing_files(checkpoint_choice)
+        missing = [] if (use_cloud or deferred) else client.zimage_missing_files(checkpoint_choice)
         if missing:
             raise gr.Error(f"找不到 Z-Image 模型檔：{', '.join(missing)}——下載指令見 README「Z-Image Turbo（選用安裝）」")
         if trigger and anchor:
@@ -480,10 +621,20 @@ def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, s
             )
 
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
-    stem = f"gui_seed{int(seed)}"
+    # A deferred run lands hours later; a seed-only name would be overwritten by whatever the
+    # operator generates with the same seed in the meantime.
+    stem = f"gui_seed{int(seed)}" + (f"_deferred{int(time.time())}" if deferred else "")
     backend = "mediapipe" if facedetailer_backend == FACEDETAILER_BACKEND_MEDIAPIPE else "yolo"
+    mode = catalog.MODE_TXT2IMG_HQ if use_hq else catalog.MODE_TXT2IMG
+    plan = _Plan(decision, mode=mode, media_kind="image", catalog_id=f"{checkpoint or variant_key}:{mode}",
+                 params=dict(prompt=prompt, seed=int(seed), tier=tier, character=trigger,
+                             checkpoint=checkpoint or variant_key, width=width, height=height),
+                 output_path=os.path.join(out_dir, f"{stem}.png"), input_keys=("anchor_path", "pose_reference_path"))
     with client.progress_reporter(_step_reporter(progress)):
-        gc.gen_custom(prompt, negative_prompt, tier, trigger, anchor_path, out_dir, int(seed), stem, ip_adapter_weight,
+        _run_or_defer(gc.gen_custom, plan,
+                      prompt=prompt, extra_negative=negative_prompt, tier=tier, trigger=trigger,
+                      anchor_path=anchor_path, out_dir=out_dir, seed=int(seed), filename=stem,
+                      ip_adapter_weight=ip_adapter_weight,
                       pose_reference_path=pose_reference, pose_name=pose_name,
                       controlnet_strength=controlnet_strength if (pose_reference or pose_name) else None,
                       width=width, height=height,
@@ -495,6 +646,8 @@ def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, s
                       hires_denoise=hires_denoise if use_hq else None,
                       facedetailer_face_denoise=face_denoise if use_facedetailer else None,
                       facedetailer_hand_denoise=hand_denoise if use_facedetailer else None)
+    if deferred:
+        return None
     return os.path.join(out_dir, f"{stem}.png")
 
 
@@ -553,7 +706,7 @@ def update_picker_preview(character, pose_slug, scene_slug, checkpoint_choice, t
 
 @_show_usage_errors
 def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, tier, seed, extra_text,
-                         progress=gr.Progress()):
+                         force_local=False, progress=gr.Progress()):
     """Run a generation from three thumbnail picks.
 
     Delegates to generate() rather than calling gc.gen_custom itself: that handler carries ~90
@@ -584,7 +737,7 @@ def generate_from_picker(character, pose_slug, scene_slug, checkpoint_choice, ti
         RESOLUTION_AUTO, True, client.HIRES_DENOISE, client.CHARACTER_LORA_STRENGTH,
         True, client.FACEDETAILER_FACE_DENOISE, client.FACEDETAILER_HAND_DENOISE, FACEDETAILER_BACKEND_YOLO,
         gc.REALISTIC_STYLE, gc.REALISTIC_NEGATIVE, checkpoint_choice, 0.0,
-        use_cloud=False, progress=progress,
+        use_cloud=False, force_local=force_local, progress=progress,
     )
 
 
@@ -593,18 +746,29 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
                                 facedetailer_denoise, frames, fps, width, height, style_positive, style_negative,
                                 checkpoint_choice, motion_lora_choice, motion_lora_strength,
                                 hires, upscale_choice, interp, use_facedetailer, lcm,
-                                faceid_v2_weight, motion_scale):
+                                faceid_v2_weight, motion_scale, force_local=False, progress=gr.Progress()):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
     if not face_ref:
         raise gr.Error("請上傳臉部參考圖（用於 FaceID 鎖定長相）— 僅限虛構/AI生成的臉，禁止上傳真人照片")
-    _ensure_comfyui()
+    upscale_to = _upscale_to(upscale_choice)
+    kind = rp.animatediff_kind(hires=hires, use_facedetailer=use_facedetailer, upscale_to=upscale_to,
+                               interp=interp, lcm=lcm)
+    decision = _route(kind, force_local, can_defer=True, progress=progress)
+    if decision.route != rp.DEFER:
+        _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
     checkpoint = None if checkpoint_choice == ANIMATEDIFF_CHECKPOINT_DEFAULT else checkpoint_choice
     motion_lora = None if motion_lora_choice == MOTION_LORA_NONE else motion_lora_choice
-    upscale_to = 0 if upscale_choice == UPSCALE_OFF else int(upscale_choice.split()[1].rstrip("px"))
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", "videos")
-    return gc.gen_video_animatediff(prompt, negative_prompt, tier, trigger, face_ref, out_dir, int(seed),
+    plan = _Plan(decision, mode="video_animatediff", media_kind="video",
+                 catalog_id=f"{checkpoint or 'realistic_vision'}:video_animatediff",
+                 params=dict(prompt=prompt, seed=int(seed), tier=tier, character=trigger,
+                             checkpoint=checkpoint, frames=int(frames), width=int(width), height=int(height)),
+                 input_keys=("face_ref_path",))
+    return _run_or_defer(gc.gen_video_animatediff, plan,
+                                    prompt=prompt, extra_negative=negative_prompt, tier=tier, trigger=trigger,
+                                    face_ref_path=face_ref, out_dir=out_dir, seed=int(seed),
                                     ip_adapter_weight=ip_adapter_weight,
                                     facedetailer_denoise=facedetailer_denoise,
                                     frames=int(frames), fps=int(fps) or None,
@@ -617,7 +781,8 @@ def generate_video_animatediff(character, face_ref, prompt, tier, negative_promp
                                     faceid_v2_weight=faceid_v2_weight, motion_scale=motion_scale)
 
 
-def generate_talking_head_ui(image, audio, size, preprocess, still, expression_scale, enhancer, pose_style):
+def generate_talking_head_ui(image, audio, size, preprocess, still, expression_scale, enhancer, pose_style,
+                             force_local=False, progress=gr.Progress()):
     if not image:
         raise gr.Error("請上傳來源人像（僅限虛構/AI生成的臉，禁止上傳真人照片）")
     if not audio:
@@ -625,37 +790,45 @@ def generate_talking_head_ui(image, audio, size, preprocess, still, expression_s
     ok, reason = talking_head.is_available()
     if not ok:
         raise gr.Error(f"SadTalker 無法使用：{reason}（安裝見 README「會講話的嘴型影片」章節）")
+    decision = _route("sadtalker", force_local, progress=progress)
     # SadTalker is a separate process on the same 8GB card - make a warm ComfyUI drop its models
     # first. Deliberately NOT _ensure_comfyui(): this route doesn't need ComfyUI at all.
     if client.is_server_running():
         client.free_vram()
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", "videos")
     try:
-        return talking_head.generate_talking_head(
-            image, audio, out_dir, size=int(size), preprocess=preprocess, still=still,
-            expression_scale=expression_scale,
-            enhancer=None if enhancer == TALK_ENHANCER_NONE else enhancer,
-            pose_style=int(pose_style))
+        with rp.track(decision.kind, decision.est_seconds):
+            return talking_head.generate_talking_head(
+                image, audio, out_dir, size=int(size), preprocess=preprocess, still=still,
+                expression_scale=expression_scale,
+                enhancer=None if enhancer == TALK_ENHANCER_NONE else enhancer,
+                pose_style=int(pose_style))
     except RuntimeError as exc:
         print(exc, flush=True)
         raise gr.Error(f"SadTalker 生成失敗（完整 log 見終端機）：{str(exc)[-800:]}") from exc
 
 
 @_show_usage_errors
-def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_id):
+def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_id, force_local=False,
+                       progress=gr.Progress()):
     if not init_image:
         raise gr.Error("請上傳要配上動作的圖片")
+    decision = _route("svd", force_local, progress=progress)
     _ensure_comfyui()
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates", character, "videos")
-    gc.gen_video(character, init_image, out_dir, int(seed), int(frames), int(fps), int(motion_bucket_id))
+    with rp.track(decision.kind, decision.est_seconds):
+        gc.gen_video(character, init_image, out_dir, int(seed), int(frames), int(fps), int(motion_bucket_id))
     return os.path.join(out_dir, f"video_seed{int(seed)}.webm")
 
 
 @_show_usage_errors
 def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_count, duration_ms, denoise,
-                  ip_adapter_weight, style_positive, style_negative, checkpoint_choice, lora_strength):
+                  ip_adapter_weight, style_positive, style_negative, checkpoint_choice, lora_strength,
+                  force_local=False, progress=gr.Progress()):
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
+    decision = _route("gif", force_local, est_seconds=rp.JOB_COSTS["gif"].seconds * int(frame_count),
+                      progress=progress)
     _ensure_comfyui()
     trigger = None if character == NO_CHARACTER else character
     if trigger and not anchor:
@@ -668,10 +841,11 @@ def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_c
     for note in client.variant_preflight(checkpoint or gc.DEFAULT_CUSTOM_CHECKPOINT):
         gr.Info(note)
     out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
-    return gc.gen_gif(prompt, negative_prompt, tier, trigger, anchor, out_dir, int(seed), int(frame_count),
-                       ip_adapter_weight, duration_ms=int(duration_ms), denoise=denoise,
-                       style_positive=style_positive, style_negative=style_negative,
-                       checkpoint=checkpoint, lora_strength=lora_strength)
+    with rp.track(decision.kind, decision.est_seconds):
+        return gc.gen_gif(prompt, negative_prompt, tier, trigger, anchor, out_dir, int(seed), int(frame_count),
+                          ip_adapter_weight, duration_ms=int(duration_ms), denoise=denoise,
+                          style_positive=style_positive, style_negative=style_negative,
+                          checkpoint=checkpoint, lora_strength=lora_strength)
 
 
 # --- ☁️ cloud video ---------------------------------------------------------------------------
@@ -758,26 +932,123 @@ def generate_cloud_video(provider, job_label, character, first_frame, prompt, ti
     else:
         params = dict(upscaleTo=1024)
 
+    result = _run_cloud_video_job(
+        request, progress, provider, job_type, prompt=prompt, extra_negative=(negative_prompt or "").strip(),
+        tier=tier, trigger=trigger, image_path=first_frame, seed=int(seed), params=params,
+        max_wait_s=int(timeout_s),
+    )
+    return result.path, _cloud_result_markdown(result)
+
+
+def _run_cloud_video_job(request, progress, provider, job_type, **kwargs):
+    """run_cloud_video with this session's cancel event registered, so the cloud tab's 取消 button
+    reaches a job started from any tab."""
     event = threading.Event()
     key = getattr(request, "session_hash", None) or "default"
     with _CLOUD_CANCEL_LOCK:
         _CLOUD_CANCEL[key] = event
     try:
-        result = cloud_video.run_cloud_video(
-            provider, job_type, prompt=prompt, extra_negative=(negative_prompt or "").strip(), tier=tier,
-            trigger=trigger, image_path=first_frame, seed=int(seed), params=params,
+        return cloud_video.run_cloud_video(
+            provider, job_type,
             out_dir=os.path.join(os.path.dirname(__file__), "reference_candidates", "videos", "cloud"),
-            max_wait_s=int(timeout_s), on_status=_cloud_reporter(progress), cancel_event=event,
+            on_status=_cloud_reporter(progress), cancel_event=event, **kwargs,
         )
     finally:
         with _CLOUD_CANCEL_LOCK:
             if _CLOUD_CANCEL.get(key) is event:
                 del _CLOUD_CANCEL[key]
-    info = (f"**完成** ｜ {result.provider} 工作 `{result.job_id}` ｜ 總耗時 {result.elapsed_s} 秒"
+
+
+def _cloud_result_markdown(result):
+    return (f"**完成** ｜ {result.provider} 工作 `{result.job_id}` ｜ 總耗時 {result.elapsed_s} 秒"
             + (f" ｜ 排隊 {result.queue_s:.0f} 秒" if result.queue_s is not None else "")
             + (f" ｜ GPU 執行 {result.execution_s:.0f} 秒（計費依據）" if result.execution_s is not None else "")
             + f"\n\n存到 `{result.path}`")
-    return result.path, info
+
+
+@_show_usage_errors
+def send_animatediff_to_cloud(character, face_ref, prompt, tier, negative_prompt, seed, request: gr.Request,
+                              progress=gr.Progress()):
+    """The AnimateDiff tab's confirmation for a cloud suggestion: the same clip on this repo's
+    RunPod worker, where the 768² hires cap does not apply. Its own button with the "cloud"
+    concurrency id, so a ten-minute remote run does not hold the local GPU queue."""
+    if not face_ref:
+        raise gr.Error("請上傳臉部參考圖（僅限虛構/AI生成的臉，禁止上傳真人照片）")
+    problems = cloud_video.config_status("runpod")
+    if problems:
+        raise gr.Error("雲端還沒設定好：" + "；".join(problems) + "（設定方式見「☁️ 雲端影片」分頁）")
+    prompt = (prompt or "").strip()
+    if any(ord(c) > 127 for c in prompt):
+        try:
+            prompt = translate_prompt.translate_to_english(prompt)
+        except RuntimeError as exc:
+            raise gr.Error(f"AnimateDiff 需要英文 prompt，自動翻譯失敗（{exc}）——請改打英文") from exc
+    gr.Info("已送 RunPod（按 GPU 秒數計費）；要中止請到「☁️ 雲端影片」分頁按「取消雲端工作」")
+    result = _run_cloud_video_job(
+        request, progress, "runpod", "video_animatediff", prompt=prompt,
+        extra_negative=(negative_prompt or "").strip(), tier=tier,
+        trigger=None if character == NO_CHARACTER else character, image_path=face_ref, seed=int(seed),
+        params=dict(upscaleTo=1024),
+    )
+    gr.Info(_cloud_result_markdown(result).replace("**", ""))
+    return result.path
+
+
+# --- 🖥️ 資源排程 tab ------------------------------------------------------------------------------
+
+def _deferred_rows():
+    rows = []
+    for owner, record in _SCHEDULER.deferred():
+        route = record.get("route") or {}
+        kind = route.get("kind")
+        label = rp.JOB_COSTS[kind].label if kind in rp.JOB_COSTS else record.get("mode")
+        start = datetime.datetime.fromtimestamp(record["not_before"])
+        due = record["not_before"] <= time.time()
+        state = ("等待中：" if due else "") + "；".join(route.get("reasons") or []) if due or route else ""
+        rows.append([record["job_id"][:8], owner, label, f"{start:%m/%d %H:%M}", state])
+    return rows
+
+
+def resource_panel():
+    return rp.status_markdown(), _deferred_rows()
+
+
+def save_resource_settings(max_start_temp_c, cooldown_timeout_s, ram_margin_gb, max_local_wait_s,
+                           video_windows, image_windows):
+    try:
+        rp.save_settings({
+            "max_start_temp_c": int(max_start_temp_c), "cooldown_timeout_s": int(cooldown_timeout_s),
+            "ram_margin_gb": float(ram_margin_gb), "max_local_wait_s": int(max_local_wait_s),
+            "video_windows": video_windows or "", "image_windows": image_windows or "",
+        })
+    except ValueError as exc:
+        raise gr.Error(f"設定沒有存：{exc}") from exc
+    gr.Info("資源排程設定已儲存，下一次生成就會套用")
+    return resource_panel()
+
+
+def _find_deferred(job_prefix):
+    prefix = (job_prefix or "").strip()
+    if len(prefix) < 4:
+        raise gr.Error("請輸入工作編號（表格第一欄，至少 4 個字）")
+    matches = [(owner, r) for owner, r in _SCHEDULER.deferred() if r["job_id"].startswith(prefix)]
+    if len(matches) != 1:
+        raise gr.Error("找不到這個排程工作" if not matches else "編號對到不只一個工作，請多打幾個字")
+    return matches[0]
+
+
+def run_deferred_now(job_prefix):
+    owner, record = _find_deferred(job_prefix)
+    _SCHEDULER.run_now(owner, record["job_id"])
+    gr.Info(f"工作 {record['job_id'][:8]} 會在 {job_scheduler.TICK_SECONDS} 秒內開始（忽略時段與建議）")
+    return resource_panel()
+
+
+def cancel_deferred(job_prefix):
+    owner, record = _find_deferred(job_prefix)
+    _JOB_SERVICE.request_cancel(owner, record["job_id"])
+    gr.Info(f"已取消工作 {record['job_id'][:8]}")
+    return resource_panel()
 
 
 def cancel_cloud_video(request: gr.Request):
@@ -943,6 +1214,10 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
                     seed = gr.Number(value=9000, label="Seed", precision=0)
                     ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
+                    custom_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                    with gr.Row():
+                        custom_route = gr.Markdown()
+                        custom_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
                     btn = gr.Button("生成", variant="primary")
                 with gr.Column():
                     output = gr.Image(label="結果")
@@ -982,7 +1257,14 @@ with gr.Blocks(title="AI Image Lab") as demo:
             # just see their button spin with no explanation; a shared concurrency_id makes
             # Gradio queue it visibly instead. Includes the SadTalker button, which does not go
             # through ComfyUI but competes for the same VRAM.
-            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud], outputs=output, concurrency_id="gpu")
+            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud, custom_force_local], outputs=output, concurrency_id="gpu")
+            _custom_route_inputs = [checkpoint_choice, use_hq, pose_library, pose_reference, use_cloud,
+                                    custom_force_local]
+            for _source in (use_hq, pose_library, pose_reference, use_cloud, custom_force_local):
+                _source.change(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+            checkpoint_choice.change(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+            custom_route_btn.click(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+            demo.load(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
 
         with gr.Tab("🎬 AnimateDiff 動態影片"):
             gr.Markdown(
@@ -1049,7 +1331,13 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         )
                         video_motion_lora = gr.Dropdown(MOTION_LORA_CHOICES, value=MOTION_LORA_NONE, label="鏡頭運動")
                         video_motion_lora_strength = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="強度（超過 1 容易讓畫面明顯扭曲）")
-                    video_btn = gr.Button("生成影片", variant="primary")
+                    video_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                    with gr.Row():
+                        video_route = gr.Markdown()
+                        video_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
+                    with gr.Row():
+                        video_btn = gr.Button("生成影片", variant="primary")
+                        video_cloud_btn = gr.Button("☁️ 改送雲端（RunPod）", variant="secondary")
                 with gr.Column():
                     video_output = gr.Video(label="結果")
 
@@ -1061,10 +1349,23 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         video_style_positive, video_style_negative, video_checkpoint_choice,
                         video_motion_lora, video_motion_lora_strength,
                         video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
-                        video_faceid_v2_weight, video_motion_scale],
+                        video_faceid_v2_weight, video_motion_scale, video_force_local],
                 outputs=video_output,
                 concurrency_id="gpu",
             )
+            video_cloud_btn.click(
+                send_animatediff_to_cloud,
+                inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed],
+                outputs=video_output,
+                concurrency_id="cloud",
+                concurrency_limit=1,
+            )
+            _video_route_inputs = [video_hires, video_use_facedetailer, video_upscale, video_interp, video_lcm,
+                                   video_force_local]
+            for _source in _video_route_inputs:
+                _source.change(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
+            video_route_btn.click(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
+            demo.load(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
 
         with gr.Tab("🗣️ SadTalker 對嘴影片"):
             gr.Markdown(
@@ -1088,6 +1389,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     with gr.Row():
                         talk_expression = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="表情/嘴型幅度")
                         talk_pose_style = gr.Slider(0, 45, value=0, step=1, label="頭部動作風格")
+                    talk_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
                     talk_btn = gr.Button("生成說話影片", variant="primary")
                 with gr.Column():
                     talk_output = gr.Video(label="結果")
@@ -1095,7 +1397,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
             talk_btn.click(
                 generate_talking_head_ui,
                 inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
-                        talk_enhancer, talk_pose_style],
+                        talk_enhancer, talk_pose_style, talk_force_local],
                 outputs=talk_output,
                 concurrency_id="gpu",
             )
@@ -1118,13 +1420,14 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         svd_fps = gr.Slider(2, 12, value=client.VIDEO_FPS, step=1, label="FPS")
                     svd_motion = gr.Slider(1, 255, value=client.MOTION_BUCKET_ID, step=1,
                                             label="動態強度（越高動作越大，但越容易變形/融化，人像建議偏低）")
+                    svd_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
                     svd_btn = gr.Button("生成影片（SVD）", variant="primary")
                 with gr.Column():
                     svd_output = gr.Video(label="結果")
 
             svd_btn.click(
                 generate_video_svd,
-                inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion],
+                inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion, svd_force_local],
                 outputs=svd_output,
                 concurrency_id="gpu",
             )
@@ -1166,6 +1469,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                               "看起來太靜止就往上調，姿勢跑掉就往下調）",
                     )
                     gif_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（有選角色才有作用）")
+                    gif_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
                     gif_btn = gr.Button("生成 GIF", variant="primary")
                 with gr.Column():
                     gif_output = gr.Image(label="結果（GIF，會自動播放）")
@@ -1177,7 +1481,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 generate_gif,
                 inputs=[gif_character, gif_anchor, gif_prompt, gif_tier, gif_negative_prompt, gif_seed, gif_frames,
                         gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
-                        gif_checkpoint_choice, gif_lora_strength],
+                        gif_checkpoint_choice, gif_lora_strength, gif_force_local],
                 outputs=gif_output,
                 concurrency_id="gpu",
             )
@@ -1247,6 +1551,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         lines=6, interactive=False,
                     )
                     pick_notice = gr.Markdown("選一個場景或姿勢（或填補充描述）就會在這裡看到實際送出的 prompt。")
+                    pick_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
                     pick_btn = gr.Button("生成", variant="primary")
                     pick_output = gr.Image(label="結果")
 
@@ -1279,7 +1584,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
             pick_btn.click(
                 generate_from_picker,
                 inputs=[pick_char_state, pick_pose_state, pick_scene_state, pick_checkpoint,
-                        pick_tier, pick_seed, pick_extra],
+                        pick_tier, pick_seed, pick_extra, pick_force_local],
                 outputs=pick_output,
                 concurrency_id="gpu",
             )
@@ -1353,9 +1658,60 @@ with gr.Blocks(title="AI Image Lab") as demo:
             )
             cloud_cancel_btn.click(cancel_cloud_video, inputs=None, outputs=None)
 
+        with gr.Tab("🖥️ 資源排程"):
+            _res_settings = rp.load_settings()
+            gr.Markdown(
+                "每次按本地生成前，會依這台電腦的配置（RTX 2070 8 GB、32 GB RAM、84°C 降頻）和當下狀態決定："
+                "**本地執行**、**先等 GPU 降溫**、**排到下個時段**，或**建議改送雲端**。"
+                "雲端一定要你確認才會送（按各分頁的雲端按鈕／勾選），不會自己花錢。\n\n"
+                "判斷順序：本地跑不了（Wan）→ RAM 不夠（高清完整版會先建議改量化版）→ VRAM 超過顯卡 → "
+                "其他程式占著顯卡 → 本地待完成的工作太久 → 不在時段內 → GPU 太熱 → 本地執行。"
+                "各分頁的「⚡ 忽略資源建議」可以跳過建議與時段，但不會跳過降溫等待（最多等下面設定的秒數）。"
+            )
+            with gr.Row():
+                with gr.Column():
+                    res_status = gr.Markdown(rp.status_markdown(_res_settings))
+                    res_refresh_btn = gr.Button("🔄 重新讀取", size="sm")
+                with gr.Column():
+                    res_temp = gr.Slider(50, 84, value=_res_settings["max_start_temp_c"], step=1,
+                                         label="開始門檻溫度 °C（高於這個就先等降溫；84°C 是硬體降頻點）")
+                    res_cooldown = gr.Number(value=_res_settings["cooldown_timeout_s"], precision=0,
+                                             label="最多等降溫幾秒（超過就照樣開始，不會一直卡住）")
+                    res_margin = gr.Slider(0, 8, value=_res_settings["ram_margin_gb"], step=0.5,
+                                           label="保留給系統的 RAM（GB）")
+                    res_wait = gr.Number(value=_res_settings["max_local_wait_s"], precision=0,
+                                         label="本地待完成超過幾秒就建議雲端（只對有雲端路線的工作）")
+                    res_video_windows = gr.Textbox(
+                        value=", ".join(_res_settings["video_windows"]),
+                        label="影片時段（例如 23:00-08:00，可用逗號分隔多段；留空 = 隨時）")
+                    res_image_windows = gr.Textbox(
+                        value=", ".join(_res_settings["image_windows"]),
+                        label="圖片時段（留空 = 隨時）")
+                    res_save_btn = gr.Button("儲存設定", variant="primary")
+            gr.Markdown("### 排程中的工作\n時段外按下的「自訂生圖」「AnimateDiff」會排在這裡，時段一到、"
+                        "顯卡空下來就自動執行（GUI 要開著；image_api 開著也會跑）。")
+            res_table = gr.Dataframe(value=_deferred_rows(), headers=["工作", "來源", "類型", "開始時間", "狀態／原因"],
+                                     interactive=False, wrap=True)
+            with gr.Row():
+                res_job = gr.Textbox(label="工作編號（表格第一欄）", scale=2)
+                res_run_btn = gr.Button("立即本地執行", scale=1)
+                res_cancel_btn = gr.Button("取消", variant="stop", scale=1)
+
+            res_refresh_btn.click(resource_panel, inputs=None, outputs=[res_status, res_table])
+            gr.Timer(15).tick(resource_panel, inputs=None, outputs=[res_status, res_table])
+            res_save_btn.click(save_resource_settings,
+                               inputs=[res_temp, res_cooldown, res_margin, res_wait, res_video_windows,
+                                       res_image_windows],
+                               outputs=[res_status, res_table])
+            res_run_btn.click(run_deferred_now, inputs=res_job, outputs=[res_status, res_table])
+            res_cancel_btn.click(cancel_deferred, inputs=res_job, outputs=[res_status, res_table])
+
 if __name__ == "__main__":
     # 7861, not Gradio's default 7860 - kohya_ss's own training GUI (kohya_gui.py, this repo's parent
     # tool) also defaults to 7860 and can auto-start on this machine, silently stealing the port and
     # making this app unreachable at the URL people expect (looks like "the page is missing the anchor
     # upload" when it's actually a different app entirely serving that port).
+    # Here, not at import: importing gui.py (the offline build check, a REPL) must not start a thread
+    # that could launch ComfyUI and run a queued job.
+    _SCHEDULER.start()
     demo.launch(server_name="127.0.0.1", server_port=7861, share=False)
