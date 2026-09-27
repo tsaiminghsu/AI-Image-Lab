@@ -5,6 +5,27 @@
 
 ## 2026-09-27
 
+### 只用已授權的元件：commercial 集數、Z-Image 關鍵幀、聲音授權紀錄、RIFE 補幀
+
+- **為什麼**：使用者要求補幀／放大、關鍵幀模型、配音聲音都「用已經授權的來做」。JV Tutor Corner 的影片要拿來
+  招生，關鍵幀原本用的 Pony 衍生模型、FaceID、OpenPose ControlNet、UltraSharp 都限制營利。
+- **`"commercial": true`**：驗證只接受 `COMMERCIAL_CHECKPOINTS`（目前只有 Z-Image Turbo，2026-09-27 查證其
+  repo 含 transformer／文字編碼器／VAE 皆為 Apache-2.0），而且每個有台詞的鏡頭都要對應到設定好的聲音。
+  JV 第一集已改成 commercial + Z-Image。代價是沒有 FaceID 和姿勢骨架，角色只靠文字描述，會在鏡頭之間漂移。
+- **聲音授權紀錄**：`voice.json` 必須有 `consent.speaker` 和 `consent.date`，否則拒用。示範聲音改成預設禁用，
+  只有 `voice --allow-demo` 才能用，commercial 集數加了也不行。`plan` 會列出每個聲音的狀態。
+- **RIFE 補幀** `interpolate`：新模板 `workflow_template_rife_interp.json`（LoadVideo → GetVideoComponents →
+  RIFE VFI → CreateVideo → SaveVideo）與 `comfyui_client.submit_interpolation_rife()`，在本機 ComfyUI 把動態
+  鏡頭 24 → 48 fps（輸出影格率 = 來源 × 倍數，速度和長度不變），寫進 `enhance/out/`。RIFE 的程式和 rife47
+  權重都是 MIT，ComfyUI-Frame-Interpolation 也是 MIT，而且權重已經在本機。上傳時用「集名_檔名」避免共用的
+  ComfyUI input 資料夾撞名。沒有取樣器也沒有文字，所以不放進要求安全負面詞的 builder 清單，另寫測試確認它
+  結構合法且 `check_negative_safety` 為 0；雲端 workflow 目前只會上傳圖片，所以補幀只在本機跑。
+- **放大**：本機唯一的放大模型 UltraSharp 是非商用，所以維持 ffmpeg lanczos。可營利的 AI 放大（Real-ESRGAN、
+  SeedVR2）要另外下載，還沒做。
+- **還沒驗證**：新模板還沒對真的 ComfyUI 跑 `validate_workflow_nodes.py`（這次沒啟動 ComfyUI），節點名稱與輸入
+  是照本機原始碼（`comfy_extras/nodes_video.py`、Frame-Interpolation 的 `RIFE_VFI`）核對的。
+- **驗證（離線）**：`check.ps1` 全綠（ComfyUI 不在線時），1895 passed（原 1879，新增 16 例）。
+
 ### 先做低解析度、之後交給外部工具補幀放大：草稿模式、匯出／匯入、輸出影格率
 
 - **為什麼**：使用者決定先用低解析度做完整一集，之後再用專業 AI 工具補幀和放大，本機顯卡時間和雲端費用

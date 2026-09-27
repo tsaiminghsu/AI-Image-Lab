@@ -128,6 +128,8 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `jv_en_ep01_cafe_order.json`；英文台詞配中文參考錄音會走跨語言模式（帶口音）。
   低解析度優先：`keyframes --draft`、`motion --draft`、`export`（enhance/in → 外部工具 → enhance/out）、
   `assemble --fps 48`。
+  `"commercial": true` 的集數只准用可營利元件（Z-Image 關鍵幀、Wan、RIFE、有 consent 紀錄的聲音），
+  示範聲音要 `--allow-demo` 才能用。
 - GUI 有 7 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
   `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是
   降級成文字（Z-Image、SD1.5），降級時 GUI 會明講。場景庫在 `training/scenes/`（縮圖已

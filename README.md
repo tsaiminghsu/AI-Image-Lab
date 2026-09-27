@@ -2064,6 +2064,27 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 - `motion` 在非互動環境（例如排程）需要加 `--yes` 才會送出，避免意外計費
 - 工作檔都在 `outputs/drama/<集名>/`：`keyframes/`、`voice/`、`motion/`、`segments/`
 
+### 只用可營利的元件（`"commercial": true`）
+
+分鏡表加上 `"commercial": true` 後，驗證會擋掉授權不允許營利的東西：
+
+| 環節 | 用什麼 | 授權 |
+|---|---|---|
+| 關鍵幀 | Z-Image Turbo（`"checkpoint": "z_image_turbo"`，含文字編碼器與 VAE） | Apache-2.0 |
+| 動態鏡頭 | Wan 2.2（RunPod） | Apache-2.0 |
+| 補幀 | RIFE（`interpolate`，本機 ComfyUI） | MIT（程式與權重） |
+| 配音 | CosyVoice3，**只用有授權紀錄的聲音** | Apache-2.0 |
+| 放大、字幕、組裝 | ffmpeg（lanczos） | — |
+
+- Pony 衍生模型、FaceID／InsightFace、OpenPose ControlNet、UltraSharp 都限制營利，commercial 集數不能用
+- **代價**：Z-Image 沒有 FaceID 鎖臉和姿勢骨架，角色只靠文字描述，長相會在鏡頭之間漂移；之後可以在
+  Z-Image-Base 上訓練角色 LoRA 改善
+- Z-Image 每換一次 prompt 都要重新載入約 11 GB 的模型（PCIe x1 下每次 2–4 分鐘），一集 7 張關鍵幀約
+  20–35 分鐘
+- 字型：微軟正黑體隨 Windows 授權；要更保險可以用 `DRAMA_FONT` 改指向 Noto Sans TC（OFL）
+- 範例 `jv_en_ep01_cafe_order.json` 已經是 commercial：用 Z-Image，聲音指定為 `jv_customer_en`、
+  `jv_barista_en`（需要兩位英文母語者本人同意的錄音）
+
 ### 先做低解析度，之後再交給外部工具加強
 
 ```powershell
@@ -2078,6 +2099,9 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py export training\episodes\jv_e
 
 # 用補幀／放大工具處理後，以「相同檔名」放進 enhance\out\，再組裝（補幀到 48 fps 時加 --fps 48）
 ComfyUI\.venv\Scripts\python.exe training\drama.py assemble training\episodes\jv_en_ep01_cafe_order.json --fps 48
+
+# 或直接用本機的 RIFE（MIT）把動態鏡頭從 24 補到 48 fps，結果寫進 enhance\out\
+ComfyUI\.venv\Scripts\python.exe training\drama.py interpolate training\episodes\jv_en_ep01_cafe_order.json
 ```
 
 - 組裝時每個鏡頭依序用：`enhance\out\` 的加強版 → 正式版 → 低解析度版（→ 加 `--allow-preview` 時的預覽）
@@ -2131,11 +2155,19 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py assemble training\episodes\jv
 `training/voices/<聲音 id>/voice.json`（整個 `training/voices/` 已 gitignore，錄音不會進版控）：
 
 ```json
-{"prompt_wav": "prompt.wav", "prompt_text": "這段錄音的逐字稿"}
+{
+  "prompt_wav": "prompt.wav",
+  "prompt_text": "這段錄音的逐字稿",
+  "consent": {"speaker": "錄音者本人姓名", "date": "2026-09-27", "scope": "JV Tutor Corner 教學影片配音"}
+}
 ```
 
 `prompt.wav` 放 5–15 秒清楚的人聲，`prompt_text` 必須跟錄音逐字一致。**錄音要經過本人同意才能拿來
-複製聲音。**沒設定聲音的角色會用 CosyVoice 內建的示範聲音（中國口音女聲），只能內部測試。
+複製聲音**，`consent` 就是這份同意的紀錄：少了 `speaker` 或 `date` 的聲音會被拒用。書面同意書請另外
+保存。
+
+沒設定聲音的角色預設**不會**配音；只是內部測試時才加 `voice --allow-demo` 改用 CosyVoice 內建的示範
+聲音（中國口音女聲）。標示 `commercial` 的集數加了也不能用示範聲音。
 
 **英文台詞**：台詞跟參考錄音語言不同時（英文台詞、中文錄音），會自動改用 CosyVoice 的跨語言模式，
 保留音色但**會帶口音**，而且 `emotion` 不會套用。做語言教學時，英文角色請用一段**母語者本人同意**的
