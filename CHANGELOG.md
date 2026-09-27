@@ -34,7 +34,16 @@
   （暫存的 store 與設定檔）：讀數和 nvidia-smi 一致（52°C、0.4/8.0 GB、可用 RAM 20.9 GB）；時段外按
   AnimateDiff 排到 20:00、沒有啟動 ComfyUI、上傳的臉已複製進 store；排程器沒有提早執行；取消有效；
   SadTalker 在時段外顯示「不能排程」。另外實際啟動 GUI 在瀏覽器看過新分頁與兩個預覽，console 沒有錯誤。
-  **還沒有真的讓排程器在時段開始時跑一次本地生成**，也沒有測過雲端確認按鈕（沒有雲端帳號）。
+  雲端確認按鈕沒有測過（沒有雲端帳號）。
+- **排程器實機跑一次（冷機，RTX 2070，ComfyUI 原本沒開）**：影片時段設成 19:07-19:37，19:04:42 排一支
+  AnimateDiff 快速模式（`hyunjun`、seed 6001、512²、16 幀、不高清不精修不放大）。決策是 defer、`not_before`
+  19:07:00；之前每一輪都是「nothing due」。19:07:06 排程器發現到期、自己啟動 ComfyUI（10 秒），19:07:16 送出，
+  19:08:19 完成——**63 秒含冷啟動的第一次模型載入**（README 表格的快速模式是 69 秒）。紀錄走完
+  queued → submitting → running → checking → completed，output check 通過（mp4 512×512），上傳的臉已
+  複製進 store，產物以 content-addressed 路徑硬連結。GPU 44°C 起、送出前 VRAM 1.0 GB，跑完 ComfyUI RSS
+  7.2 GB（`stop_comfyui.ps1` 關閉時的讀數）。**溫度和 VRAM 峰值沒有記到**：取樣結果被量測腳本自己的
+  log 管線吃掉（ComfyUI 輸出含控制字元，grep 把串流當成二進位），不是排程器的問題。
+  那次測試用 10 秒一輪；實際排程器是 30 秒一輪，所以時段開始到執行最多晚 30 秒。
 - **預估不是量測**：SVD、SadTalker、Z-Image、Wan 的成本是估計值，畫面上會標明；之後量到再更新 `JOB_COSTS`。
 
 ## 2026-09-18
