@@ -2029,7 +2029,11 @@ ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod
 1080×1920 的直式影片。分工照成本報告：關鍵幀和配音在本機免費做，只有動態鏡頭送 RunPod 的 Wan 2.2，
 而且先出便宜的預覽再出正式版。這一版**還沒有對嘴**（下一階段），對話鏡頭是 Wan 的動作加上配音和字幕。
 
-範例：`training/episodes/example_cafe_reunion.json`（8 個鏡頭約 25 秒，角色 xinyi、taeoh，一般級）。
+範例：
+- `training/episodes/example_cafe_reunion.json`：劇情短劇（8 個鏡頭約 25 秒，角色 xinyi、taeoh，一般級）
+- `training/episodes/jv_en_ep01_cafe_order.json`：給 JV Tutor Corner 的英文情境短劇「咖啡廳點餐」
+  （12 個鏡頭約 39 秒）。英文對白加中文翻譯的雙語字幕、3 張「今日句型」字卡用慢速朗讀，片尾是
+  導流字卡「找老師一對一練口說」
 
 ### 流程
 
@@ -2086,6 +2090,19 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 | `line`、`emotion` | 台詞（字幕＋配音）與語氣（例如「驚訝」，交給 CosyVoice3 的語氣控制） |
 | `camera` | 靜態鏡頭的運鏡：`push_in`、`pull_out`、`pan_left`、`pan_right`、`static` |
 | `duration` | 秒數 1.5–5（Wan 最長約 5 秒）；配音比較長時會自動延長 |
+| `translation` | 翻譯字幕，顯示在台詞下方、字比較小（語言學習用） |
+| `speed` | 配音語速 0.6–1.4，預設 1.0；句型示範可以用 0.85 |
+
+`type` 也可以是 `card`（字卡），用在「今日句型」和片尾導流。字卡由 ffmpeg 直接畫，不用生關鍵幀也不用
+顯卡：
+
+| 字卡欄位 | 說明 |
+|---|---|
+| `label` | 上方小標，例如「今日句型 1」「JV Tutor Corner」 |
+| `phrase` | 主要文字（大字） |
+| `translation`、`note` | 翻譯與補充說明 |
+| `background` | 另一個非字卡鏡頭的 id，用它的關鍵幀模糊、壓暗後當背景；不填就是純色 |
+| `line`、`character`、`speed` | 選填：朗讀這句（例如慢速唸一次句型），聲音跟著角色 |
 
 ### 角色聲音
 
@@ -2097,6 +2114,10 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 
 `prompt.wav` 放 5–15 秒清楚的人聲，`prompt_text` 必須跟錄音逐字一致。**錄音要經過本人同意才能拿來
 複製聲音。**沒設定聲音的角色會用 CosyVoice 內建的示範聲音（中國口音女聲），只能內部測試。
+
+**英文台詞**：台詞跟參考錄音語言不同時（英文台詞、中文錄音），會自動改用 CosyVoice 的跨語言模式，
+保留音色但**會帶口音**，而且 `emotion` 不會套用。做語言教學時，英文角色請用一段**母語者本人同意**的
+英文錄音（逐字稿也是英文），發音才會標準。
 
 ### 注意
 
@@ -2116,6 +2137,8 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 - 離線測試涵蓋分鏡表驗證、各步驟的參數與指令組成（`tests/test_drama.py`）
 - `assemble` 在本機實跑過：用 anchor 圖當關鍵幀、假配音和一段假影片，8 個鏡頭組成 25.4 秒、
   1080×1920、24 fps 的影片，字幕、運鏡、影片補格都正常
+- 英文情境短劇也用假素材實跑過組裝：12 個鏡頭 39.2 秒，字卡（標籤／句型／翻譯／說明逐行置中）、
+  雙語字幕、中英混排斷行都正常
 - **關鍵幀、配音、雲端動態鏡頭還沒實跑**：前兩個要用顯卡，雲端要 RunPod 帳號
 
 ## 資料夾結構

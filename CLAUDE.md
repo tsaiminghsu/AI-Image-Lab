@@ -124,6 +124,8 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `drama_compose.py`（ffmpeg 指令）＋`cosyvoice_runner.py`（在 CosyVoice 自己的 venv 跑）。分鏡表在
   `training/episodes/`，工作檔在 `outputs/drama/`。組裝在本機用假素材實跑過；關鍵幀、配音、雲端動態
   還沒實跑，也還沒有對嘴。「一次送多支」只有 `cloud_video.run_cloud_batch` 一個實作。
+  語言學習短劇（JV Tutor Corner）用 `translation`／`speed` 欄位和 `card` 字卡鏡頭，範例
+  `jv_en_ep01_cafe_order.json`；英文台詞配中文參考錄音會走跨語言模式（帶口音）。
 - GUI 有 7 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
   `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是
   降級成文字（Z-Image、SD1.5），降級時 GUI 會明講。場景庫在 `training/scenes/`（縮圖已
