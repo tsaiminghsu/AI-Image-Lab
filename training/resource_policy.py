@@ -275,16 +275,41 @@ def _query_nvidia_smi(run=subprocess.run):
     raise RuntimeError(f"nvidia-smi 回傳 {result.returncode}")
 
 
+def _comfy_port():
+    try:
+        return int(client.COMFYUI_URL.rsplit(":", 1)[1].split("/")[0])
+    except (IndexError, ValueError):
+        return 8188
+
+
 def _comfy_process_rss_gb(psutil):
-    """RSS of the local ComfyUI (a python running ComfyUI's main.py), or None if not found."""
-    for proc in psutil.process_iter(["name", "cmdline", "memory_info"]):
+    """RSS of the local ComfyUI server, or None if not found.
+
+    Found the way stop_comfyui.ps1 finds it: the process LISTENING on ComfyUI's port. Matching the
+    command line alone is wrong on this machine - ComfyUI\\.venv\\Scripts\\python.exe is a uv
+    launcher shim (~4 MB) whose command line names ComfyUI, while the real server is its child,
+    started as ...\\uv\\python\\cpython-3.11...\\python.exe main.py, with no "comfyui" in it. Measured
+    2026-09-27: shim 4 MB, server 7.2 GB. The fallback (no permission to list sockets) therefore
+    takes the LARGEST main.py process whose command line or working directory names ComfyUI.
+    """
+    port = _comfy_port()
+    try:
+        for conn in psutil.net_connections(kind="tcp"):
+            if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port and conn.pid:
+                return round(psutil.Process(conn.pid).memory_info().rss / 1024 ** 3, 2)
+    except (psutil.Error, OSError, AttributeError):
+        pass
+    best = None
+    for proc in psutil.process_iter(["cmdline", "cwd", "memory_info"]):
         try:
             cmd = " ".join(proc.info.get("cmdline") or []).lower()
-            if "main.py" in cmd and "comfyui" in cmd and proc.info.get("memory_info"):
-                return round(proc.info["memory_info"].rss / 1024 ** 3, 2)
+            where = (proc.info.get("cwd") or "").lower()
+            if "main.py" in cmd and ("comfyui" in cmd or "comfyui" in where) and proc.info.get("memory_info"):
+                rss = proc.info["memory_info"].rss
+                best = rss if best is None else max(best, rss)
         except (psutil.Error, OSError):
             continue
-    return None
+    return None if best is None else round(best / 1024 ** 3, 2)
 
 
 def probe(*, run=subprocess.run, http=None, psutil_module=None):

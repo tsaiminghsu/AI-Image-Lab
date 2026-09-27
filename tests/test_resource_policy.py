@@ -380,3 +380,54 @@ def test_animatediff_kind():
     assert rp.animatediff_kind(hires=False, use_facedetailer=False, upscale_to=0) == "animatediff_fast"
     assert rp.animatediff_kind() == "animatediff"
     assert rp.animatediff_kind(interp=4) == "animatediff_rife"
+
+
+# --- finding ComfyUI's RSS ------------------------------------------------------------------------
+
+
+class _FakePsutil:
+    """The shape of this machine: a uv launcher shim naming ComfyUI (4 MB) and the real server,
+    its child, whose command line does not (7.2 GB)."""
+
+    CONN_LISTEN = "LISTEN"
+    Error = OSError
+
+    def __init__(self, sockets=True):
+        self.sockets = sockets
+        gb = 1024**3
+        self.procs = {
+            1: (
+                ["D:/AI-Image-Lab/ComfyUI/.venv/Scripts/python.exe", "main.py", "--port", "8188"],
+                "D:/AI-Image-Lab/ComfyUI",
+                4 * 1024**2,
+            ),
+            2: (
+                ["C:/uv/python/cpython-3.11/python.exe", "main.py", "--port", "8188"],
+                "D:/AI-Image-Lab/ComfyUI",
+                int(7.2 * gb),
+            ),
+            3: (["python.exe", "main.py"], "D:/other-project", 9 * gb),
+        }
+
+    def net_connections(self, kind):
+        if not self.sockets:
+            raise OSError("access denied")
+        addr = types.SimpleNamespace(port=8188)
+        return [types.SimpleNamespace(status="LISTEN", laddr=addr, pid=2)]
+
+    def Process(self, pid):
+        return types.SimpleNamespace(memory_info=lambda: types.SimpleNamespace(rss=self.procs[pid][2]))
+
+    def process_iter(self, attrs):
+        for cmdline, cwd, rss in self.procs.values():
+            info = {"cmdline": cmdline, "cwd": cwd, "memory_info": types.SimpleNamespace(rss=rss)}
+            yield types.SimpleNamespace(info=info)
+
+
+def test_comfy_rss_is_the_process_listening_on_the_port_not_the_launcher_shim():
+    assert rp._comfy_process_rss_gb(_FakePsutil()) == 7.2
+
+
+def test_comfy_rss_fallback_takes_the_largest_comfyui_main_py():
+    # the other project's 9 GB main.py is not ComfyUI; the shim is, but is not the server
+    assert rp._comfy_process_rss_gb(_FakePsutil(sockets=False)) == 7.2
