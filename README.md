@@ -2079,8 +2079,11 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 - Pony 衍生模型、FaceID／InsightFace、OpenPose ControlNet、UltraSharp 都限制營利，commercial 集數不能用
 - **代價**：Z-Image 沒有 FaceID 鎖臉和姿勢骨架，角色只靠文字描述，長相會在鏡頭之間漂移；之後可以在
   Z-Image-Base 上訓練角色 LoRA 改善
-- Z-Image 每換一次 prompt 都要重新載入約 11 GB 的模型（PCIe x1 下每次 2–4 分鐘），一集 7 張關鍵幀約
-  20–35 分鐘
+- Z-Image 每換一次 prompt 都會重置模型快取再重新載入。實測（2026-09-27，冷機起跑）：7 張 576×1024 草稿
+  關鍵幀共 8 分 5 秒，第一張 62 秒（含載入），之後每張 58–79 秒；GPU 從 45°C 升到 83°C（離降頻門檻 84°C
+  只差 1 度），VRAM 峰值 7754 MiB，ComfyUI 佔用 13.7 GB 記憶體
+- **Z-Image 會把提示詞裡的字畫出來**：角色 id（例如 `taeoh`）目前會被放進提示詞，實測被畫成咖啡機上的
+  「TAEOH」字樣；角色預設服裝也會跟鏡頭要求的服裝打架（圍裙跑到背景的人身上）。修正前請先檢查關鍵幀
 - 字型：微軟正黑體隨 Windows 授權；要更保險可以用 `DRAMA_FONT` 改指向 Noto Sans TC（OFL）
 - 範例 `jv_en_ep01_cafe_order.json` 已經是 commercial：用 Z-Image，聲音指定為 `jv_customer_en`、
   `jv_barista_en`（需要兩位英文母語者本人同意的錄音）
