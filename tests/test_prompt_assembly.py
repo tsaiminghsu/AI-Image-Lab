@@ -245,3 +245,62 @@ def test_animatediff_inline_assembly_matches_shared_builder(monkeypatch, tmp_pat
         expected_prompt = prompt_text
     expected_prompt = f"{expected_prompt}, {gc.REALISTIC_STYLE}"
     assert got_prompt == expected_prompt
+
+
+# --- trigger words and per-use character overrides -------------------------------------------
+
+
+def test_zimage_gets_the_description_without_the_trigger_word():
+    """Z-Image letters prompt words into the picture - "taeoh" came out painted on a coffee machine."""
+    positive, _ = gc._build_prompt_and_negative("at a cafe", "", "safe", "taeoh", None, None, "z_image_turbo")
+    assert not positive.startswith("taeoh") and "taeoh," not in positive
+    assert positive.startswith("22 year old adult man")
+
+
+def test_sdxl_keeps_the_trigger_word_and_it_can_be_turned_off_explicitly():
+    positive, _ = gc._build_prompt_and_negative("at a cafe", "", "safe", "taeoh", None, None, "juggernaut")
+    assert positive.startswith("taeoh, 22 year old adult man")
+    positive, _ = gc._build_prompt_and_negative(
+        "at a cafe", "", "safe", "taeoh", None, None, "juggernaut", include_trigger=False
+    )
+    assert positive.startswith("22 year old adult man")
+
+
+def test_wan_prompts_drop_the_trigger_and_take_overrides():
+    positive, negative = gc.build_wan_prompts(
+        "hands over a cup", "", "safe", "taeoh", character_overrides={"style": "white shirt and a barista apron"}
+    )
+    assert positive.startswith("22 year old adult man") and "taeoh," not in positive
+    assert "barista apron" in positive and "oversized shirt" not in positive
+    assert gc.AGE_SAFETY_NEGATIVE in negative
+
+
+def test_overrides_replace_only_appearance_and_style():
+    positive, negative = gc._build_prompt_and_negative(
+        "at a cafe",
+        "",
+        "safe",
+        "xinyi",
+        None,
+        None,
+        "z_image_turbo",
+        character_overrides={"appearance": "dark chestnut brown hair", "style": "grey blazer"},
+    )
+    assert "dark chestnut brown hair" in positive and "grey blazer" in positive
+    assert "tailored blazer and trousers" not in positive
+    assert "21 year old adult woman" in positive  # age and gender still from CHARACTERS
+    assert gc.AGE_SAFETY_NEGATIVE in negative
+
+
+@pytest.mark.parametrize("overrides", [{"age": 16}, {"gender": "girl"}, {"style": ""}, {"appearance": 3}])
+def test_overrides_cannot_touch_age_or_gender_and_must_be_text(overrides):
+    with pytest.raises(gc.UsageError):
+        gc._build_prompt_and_negative(
+            "p", "", "safe", "xinyi", None, None, "z_image_turbo", character_overrides=overrides
+        )
+
+
+def test_character_profile_does_not_mutate_the_character_table():
+    before = dict(gc.CHARACTERS["taeoh"])
+    gc.character_profile("taeoh", {"style": "barista apron"})
+    assert gc.CHARACTERS["taeoh"] == before

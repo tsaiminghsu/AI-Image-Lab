@@ -569,12 +569,12 @@ nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, 
 
 ### 5e. Z-Image Turbo、safe、角色 `ruoxi`（英文）
 
-沒有 score 標籤也沒有性別加權，組裝方式跟 SDXL 一樣。但 Z-Image 沒有 FaceID，身分只靠這段文字描述，臉不會被鎖住。
+沒有 score 標籤也沒有性別加權，組裝方式跟 SDXL 一樣，只是**開頭不放角色代號**：代號是給 LoRA 用的觸發詞，Z-Image 沒有 LoRA 路徑，又很會把提示詞裡的字畫出來（實測 `taeoh` 被畫成咖啡機上的字樣）。Z-Image 沒有 FaceID，身分只靠這段文字描述，臉不會被鎖住。
 
 <!-- example: {"checkpoint": "z_image_turbo", "fn": "build", "id": "zimage_en", "prompt": "standing in a bookstore, reading a book, warm indoor lighting", "tier": "safe", "trigger": "ruoxi"} -->
 **Positive**
 ```
-ruoxi, 23 year old adult woman, east asian, long layered hair with soft curls, dark brown eyes, oval face, athletic build, trendy streetwear, cropped jacket and jeans, standing in a bookstore, reading a book, warm indoor lighting, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
+23 year old adult woman, east asian, long layered hair with soft curls, dark brown eyes, oval face, athletic build, trendy streetwear, cropped jacket and jeans, standing in a bookstore, reading a book, warm indoor lighting, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
 ```
 **Negative**
 ```
@@ -597,12 +597,12 @@ nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, 
 
 ### 5g. Wan 2.2 影片、safe、角色 `taeoh`
 
-正面詞**沒有** `REALISTIC_STYLE`（那些是 CLIP 時代的標籤，對 umt5 沒有意義），性別也不加權（`(man:1.3)` 是 SD 的 CLIP 語法）。負面詞換成 `WAN_VIDEO_NEGATIVE`。
+正面詞**沒有** `REALISTIC_STYLE`（那些是 CLIP 時代的標籤，對 umt5 沒有意義），性別也不加權（`(man:1.3)` 是 SD 的 CLIP 語法），也不放角色代號（Wan 沒有角色 LoRA，也可能把字畫進畫面）。負面詞換成 `WAN_VIDEO_NEGATIVE`。
 
 <!-- example: {"fn": "wan", "id": "wan", "prompt": "slowly turning toward the camera and smiling, gentle breeze moving the hair", "tier": "safe", "trigger": "taeoh"} -->
 **Positive**
 ```
-taeoh, 22 year old adult man, east asian, soft permed hair, cool detached eyes, refined face, toned build, Korean urban style, oversized shirt and black trousers, slowly turning toward the camera and smiling, gentle breeze moving the hair
+22 year old adult man, east asian, soft permed hair, cool detached eyes, refined face, toned build, Korean urban style, oversized shirt and black trousers, slowly turning toward the camera and smiling, gentle breeze moving the hair
 ```
 **Negative**
 ```

@@ -267,14 +267,29 @@ def get_character(trigger):
 SD15_GENDER_WEIGHT = 1.3
 
 
-def character_base_prompt(trigger, profile, gender_weight=None):
+def character_base_prompt(trigger, profile, gender_weight=None, include_trigger=True):
     gender = profile["gender"]
     if gender_weight:
         gender = f"({gender}:{gender_weight})"
-    return (
-        f"{trigger}, {profile['age']} year old adult {gender}, east asian, "
-        f"{profile['appearance']}, {profile['style']}"
-    )
+    identity = f"{profile['age']} year old adult {gender}, east asian, {profile['appearance']}, {profile['style']}"
+    return f"{trigger}, {identity}" if include_trigger else identity
+
+
+CHARACTER_OVERRIDE_KEYS = ("appearance", "style")
+
+
+def character_profile(trigger, overrides=None):
+    """A character's profile with per-use overrides of its descriptive fields - e.g. an episode that
+    puts the character in a barista apron. Only appearance and style can change: age and gender
+    always come from CHARACTERS, where MINIMUM_AGE is enforced at import."""
+    profile = dict(get_character(trigger))
+    for key, value in (overrides or {}).items():
+        if key not in CHARACTER_OVERRIDE_KEYS:
+            raise UsageError(f"character override {key!r} is not allowed - only {list(CHARACTER_OVERRIDE_KEYS)}")
+        if not isinstance(value, str) or not value.strip():
+            raise UsageError(f"character override {key!r} must be non-empty text")
+        profile[key] = value.strip()
+    return profile
 
 
 def gen_anchors(trigger, out_dir, seeds):
@@ -569,7 +584,7 @@ def gen_suggestive_variations(trigger, anchor_path, out_dir, count, ip_adapter_w
 
 
 def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_positive, style_negative, checkpoint,
-                               *, gender_weight="auto"):
+                               *, gender_weight="auto", include_trigger=None, character_overrides=None):
     """Shared by gen_custom(), gen_gif() and gen_video_animatediff() so they all compose the
     final positive/negative prompt strings identically - character identity prefix, style
     terms, safety negatives, and the Pony quality-tag auto-prepend all live in exactly one
@@ -580,7 +595,13 @@ def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_posi
     SD1.5 checkpoints, which is the rule the still-image paths want. gen_video_animatediff
     passes it explicitly instead: its checkpoint argument is an ANIMATEDIFF_CHECKPOINTS key
     (e.g. "sd15_base") that is deliberately NOT in SD15_CHECKPOINTS, so "auto" would silently
-    drop the weight that path has always applied."""
+    drop the weight that path has always applied.
+
+    The character id at the front of the identity prefix is a LoRA trigger word. include_trigger
+    None means "auto": kept for every checkpoint except Z-Image, which has no LoRA path here and
+    paints prompt words as visible text (the id "taeoh" came out lettered on a coffee machine).
+    character_overrides replaces the character's appearance/style text for this call only (see
+    character_profile); age and gender cannot be overridden."""
     style_positive = REALISTIC_STYLE if style_positive is None else style_positive
     style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
 
@@ -591,9 +612,13 @@ def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_posi
         negative_prompt = f"{PONY_QUALITY_NEGATIVE_TAGS}, {negative_prompt}"
 
     if trigger:
-        profile = get_character(trigger)
-        weight = (SD15_GENDER_WEIGHT if checkpoint in client.SD15_CHECKPOINTS else None)             if gender_weight == "auto" else gender_weight
-        full_prompt = f"{character_base_prompt(trigger, profile, gender_weight=weight)}, {prompt}"
+        profile = character_profile(trigger, character_overrides)
+        weight = (SD15_GENDER_WEIGHT if checkpoint in client.SD15_CHECKPOINTS else None) \
+            if gender_weight == "auto" else gender_weight
+        if include_trigger is None:
+            include_trigger = checkpoint not in client.ZIMAGE_MODELS
+        identity = character_base_prompt(trigger, profile, gender_weight=weight, include_trigger=include_trigger)
+        full_prompt = f"{identity}, {prompt}"
     else:
         full_prompt = prompt
     # Keep the user's natural language, append the booru tags this checkpoint prefers. No-op for
@@ -895,7 +920,8 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
                 use_facedetailer=None, facedetailer_denoise=None, facedetailer_backend="yolo",
                 style_positive=None, style_negative=None, checkpoint=None, lora_strength=None,
                 hq=True, character_lora_strength=None, hires_denoise=None,
-                facedetailer_face_denoise=None, facedetailer_hand_denoise=None, pose_name=None):
+                facedetailer_face_denoise=None, facedetailer_hand_denoise=None, pose_name=None,
+                character_overrides=None):
     """Free-form prompt generation for one-off tests. The descriptive part of
     the prompt is fully up to the caller, but the safety negatives are not a
     dial that gets turned off here: AGE_SAFETY_NEGATIVE is always included,
@@ -994,6 +1020,7 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
 
     full_prompt, negative_prompt = _build_prompt_and_negative(
         prompt, extra_negative, tier, trigger, style_positive, style_negative, effective_checkpoint,
+        character_overrides=character_overrides,
     )
 
     if use_hq:
@@ -1413,14 +1440,16 @@ def check_wan_params(width, height, frames, fps, steps, cfg, model):
                          f"prompt, including the mandatory safety terms), got {cfg}")
 
 
-def build_wan_prompts(prompt, extra_negative, tier, trigger):
+def build_wan_prompts(prompt, extra_negative, tier, trigger, character_overrides=None):
     """Wan's positive/negative prompt pair. Goes through _build_prompt_and_negative like every other
     path so the tier + age safety negatives are guaranteed, but passes the style terms explicitly:
     the SD defaults (REALISTIC_STYLE's "visible pores, film grain" and friends) are CLIP-era tags
     tuned for SD1.5/SDXL and have no business in Wan's umt5 prompt. checkpoint=None and no gender
-    weight, since the "(man:1.3)" syntax is an SD CLIP convention umt5 doesn't parse."""
+    weight, since the "(man:1.3)" syntax is an SD CLIP convention umt5 doesn't parse. No trigger word
+    either: Wan has no character LoRA here, and like Z-Image it can letter prompt words into the frame."""
     return _build_prompt_and_negative(prompt, extra_negative, tier, trigger, "", WAN_VIDEO_NEGATIVE, None,
-                                      gender_weight=None)
+                                      gender_weight=None, include_trigger=False,
+                                      character_overrides=character_overrides)
 
 
 def gen_video_wan_i2v(prompt, extra_negative, tier, trigger, first_frame_path, out_dir, seed, *,
