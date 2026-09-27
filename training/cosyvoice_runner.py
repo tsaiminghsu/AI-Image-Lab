@@ -5,10 +5,14 @@ drama.py writes a job file and runs this as
 with the CosyVoice clone as the working directory (its imports are relative to it). The model is
 loaded once for the whole episode.
 
-Job file: {"model_dir": "...", "items": [{"id", "text", "out", "prompt_wav", "prompt_text",
-"instruct"}]}. With "instruct" set, inference_instruct2 carries the delivery (emotion, pace) and
-takes timbre from prompt_wav; otherwise inference_zero_shot clones prompt_wav using its exact
-transcript in prompt_text. One JSON line per item goes to stdout: {"id", "out", "seconds"}.
+Job file: {"model_dir": "...", "items": [{"id", "text", "out", "prompt_wav", "prompt_text", "mode",
+"instruct", "speed"}]}. mode picks the CosyVoice call:
+  zero_shot      clone prompt_wav, using its exact transcript in prompt_text
+  instruct       inference_instruct2: the instruct text carries the delivery (emotion), prompt_wav the timbre
+  cross_lingual  the line is in another language than the recording (English line, Mandarin voice):
+                 keeps the timbre without asking the model to continue the recording's words
+speed scales the delivery (1.0 normal; learners' phrase readings use ~0.85). One JSON line per item
+goes to stdout: {"id", "out", "seconds", "wall"}.
 
 This file imports torch and cosyvoice, so nothing in the main repo may import it.
 """
@@ -26,11 +30,21 @@ import torchaudio  # noqa: E402
 from cosyvoice.cli.cosyvoice import AutoModel  # noqa: E402
 
 
+PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
+
+
 def synth(model, item):
-    if item.get("instruct"):
-        chunks = model.inference_instruct2(item["text"], item["instruct"], item["prompt_wav"], stream=False)
+    speed = float(item.get("speed") or 1.0)
+    mode = item.get("mode") or ("instruct" if item.get("instruct") else "zero_shot")
+    if mode == "instruct":
+        chunks = model.inference_instruct2(item["text"], item["instruct"], item["prompt_wav"], stream=False,
+                                           speed=speed)
+    elif mode == "cross_lingual":
+        chunks = model.inference_cross_lingual(PROMPT_PREFIX + item["text"], item["prompt_wav"], stream=False,
+                                               speed=speed)
     else:
-        chunks = model.inference_zero_shot(item["text"], item["prompt_text"], item["prompt_wav"], stream=False)
+        chunks = model.inference_zero_shot(item["text"], item["prompt_text"], item["prompt_wav"], stream=False,
+                                           speed=speed)
     speech = torch.cat([c["tts_speech"] for c in chunks], dim=1)
     os.makedirs(os.path.dirname(os.path.abspath(item["out"])), exist_ok=True)
     torchaudio.save(item["out"], speech, model.sample_rate)

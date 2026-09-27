@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "title": "英文情境短劇 EP1：咖啡廳點餐（JV Tutor Corner）",
+  "checkpoint": "cyberrealistic_pony",
+  "tier": "safe",
+  "seed": 9300,
+  "voices": {},
+  "bgm": null,
+  "shots": [
+    {
+      "id": "c00",
+      "type": "card",
+      "label": "英文情境短劇 EP1",
+      "phrase": "點咖啡只會說「Coffee, please」？",
+      "translation": "3 個句型，點得像在地人",
+      "background": "s02",
+      "duration": 2.5
+    },
+    {
+      "id": "s02",
+      "type": "motion",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "framing": "medium",
+      "prompt": "standing at the cafe counter, looking up at the menu board",
+      "motion": "she walks up to the counter and looks up at the menu board, thinking",
+      "duration": 3
+    },
+    {
+      "id": "s03",
+      "type": "dialogue",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "barista behind the counter wearing a dark apron, friendly smile",
+      "motion": "he looks up, smiles warmly and greets the customer",
+      "line": "Hi! What can I get for you today?",
+      "translation": "嗨！今天想喝點什麼？",
+      "duration": 3
+    },
+    {
+      "id": "s04",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "at the cafe counter, polite and slightly unsure expression",
+      "motion": "she thinks for a second, then answers politely with a small smile",
+      "line": "Can I get a medium latte, please?",
+      "translation": "可以給我一杯中杯拿鐵嗎？",
+      "duration": 3
+    },
+    {
+      "id": "c05",
+      "type": "card",
+      "label": "今日句型 1",
+      "phrase": "Can I get a ..., please?",
+      "translation": "可以給我……嗎？",
+      "note": "點餐最常用，比 I want... 更禮貌",
+      "line": "Can I get a medium latte, please?",
+      "speed": 0.85,
+      "character": "xinyi",
+      "background": "s04",
+      "duration": 4
+    },
+    {
+      "id": "s06",
+      "type": "dialogue",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "barista behind the counter wearing a dark apron, nodding",
+      "motion": "he nods and asks a quick question with a smile",
+      "line": "Sure. For here or to go?",
+      "translation": "好的。內用還是外帶？",
+      "duration": 3
+    },
+    {
+      "id": "s07",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "at the cafe counter, relaxed friendly expression",
+      "motion": "she answers, then adds a request, gesturing lightly with her hand",
+      "line": "To go, please. Could I have it with oat milk?",
+      "translation": "外帶，謝謝。可以換燕麥奶嗎？",
+      "duration": 3.5
+    },
+    {
+      "id": "c08",
+      "type": "card",
+      "label": "今日句型 2",
+      "phrase": "For here or to go?",
+      "translation": "內用還是外帶？",
+      "note": "回答：For here. / To go, please.",
+      "line": "For here or to go?",
+      "speed": 0.85,
+      "character": "taeoh",
+      "background": "s06",
+      "duration": 3.5
+    },
+    {
+      "id": "c09",
+      "type": "card",
+      "label": "今日句型 3",
+      "phrase": "Could I have it with ...?",
+      "translation": "可以幫我加／換成……嗎？",
+      "note": "客製化需求都能用",
+      "line": "Could I have it with oat milk?",
+      "speed": 0.85,
+      "character": "xinyi",
+      "background": "s07",
+      "duration": 3.5
+    },
+    {
+      "id": "s10",
+      "type": "motion",
+      "character": "taeoh",
+      "scene": "cozy_cafe",
+      "framing": "medium",
+      "prompt": "barista wearing a dark apron handing a paper coffee cup across the counter",
+      "motion": "he hands over the latte across the counter with a smile",
+      "duration": 3
+    },
+    {
+      "id": "s11",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "cozy_cafe",
+      "framing": "close",
+      "prompt": "holding a paper coffee cup, bright happy smile",
+      "motion": "she smiles, raises the cup slightly and says thank you",
+      "line": "Thank you! Have a nice day!",
+      "translation": "謝謝！祝你有美好的一天！",
+      "duration": 3
+    },
+    {
+      "id": "c12",
+      "type": "card",
+      "label": "JV Tutor Corner",
+      "phrase": "想開口說得更自然？",
+      "translation": "找老師一對一練口說",
+      "note": "線上家教平台．用點數彈性上課",
+      "background": "s11",
+      "duration": 3.5
+    }
+  ]
+}

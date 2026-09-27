@@ -466,8 +466,8 @@ def test_run_assemble_cuts_every_shot_and_concatenates(tmp_path):
     assert out == ep.output()
     assert len(run.calls) == len(ep.shots) + 1  # one per shot + concat, no bgm
     assert total == pytest.approx(sum(s["duration"] for s in ep.shots))
-    with open(ep.subtitle("s05"), encoding="utf-8") as f:
-        assert f.read() == compose.wrap_subtitle("好久不見，你一點都沒變。")
+    with open(ep.text_file("s05", "line", 0), encoding="utf-8") as f:
+        assert f.read() == "好久不見，你一點都沒變。"
     s05_cmd = " ".join(run.calls[4][0])
     assert "drawtext" in s05_cmd and ep.voice("s05") in s05_cmd
     s01_cmd = " ".join(run.calls[0][0])
@@ -551,7 +551,7 @@ def test_segment_command_for_a_still_with_voice_and_subtitle():
         camera="pan_left",
         voice="v.wav",
         voice_delay=0.25,
-        subtitle_file="C:\\subs\\s.txt",
+        subtitle_lines=["C:\\subs\\s.txt"],
         font="C:\\Windows\\Fonts\\msjhbd.ttc",
     )
     joined = " ".join(cmd)
@@ -573,7 +573,7 @@ def test_segment_command_argument_errors():
     with pytest.raises(ValueError):
         compose.segment_command("ffmpeg", out="o.mp4", duration=3, video="a.mp4", still="b.png")
     with pytest.raises(ValueError):
-        compose.segment_command("ffmpeg", out="o.mp4", duration=3, still="b.png", subtitle_file="s.txt")
+        compose.segment_command("ffmpeg", out="o.mp4", duration=3, still="b.png", subtitle_lines=["s.txt"])
 
 
 def test_concat_list_quotes_paths():
@@ -615,3 +615,181 @@ def test_example_is_not_mutated_by_the_suite():
     drama.validate_episode(ep)
     drama.motion_specs(ep, drama.select_shots(ep), preview=True)
     assert example_data() == copy.deepcopy(before)
+
+
+# --- language-learning episodes (JV Tutor Corner) ---------------------------------------------
+
+JV = os.path.join(drama.EPISODES_DIR, "jv_en_ep01_cafe_order.json")
+
+
+def jv_data():
+    with open(JV, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_jv_episode_is_valid_safe_adult_and_ends_on_the_platform_card():
+    ep = drama.load_episode(JV)
+    errors, _ = drama.validate_episode(ep)
+    assert errors == []
+    assert ep.tier == "safe"
+    for shot in ep.shots:
+        if shot.get("character"):
+            assert gc.CHARACTERS[shot["character"]]["age"] >= gc.MINIMUM_AGE
+    assert ep.shots[0]["type"] == "card"  # the hook
+    assert ep.shots[-1]["type"] == "card" and "JV Tutor Corner" in ep.shots[-1]["label"]
+    for shot in ep.shots:
+        if shot["type"] == "dialogue":
+            assert not compose.is_cjk_text(shot["line"]) and compose.is_cjk_text(shot["translation"])
+
+
+def test_jv_plan_counts_only_moving_shots_for_the_cloud(capsys):
+    assert drama.main(["plan", JV]) == 0
+    out = capsys.readouterr().out
+    assert "字卡" in out and "預覽 7 支" in out and "正式版 7 支" in out
+
+
+@pytest.mark.parametrize(
+    "key, value, message",
+    [
+        ("phrase", "", "phrase"),
+        ("phrase", "x" * 81, "phrase"),
+        ("label", "很" * 21, "label"),
+        ("background", "c08", "background"),  # another card has no keyframe
+        ("background", "s99", "background"),
+        ("speed", 2.0, "speed"),
+        ("translation", "譯" * 121, "translation"),
+    ],
+)
+def test_card_validation(tmp_path, key, value, message):
+    data = jv_data()
+    card = next(s for s in data["shots"] if s["id"] == "c05")
+    card[key] = value
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="jv_bad"))
+    assert any(message in e for e in errors), errors
+
+
+def test_cards_need_no_prompt_scene_or_anchor(tmp_path, monkeypatch):
+    monkeypatch.setattr(gc, "picker_anchor_path", lambda trigger: None)
+    errors, warnings = drama.validate_episode(drama.load_episode(JV))
+    assert errors == []
+    assert not any("c05" in w for w in warnings)  # a card's character is only its voice
+
+
+def test_translation_without_a_line_is_flagged(tmp_path):
+    data = jv_data()
+    data["shots"][1]["translation"] = "沒有台詞的翻譯"
+    _, warnings = drama.validate_episode(write_episode(tmp_path, data, name="jv_tr"))
+    assert any("translation" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    "line, transcript, emotion, mode",
+    [
+        ("Can I get a latte?", "希望你以后能够做的比我还好呦。", "", "cross_lingual"),
+        ("Can I get a latte?", "希望你以后能够做的比我还好呦。", "開心", "cross_lingual"),
+        ("可以給我拿鐵嗎？", "希望你以后能够做的比我还好呦。", "開心", "instruct"),
+        ("可以給我拿鐵嗎？", "希望你以后能够做的比我还好呦。", "", "zero_shot"),
+        ("Can I get a latte?", "This is my consented recording.", "", "zero_shot"),
+    ],
+)
+def test_voice_mode(line, transcript, emotion, mode):
+    assert drama.voice_mode(line, transcript, emotion) == mode
+
+
+def test_jv_voice_items_read_english_cross_lingually_and_cards_slowly():
+    ep = drama.load_episode(JV)
+    items, demo = drama.voice_items(ep, drama.select_shots(ep))
+    assert demo is True
+    by_id = {it["id"]: it for it in items}
+    assert set(by_id) == {"s03", "s04", "c05", "s06", "s07", "c08", "c09", "s11"}
+    assert all(it["mode"] == "cross_lingual" and it["instruct"] is None for it in items)
+    assert by_id["c05"]["speed"] == 0.85 and by_id["s03"]["speed"] == 1.0
+    assert by_id["c05"]["text"] == "Can I get a medium latte, please?"
+
+
+def test_keyframes_skip_cards():
+    ep = drama.load_episode(JV)
+    made = []
+
+    def fake_gen(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_weight, **kw):
+        made.append(filename)
+        touch(os.path.join(out_dir, f"{filename}.png"))
+
+    drama.run_keyframes(
+        ep, drama.select_shots(ep), ffmpeg="ffmpeg", gen=fake_gen, run=Recorder(), server_up=lambda: True
+    )
+    assert made == [f"{sid}_raw" for sid in ("s02", "s03", "s04", "s06", "s07", "s10", "s11")]
+
+
+def test_jv_assemble_draws_cards_and_bilingual_subtitles():
+    ep = drama.load_episode(JV)
+    for shot in ep.shots:
+        if shot["type"] != "card":
+            touch(ep.keyframe(shot["id"]))
+    run = Recorder()
+    drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
+    assert len(run.calls) == len(ep.shots) + 1
+    cmds = {os.path.basename(c[-1]): " ".join(c) for c, _ in run.calls}
+
+    def text_files(sid):
+        return [f for f in os.listdir(ep.sub("subs")) if f.startswith(f"{sid}_")]
+
+    hook = cmds["c00.mkv"]
+    assert "boxblur" in hook and ep.keyframe("s02") in hook
+    assert hook.count("drawtext") == len(text_files("c00")) >= 3  # label, phrase line(s), translation
+    assert not any("_note_" in f for f in text_files("c00"))
+    card = cmds["c05.mkv"]
+    assert card.count("drawtext") == len(text_files("c05")) == 4 and compose.TRANSLATION_COLOR in card
+    dialogue = cmds["s04.mkv"]
+    # "Can I get a medium latte, please?" is 33 characters: two subtitle lines, then the translation
+    assert compose.TRANSLATION_COLOR in dialogue and dialogue.count("drawtext") == len(text_files("s04")) == 3
+    with open(ep.text_file("s04", "tr", 0), encoding="utf-8") as f:
+        assert f.read() == "可以給我一杯中杯拿鐵嗎？"
+    with open(ep.text_file("c05", "phrase", 0), encoding="utf-8") as f:
+        assert f.read() == "Can I get a ..., please?"
+
+
+def test_card_background_keyframe_must_exist():
+    ep = drama.load_episode(JV)
+    for shot in ep.shots:
+        if shot["type"] != "card" and shot["id"] != "s07":
+            touch(ep.keyframe(shot["id"]))
+    with pytest.raises(gc.UsageError) as info:
+        drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=Recorder())
+    assert "s07" in str(info.value) and "c09" in str(info.value)
+
+
+def test_wrap_lines_wraps_english_between_words():
+    lines = compose.wrap_lines("To go, please. Could I have it with oat milk?")
+    assert lines == ["To go, please. Could I have it", "with oat milk?"]
+    assert compose.wrap_lines("") == []
+    assert compose.wrap_lines("好久不見") == ["好久不見"]
+
+
+def test_subtitle_filters_put_the_translation_under_the_line():
+    filters = compose.subtitle_filters(["a0.txt", "a1.txt"], "f.ttc", ["t0.txt"])
+    assert len(filters) == 3
+    ys = {f.split("textfile='")[1].split("'")[0]: int(f.rsplit(":y=", 1)[1]) for f in filters}
+    assert ys["a0.txt"] < ys["a1.txt"] < ys["t0.txt"]
+    assert ys["t0.txt"] + compose.TRANSLATION_FONT_SIZE == compose.SUBTITLE_BOTTOM
+    assert all("x=(w-text_w)/2" in f for f in filters)  # every line centred on its own width
+
+
+def test_card_filters_centre_the_stack_in_the_band():
+    blocks = [("label", ["l.txt"]), ("phrase", ["p0.txt", "p1.txt"]), ("translation", []), ("note", ["n.txt"])]
+    filters = compose.card_filters(blocks, "f.ttc")
+    assert len(filters) == 4
+    tops = [int(f.rsplit(":y=", 1)[1]) for f in filters]
+    assert tops == sorted(tops)
+    band_top, band_bottom = compose.CARD_BAND
+    last_bottom = tops[-1] + compose.CARD_BLOCKS["note"][0]
+    assert abs((tops[0] - band_top) - (band_bottom - last_bottom)) <= 1
+
+
+def test_card_command_plain_background_and_font_required():
+    cmd = compose.card_command("ffmpeg", out="c.mkv", duration=3.0, blocks=[("phrase", ["p.txt"])], font="f.ttc")
+    joined = " ".join(cmd)
+    assert "color=c=0x16202b" in joined and "boxblur" not in joined and "anullsrc" in joined
+    assert "pcm_s16le" in cmd
+    with pytest.raises(ValueError):
+        compose.card_command("ffmpeg", out="c.mkv", duration=3.0, blocks=[], font=None)

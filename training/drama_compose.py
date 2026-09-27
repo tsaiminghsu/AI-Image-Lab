@@ -14,6 +14,8 @@ is covered by captions and buttons.
 import math
 import os
 import shutil
+import textwrap
+import unicodedata
 
 OUT_W, OUT_H = 1080, 1920
 FPS = 24
@@ -23,6 +25,23 @@ KEN_BURNS_WORK_HEIGHT = 3840  # zoompan on an upscaled frame, or the crop window
 SUBTITLE_BOTTOM = 1440
 SUBTITLE_FONT_SIZE = 60
 SUBTITLE_CHARS_PER_LINE = 14  # CJK characters; about 900 px at the font size above
+SUBTITLE_LATIN_CHARS_PER_LINE = 30
+TRANSLATION_FONT_SIZE = 44
+TRANSLATION_CHARS_PER_LINE = 18
+TRANSLATION_COLOR = "0xFFE9A8"
+LINE_GAP = 12
+# Cards (phrase of the day, end card): text blocks stacked and centred in the band above the feed's
+# bottom UI. The bundled ffmpeg is 4.2, whose drawtext has no text_align, so every line is its own
+# drawtext centred on its own width - one multi-line drawtext would left-align lines inside the block.
+CARD_BAND = (240, 1440)
+CARD_BACKGROUND = "0x16202b"
+CARD_BLOCKS = {   # name: (font size, colour, CJK chars per line, Latin chars per line)
+    "label": (40, "0x7FD3C7", 16, 30),
+    "phrase": (72, "white", 12, 24),
+    "translation": (50, TRANSLATION_COLOR, 16, 30),
+    "note": (38, "0xD7DEE6", 20, 38),
+}
+CARD_BLOCK_GAP = 34
 VIDEO_CODEC = ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"]
 AUDIO_CODEC = ["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
 SEGMENT_AUDIO_CODEC = ["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
@@ -62,14 +81,29 @@ def filter_path(path):
     return path.replace("\\", "/").replace(":", r"\:")
 
 
-def wrap_subtitle(text, width=SUBTITLE_CHARS_PER_LINE):
-    """Hard-wrap a line for drawtext, which never wraps by itself. Breaks after punctuation when
-    one falls in the second half of a line, so a phrase isn't split mid-word when it can be helped."""
-    text = " ".join(text.split())
+def is_cjk_text(text):
+    return any("㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿" for ch in text or "")
+
+
+def _units(ch):
+    """Display width: 2 for full-width (CJK) characters, 1 for Latin letters, digits and spaces."""
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _wrap_chars(text, width):
+    """Wrap Chinese (possibly mixed with English) at `width` full-width characters, measured in
+    display units so a Latin letter counts half as much as a Chinese character. Prefers a break after
+    punctuation in the second half of a line."""
+    limit = width * 2
     lines = []
-    while len(text) > width:
-        cut = width
-        for i in range(width, width // 2, -1):
+    while sum(_units(ch) for ch in text) > limit:
+        cut, used = 0, 0
+        for i, ch in enumerate(text):
+            used += _units(ch)
+            if used > limit:
+                break
+            cut = i + 1
+        for i in range(cut, cut // 2, -1):
             if text[i - 1] in "，。！？、；：,.!?;: ":
                 cut = i
                 break
@@ -77,7 +111,23 @@ def wrap_subtitle(text, width=SUBTITLE_CHARS_PER_LINE):
         text = text[cut:].strip()
     if text:
         lines.append(text)
-    return "\n".join(lines)
+    return lines
+
+
+def wrap_lines(text, cjk_width=SUBTITLE_CHARS_PER_LINE, latin_width=SUBTITLE_LATIN_CHARS_PER_LINE):
+    """Hard-wrap text into lines for drawtext, which never wraps by itself. Chinese wraps by
+    character, preferring a break after punctuation in the second half of a line; English wraps
+    between words."""
+    text = " ".join((text or "").split())
+    if not text:
+        return []
+    if is_cjk_text(text):
+        return _wrap_chars(text, cjk_width)
+    return textwrap.wrap(text, width=latin_width, break_long_words=True) or [text]
+
+
+def wrap_subtitle(text, width=SUBTITLE_CHARS_PER_LINE):
+    return "\n".join(wrap_lines(text, cjk_width=width))
 
 
 def camera_expressions(move, frames):
@@ -113,10 +163,49 @@ def clip_filter(duration, fps=FPS):
             f"trim=duration={duration:.3f},setpts=PTS-STARTPTS")
 
 
-def subtitle_filter(textfile, font):
+def _drawtext(textfile, font, size, color, y, border=5):
     return (f"drawtext=fontfile='{filter_path(font)}':textfile='{filter_path(textfile)}'"
-            f":fontsize={SUBTITLE_FONT_SIZE}:fontcolor=white:borderw=5:bordercolor=black@0.85"
-            f":line_spacing=12:x=(w-text_w)/2:y={SUBTITLE_BOTTOM}-text_h")
+            f":fontsize={size}:fontcolor={color}:borderw={border}:bordercolor=black@0.85"
+            f":x=(w-text_w)/2:y={y}")
+
+
+def _block_height(n_lines, size):
+    return n_lines * size + max(n_lines - 1, 0) * LINE_GAP
+
+
+def _block(line_files, font, size, color, top, border=5):
+    """One drawtext per line, each centred on its own width, starting at `top`."""
+    return [_drawtext(f, font, size, color, top + i * (size + LINE_GAP), border) for i, f in enumerate(line_files)]
+
+
+def subtitle_filters(line_files, font, translation_files=()):
+    """The spoken line burned in above SUBTITLE_BOTTOM, with an optional translation under it in
+    smaller, warmer text. Each argument is a list of one-line text files."""
+    filters = []
+    bottom = SUBTITLE_BOTTOM
+    if translation_files:
+        top = bottom - _block_height(len(translation_files), TRANSLATION_FONT_SIZE)
+        filters += _block(translation_files, font, TRANSLATION_FONT_SIZE, TRANSLATION_COLOR, top, border=4)
+        bottom = top - 18
+    if line_files:
+        top = bottom - _block_height(len(line_files), SUBTITLE_FONT_SIZE)
+        filters += _block(line_files, font, SUBTITLE_FONT_SIZE, "white", top)
+    return filters
+
+
+def card_filters(blocks, font):
+    """blocks: [(name, [line files])] in display order, names from CARD_BLOCKS. The stack is centred
+    vertically in CARD_BAND."""
+    blocks = [(name, files) for name, files in blocks if files]
+    heights = [_block_height(len(files), CARD_BLOCKS[name][0]) for name, files in blocks]
+    total = sum(heights) + CARD_BLOCK_GAP * max(len(blocks) - 1, 0)
+    top = CARD_BAND[0] + max((CARD_BAND[1] - CARD_BAND[0] - total) // 2, 0)
+    filters = []
+    for (name, files), height in zip(blocks, heights):
+        size, color = CARD_BLOCKS[name][:2]
+        filters += _block(files, font, size, color, top, border=3)
+        top += height + CARD_BLOCK_GAP
+    return filters
 
 
 def frame_exact(seconds, fps=FPS):
@@ -124,36 +213,61 @@ def frame_exact(seconds, fps=FPS):
     return math.ceil(seconds * fps - 1e-6) / fps
 
 
+def _audio(voice, voice_delay, duration):
+    dur = f"{duration:.3f}"
+    if voice:
+        delay = int(round(voice_delay * 1000))
+        return ["-i", voice], (f"aresample=48000,aformat=channel_layouts=stereo,adelay={delay}|{delay},"
+                               f"apad,atrim=0:{dur}")
+    return ["-f", "lavfi", "-t", dur, "-i", "anullsrc=r=48000:cl=stereo"], f"aresample=48000,atrim=0:{dur}"
+
+
+def _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out):
+    audio_in, achain = _audio(voice, voice_delay, duration)
+    dur = f"{duration:.3f}"
+    graph = f"[0:v]{vchain},format=yuv420p[v];[1:a]{achain}[a]"
+    return [ffmpeg, *QUIET, *picture_in, *audio_in, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
+            "-t", dur, "-r", str(fps), *VIDEO_CODEC, *SEGMENT_AUDIO_CODEC, out]
+
+
 def segment_command(ffmpeg, *, out, duration, video=None, still=None, camera="push_in", voice=None,
-                    voice_delay=0.25, subtitle_file=None, font=None, fps=FPS):
+                    voice_delay=0.25, subtitle_lines=(), translation_lines=(), font=None, fps=FPS):
     """One shot as a finished segment (.mkv): picture (clip or still with a camera move), optional
-    burned-in subtitle, and the voice line delayed by voice_delay and padded with silence to the
-    shot length. duration should already be frame_exact."""
+    burned-in subtitle and translation (lists of one-line text files), and the voice line delayed by
+    voice_delay and padded with silence to the shot length. duration should already be frame_exact."""
     if (video is None) == (still is None):
         raise ValueError("pass exactly one of video / still")
-    if subtitle_file and not font:
+    if (subtitle_lines or translation_lines) and not font:
         raise ValueError("a subtitle needs a font")
-    dur = f"{duration:.3f}"
     if video:
         picture_in = ["-i", video]
         vchain = clip_filter(duration, fps)
     else:
-        picture_in = ["-loop", "1", "-framerate", str(fps), "-t", dur, "-i", still]
+        picture_in = ["-loop", "1", "-framerate", str(fps), "-t", f"{duration:.3f}", "-i", still]
         vchain = still_filter(camera, duration, fps)
-    if subtitle_file:
-        vchain += "," + subtitle_filter(subtitle_file, font)
-    vchain += ",format=yuv420p"
-    if voice:
-        audio_in = ["-i", voice]
-        delay = int(round(voice_delay * 1000))
-        achain = (f"aresample=48000,aformat=channel_layouts=stereo,adelay={delay}|{delay},"
-                  f"apad,atrim=0:{dur}")
+    subs = subtitle_filters(list(subtitle_lines), font, list(translation_lines)) if font else []
+    if subs:
+        vchain += "," + ",".join(subs)
+    return _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out)
+
+
+def card_command(ffmpeg, *, out, duration, blocks, font, background=None, voice=None, voice_delay=0.25, fps=FPS):
+    """A text card (phrase of the day, end card) as a segment: text blocks over a blurred, darkened
+    keyframe or a plain background, with an optional voice reading."""
+    if not font:
+        raise ValueError("a card needs a font")
+    dur = f"{duration:.3f}"
+    if background:
+        picture_in = ["-loop", "1", "-framerate", str(fps), "-t", dur, "-i", background]
+        vchain = (f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase:flags=lanczos,crop={OUT_W}:{OUT_H},"
+                  f"boxblur=28:2,eq=brightness=-0.32")
     else:
-        audio_in = ["-f", "lavfi", "-t", dur, "-i", "anullsrc=r=48000:cl=stereo"]
-        achain = f"aresample=48000,atrim=0:{dur}"
-    graph = f"[0:v]{vchain}[v];[1:a]{achain}[a]"
-    return [ffmpeg, *QUIET, *picture_in, *audio_in, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-            "-t", dur, "-r", str(fps), *VIDEO_CODEC, *SEGMENT_AUDIO_CODEC, out]
+        picture_in = ["-f", "lavfi", "-t", dur, "-i", f"color=c={CARD_BACKGROUND}:s={OUT_W}x{OUT_H}:r={fps}"]
+        vchain = "setsar=1"
+    texts = card_filters(blocks, font)
+    if texts:
+        vchain += "," + ",".join(texts)
+    return _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out)
 
 
 def normalise_command(ffmpeg, src, dst, width=OUT_W, height=OUT_H):

@@ -18,6 +18,10 @@ the existing ones, not new code: keyframes go through gc.plan_picker + gc.gen_cu
 jobs go through cloud_video to the RunPod worker, which composes the tier + age safety negatives
 server-side with the cfg floor. Lip-sync is not part of this stage; dialogue shots get the voice
 line and a subtitle over Wan's motion.
+
+For language-learning episodes a shot can carry a `translation` (a second, smaller subtitle line under
+the spoken one) and a `speed` for the reading, and a `card` shot puts a phrase of the day or an end
+card on screen - drawn by ffmpeg over a blurred keyframe of another shot, so it needs no GPU.
 """
 
 import argparse
@@ -49,7 +53,8 @@ DEMO_VOICE_TEXT = "希望你以后能够做的比我还好呦。"
 COSYVOICE_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 
 EPISODE_VERSION = 1
-SHOT_TYPES = ("still", "motion", "dialogue")
+CARD = "card"
+SHOT_TYPES = ("still", "motion", "dialogue", CARD)
 MOVING_TYPES = ("motion", "dialogue")
 FRAMINGS = {
     "close": "close-up shot, head and shoulders",
@@ -58,6 +63,9 @@ FRAMINGS = {
 }
 DURATION_RANGE = (1.5, 5.0)     # Wan's 121-frame ceiling is 5.04 s at 24 fps
 MAX_LINE_CHARS = 120
+MAX_CARD_TEXT = 80
+MAX_CARD_LABEL = 20
+SPEED_RANGE = (0.6, 1.4)
 ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 EPISODE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 FPS = compose.FPS
@@ -119,8 +127,8 @@ class Episode:
     def motion(self, shot_id, preview=False):
         return self.sub("motion", f"{shot_id}_preview.mp4" if preview else f"{shot_id}.mp4")
 
-    def subtitle(self, shot_id):
-        return self.sub("subs", f"{shot_id}.txt")
+    def text_file(self, shot_id, kind, n):
+        return self.sub("subs", f"{shot_id}_{kind}_{n}.txt")
 
     def segment(self, shot_id):
         return self.sub("segments", f"{shot_id}.mkv")
@@ -144,10 +152,6 @@ def load_episode(path):
     if not isinstance(data, dict):
         raise gc.UsageError("分鏡表的最外層要是一個物件 {...}")
     return Episode(data, path)
-
-
-def _has_cjk(text):
-    return any("㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿" for ch in text or "")
 
 
 def validate_episode(ep):
@@ -180,7 +184,7 @@ def validate_episode(ep):
     if not isinstance(shots, list) or not shots:
         errors.append("shots 至少要有一個鏡頭")
         return errors, warnings
-    seen = set()
+    seen, picture_ids, card_backgrounds = set(), set(), []
     for index, shot in enumerate(shots):
         label = f"鏡頭 {index + 1}"
         if not isinstance(shot, dict):
@@ -189,6 +193,7 @@ def validate_episode(ep):
         shot_id = shot.get("id")
         if not isinstance(shot_id, str) or not ID_RE.match(shot_id):
             errors.append(f"{label} 的 id 只能用小寫英數字和 _（1–32 字），會變成檔名")
+            shot_id = None
         else:
             label = f"鏡頭 {shot_id}"
             if shot_id in seen:
@@ -200,19 +205,27 @@ def validate_episode(ep):
         duration = shot.get("duration")
         if not isinstance(duration, (int, float)) or not DURATION_RANGE[0] <= duration <= DURATION_RANGE[1]:
             errors.append(f"{label} 的 duration 要在 {DURATION_RANGE[0]}–{DURATION_RANGE[1]} 秒之間")
+        character = shot.get("character")
+        if character and character not in gc.CHARACTERS:
+            errors.append(f"{label} 的角色「{character}」不在角色表裡")
+            character = None
+        _validate_speech(shot, label, kind, errors, warnings)
+        if kind == CARD:
+            _validate_card(shot, label, errors)
+            if shot.get("background"):
+                card_backgrounds.append((label, shot["background"]))
+            continue
+        if shot_id:
+            picture_ids.add(shot_id)
         framing = shot.get("framing", "medium")
         if framing not in FRAMINGS:
             errors.append(f"{label} 的 framing 只能是 {list(FRAMINGS)}")
         camera = shot.get("camera")
         if camera is not None and camera not in compose.CAMERA_MOVES:
             errors.append(f"{label} 的 camera 只能是 {list(compose.CAMERA_MOVES)}")
-        character = shot.get("character")
-        if character:
-            if character not in gc.CHARACTERS:
-                errors.append(f"{label} 的角色「{character}」不在角色表裡")
-            elif ckpt in client.CHECKPOINTS and ckpt not in client.SD15_CHECKPOINTS \
-                    and not gc.picker_anchor_path(character):
-                warnings.append(f"{label}：角色「{character}」還沒有 anchor 圖，生關鍵幀前要先產生一張")
+        if character and ckpt in client.CHECKPOINTS and ckpt not in client.SD15_CHECKPOINTS \
+                and not gc.picker_anchor_path(character):
+            warnings.append(f"{label}：角色「{character}」還沒有 anchor 圖，生關鍵幀前要先產生一張")
         scene = shot.get("scene")
         if scene:
             try:
@@ -241,15 +254,45 @@ def validate_episode(ep):
                 errors.append(f"{label} 要有 motion（描述要發生的動作）")
             elif len(motion) > gc.MAX_PROMPT_CHARS:
                 errors.append(f"{label} 的 motion 太長")
-        line = shot.get("line")
-        if kind == "dialogue" and not (line or "").strip():
+        if kind == "dialogue" and not (shot.get("line") or "").strip():
             errors.append(f"{label} 是對話鏡頭，要有 line（台詞）")
-        if line and len(line) > MAX_LINE_CHARS:
-            errors.append(f"{label} 的台詞超過 {MAX_LINE_CHARS} 字，請拆成兩個鏡頭")
-        voice_id = shot.get("voice")
-        if voice_id is not None and (not isinstance(voice_id, str) or not ID_RE.match(voice_id)):
-            errors.append(f"{label} 的 voice 只能用小寫英數字和 _")
+    for label, background in card_backgrounds:
+        if background not in picture_ids:
+            errors.append(f"{label} 的 background「{background}」要是另一個非字卡鏡頭的 id（用它的關鍵幀當背景）")
     return errors, warnings
+
+
+def _validate_speech(shot, label, kind, errors, warnings):
+    line = shot.get("line")
+    if line is not None and not isinstance(line, str):
+        errors.append(f"{label} 的 line 要是文字")
+        line = None
+    if line and len(line) > MAX_LINE_CHARS:
+        errors.append(f"{label} 的台詞超過 {MAX_LINE_CHARS} 字，請拆成兩個鏡頭")
+    translation = shot.get("translation")
+    if translation is not None:
+        if not isinstance(translation, str) or len(translation) > MAX_LINE_CHARS:
+            errors.append(f"{label} 的 translation 要是 {MAX_LINE_CHARS} 字以內的文字")
+        elif kind != CARD and not (line or "").strip():
+            warnings.append(f"{label} 有 translation 但沒有 line，翻譯字幕不會出現")
+    speed = shot.get("speed")
+    if speed is not None and (not isinstance(speed, (int, float)) or not SPEED_RANGE[0] <= speed <= SPEED_RANGE[1]):
+        errors.append(f"{label} 的 speed（語速）要在 {SPEED_RANGE[0]}–{SPEED_RANGE[1]} 之間")
+    voice_id = shot.get("voice")
+    if voice_id is not None and (not isinstance(voice_id, str) or not ID_RE.match(voice_id)):
+        errors.append(f"{label} 的 voice 只能用小寫英數字和 _")
+
+
+def _validate_card(shot, label, errors):
+    phrase = shot.get("phrase")
+    if not isinstance(phrase, str) or not phrase.strip():
+        errors.append(f"{label} 是字卡，要有 phrase（主要文字）")
+    elif len(phrase) > MAX_CARD_TEXT:
+        errors.append(f"{label} 的 phrase 超過 {MAX_CARD_TEXT} 字")
+    for key, limit in (("note", MAX_CARD_TEXT), ("label", MAX_CARD_LABEL)):
+        value = shot.get(key)
+        if value is not None and (not isinstance(value, str) or len(value) > limit):
+            errors.append(f"{label} 的 {key} 要是 {limit} 字以內的文字")
 
 
 def require_valid(ep):
@@ -316,7 +359,7 @@ def keyframe_request(ep, index, shot, translate=None):
     the picker tab: SDXL/Pony get the character as a FaceID anchor and the pose as a ControlNet
     skeleton, and the scene library supplies the setting."""
     prompt = (shot.get("prompt") or "").strip()
-    if _has_cjk(prompt):
+    if compose.is_cjk_text(prompt):
         if translate is None:
             import translate_prompt
 
@@ -348,6 +391,7 @@ def keyframe_request(ep, index, shot, translate=None):
 def run_keyframes(ep, shots, *, force=False, ffmpeg, translate=None, gen=None, run=subprocess.run,
                   server_up=client.is_server_running):
     gen = gen or gc.gen_custom
+    shots = [(i, s) for i, s in shots if s["type"] != CARD]   # cards are drawn by ffmpeg, no keyframe
     if not server_up():
         raise gc.UsageError("ComfyUI 沒有在跑。先啟動它（或開 GUI，會自動啟動），再生關鍵幀")
     out_dir = ep.sub("keyframes")
@@ -397,7 +441,17 @@ def resolve_voice(ep, shot):
     return wav, text, False
 
 
+def voice_mode(line, transcript, emotion):
+    """How CosyVoice3 should speak a line. A line in a different language from the reference
+    recording (English lines, a Mandarin reference) goes through cross_lingual, which keeps the timbre
+    without trying to copy the recording's words; emotion instructions only apply otherwise."""
+    if compose.is_cjk_text(line) != compose.is_cjk_text(transcript):
+        return "cross_lingual"
+    return "instruct" if emotion else "zero_shot"
+
+
 def voice_items(ep, shots):
+    """One CosyVoice job item per shot with a line (cards included - their line is the reading)."""
     items, demo_used = [], False
     for _index, shot in shots:
         line = (shot.get("line") or "").strip()
@@ -406,13 +460,19 @@ def voice_items(ep, shots):
         wav, transcript, is_demo = resolve_voice(ep, shot)
         demo_used = demo_used or is_demo
         emotion = (shot.get("emotion") or "").strip()
+        mode = voice_mode(line, transcript, emotion)
+        if mode == "cross_lingual" and emotion:
+            print(f"[注意] {shot['id']}: 台詞和參考錄音不同語言，走跨語言配音，語氣「{emotion}」不會套用", flush=True)
         items.append({
             "id": shot["id"],
             "text": line,
             "out": ep.voice(shot["id"]),
             "prompt_wav": wav,
             "prompt_text": COSYVOICE_PROMPT_PREFIX + transcript,
-            "instruct": f"You are a helpful assistant. 请用{emotion}的语气说这句话。<|endofprompt|>" if emotion else None,
+            "mode": mode,
+            "instruct": f"You are a helpful assistant. 请用{emotion}的语气说这句话。<|endofprompt|>"
+                        if mode == "instruct" else None,
+            "speed": float(shot.get("speed", 1.0)),
         })
     return items, demo_used
 
@@ -562,7 +622,10 @@ def shot_plan(ep, shot, allow_preview=False):
     duration = float(shot["duration"])
     if voice:
         duration = max(duration, VOICE_LEAD_S + wav_seconds(voice) + VOICE_TAIL_S)
-    duration = compose.frame_exact(duration)
+    duration = round(compose.frame_exact(duration), 6)
+    if shot["type"] == CARD:
+        background = ep.keyframe(shot["background"]) if shot.get("background") else None
+        return {"card": True, "background": background, "voice": voice, "duration": duration}
     video = None
     if shot["type"] in MOVING_TYPES:
         if os.path.isfile(ep.motion(shot["id"])):
@@ -570,39 +633,68 @@ def shot_plan(ep, shot, allow_preview=False):
         elif allow_preview and os.path.isfile(ep.motion(shot["id"], preview=True)):
             video = ep.motion(shot["id"], preview=True)
     still = None if video else ep.keyframe(shot["id"])
-    return {"video": video, "still": still, "voice": voice, "duration": round(duration, 6),
+    return {"card": False, "video": video, "still": still, "voice": voice, "duration": duration,
             "camera": shot.get("camera") or "push_in"}
 
 
+def write_text_lines(ep, shot_id, kind, text, cjk_width, latin_width):
+    """Wrap text and write one file per line (drawtext draws each centred on its own width)."""
+    paths = []
+    for n, line in enumerate(compose.wrap_lines(text, cjk_width, latin_width)):
+        path = ep.text_file(shot_id, kind, n)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(line)
+        paths.append(path)
+    return paths
+
+
+def card_blocks(ep, shot):
+    blocks = []
+    for name in ("label", "phrase", "translation", "note"):
+        cjk_width, latin_width = compose.CARD_BLOCKS[name][2:]
+        blocks.append((name, write_text_lines(ep, shot["id"], name, shot.get(name) or "", cjk_width, latin_width)))
+    return blocks
+
+
 def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run):
-    plans = []
-    missing = []
+    plans, missing = [], []
     for shot in ep.shots:
         plan = shot_plan(ep, shot, allow_preview)
-        if plan["still"] and not os.path.isfile(plan["still"]):
+        picture = plan["background"] if plan["card"] else plan["still"]
+        if picture and not os.path.isfile(picture):
             missing.append(shot["id"])
         plans.append((shot, plan))
     if missing:
-        raise gc.UsageError(f"這些鏡頭沒有影片也沒有關鍵幀，無法組裝：{missing}")
-    if any((s.get("line") or "").strip() for s in ep.shots) and not font:
+        raise gc.UsageError(f"這些鏡頭沒有影片也沒有關鍵幀（字卡是背景鏡頭的關鍵幀），無法組裝：{missing}")
+    needs_text = any((s.get("line") or "").strip() or s["type"] == CARD for s in ep.shots)
+    if needs_text and not font:
         raise gc.UsageError("找不到中文字型（微軟正黑體），設定 DRAMA_FONT 指向一個 .ttf/.ttc")
     for sub in ("segments", "subs"):
         os.makedirs(ep.sub(sub), exist_ok=True)
     segments, total = [], 0.0
     for shot, plan in plans:
-        subtitle = None
-        line = (shot.get("line") or "").strip()
-        if line:
-            subtitle = ep.subtitle(shot["id"])
-            with open(subtitle, "w", encoding="utf-8") as f:
-                f.write(compose.wrap_subtitle(line))
-        source = "影片" if plan["video"] else f"靜態圖＋{plan['camera']}"
-        print(f"{shot['id']}: {plan['duration']:.2f}s，{source}{'，有配音' if plan['voice'] else ''}", flush=True)
-        run(compose.segment_command(
-            ffmpeg, out=ep.segment(shot["id"]), duration=plan["duration"], video=plan["video"], still=plan["still"],
-            camera=plan["camera"], voice=plan["voice"], voice_delay=VOICE_LEAD_S, subtitle_file=subtitle,
-            font=font), check=True)
-        segments.append(ep.segment(shot["id"]))
+        sid = shot["id"]
+        spoken = "，有配音" if plan["voice"] else ""
+        if plan["card"]:
+            print(f"{sid}: {plan['duration']:.2f}s，字卡{spoken}", flush=True)
+            cmd = compose.card_command(ffmpeg, out=ep.segment(sid), duration=plan["duration"],
+                                       blocks=card_blocks(ep, shot), font=font, background=plan["background"],
+                                       voice=plan["voice"], voice_delay=VOICE_LEAD_S)
+        else:
+            line = (shot.get("line") or "").strip()
+            subtitle = write_text_lines(ep, sid, "line", line, compose.SUBTITLE_CHARS_PER_LINE,
+                                        compose.SUBTITLE_LATIN_CHARS_PER_LINE) if line else []
+            translation = write_text_lines(ep, sid, "tr", shot.get("translation") or "",
+                                           compose.TRANSLATION_CHARS_PER_LINE,
+                                           compose.SUBTITLE_LATIN_CHARS_PER_LINE) if line else []
+            source = "影片" if plan["video"] else f"靜態圖＋{plan['camera']}"
+            print(f"{sid}: {plan['duration']:.2f}s，{source}{spoken}", flush=True)
+            cmd = compose.segment_command(
+                ffmpeg, out=ep.segment(sid), duration=plan["duration"], video=plan["video"], still=plan["still"],
+                camera=plan["camera"], voice=plan["voice"], voice_delay=VOICE_LEAD_S, subtitle_lines=subtitle,
+                translation_lines=translation, font=font)
+        run(cmd, check=True)
+        segments.append(ep.segment(sid))
         total += plan["duration"]
     # The concat demuxer resolves entries against the list file's folder, and on Windows it got that
     # folder wrong for a path mixing both slash styles - so it runs inside segments/ with bare names.
@@ -626,13 +718,14 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run):
 
 
 def print_plan(ep):
-    kinds = {"still": "靜態", "motion": "動態", "dialogue": "對話"}
+    kinds = {"still": "靜態", "motion": "動態", "dialogue": "對話", CARD: "字卡"}
     total = 0.0
     print(f"{ep.data.get('title', ep.name)}  |  checkpoint {ep.checkpoint}  |  tier {ep.tier}")
     for index, shot in enumerate(ep.shots):
         total += shot["duration"]
         who = shot.get("character") or "-"
-        line = f"「{shot['line']}」" if shot.get("line") else ""
+        text = shot.get("phrase") if shot["type"] == CARD else shot.get("line")
+        line = f"「{text}」" if text else ""
         print(f"  {shot['id']:<8} {kinds[shot['type']]}  {shot['duration']:>4.1f}s  {who:<8} "
               f"{shot.get('scene') or '-':<18} {line}")
     everything = select_shots(ep)
@@ -655,7 +748,8 @@ def print_status(ep):
         moving = shot["type"] in MOVING_TYPES
         prev = mark(ep.motion(sid, True)) if moving else " "
         final = mark(ep.motion(sid)) if moving else " "
-        print(f"{sid:<10} {mark(ep.keyframe(sid)):^5} {voice:^4} {prev:^4} {final:^4}")
+        keyframe = "－" if shot["type"] == CARD else mark(ep.keyframe(sid))
+        print(f"{sid:<10} {keyframe:^5} {voice:^4} {prev:^4} {final:^4}")
     print(f"成片：{ep.output() if os.path.isfile(ep.output()) else '（還沒組裝）'}")
 
 
