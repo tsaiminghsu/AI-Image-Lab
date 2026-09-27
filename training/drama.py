@@ -12,6 +12,12 @@ spoken line. Work files go to outputs/drama/<episode>/, so a stage can be re-run
     python training/drama.py assemble   training/episodes/ep01.json   # ffmpeg -> ep01.mp4
     python training/drama.py status     training/episodes/ep01.json
 
+Low resolution first, professional enhancement later: `keyframes --draft` (smaller, no face pass,
+redone by a plain `keyframes`), `motion --draft` (480x832 at full length and steps), then `export`
+copies the clips and stills to enhance/in/ for an external upscaler / frame interpolator, and
+whatever comes back in enhance/out/ under the same name wins at `assemble` (use --fps 48/60 when
+the clips were interpolated).
+
 Where each stage runs follows the cost report: keyframes and voice are free locally, only motion
 goes to the cloud, and motion is drafted cheaply before the full render. The safety guarantees are
 the existing ones, not new code: keyframes go through gc.plan_picker + gc.gen_custom, and motion
@@ -28,6 +34,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -70,8 +77,15 @@ ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 EPISODE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 FPS = compose.FPS
 KEYFRAME_SIZE = (768, 1344)     # SDXL bucket closest to 9:16, used when no pose skeleton sets the canvas
+KEYFRAME_DRAFT_SIZE = (576, 1024)     # exact 9:16, ~0.6 MP: a quick local draft, redone for the final
+KEYFRAME_DRAFT_POSE_SCALE = 0.75      # posed drafts shrink the skeleton canvas, keeping its aspect
 WAN_FINAL_SIZE = (704, 1280)
+WAN_DRAFT_SIZE = (480, 832)
 WAN_PREVIEW = cloud_video.WAN_PREVIEW_PORTRAIT
+MOTION_MODES = ("preview", "draft", "final")
+MOTION_SUFFIX = {"preview": "_preview", "draft": "_draft", "final": ""}
+OUTPUT_FPS_CHOICES = (24, 25, 30, 48, 50, 60)
+DEFAULT_OUTPUT_FPS = 24
 VOICE_LEAD_S = 0.25             # silence before a line starts
 VOICE_TAIL_S = 0.35             # and after it ends, before the cut
 DEFAULT_BGM_VOLUME = 0.18
@@ -84,6 +98,9 @@ WAN_FULL_MINUTES = 9.0
 WAN_FULL_FRAMES = 121
 COLD_START_MINUTES = 2.0
 PREVIEW_COST = 0.015
+# A draft is the final's length and steps at 480x832: its share of the latent tokens, which
+# overstates the saving slightly (attention grows faster than the token count) - an estimate.
+DRAFT_COST_RATIO = (WAN_DRAFT_SIZE[0] * WAN_DRAFT_SIZE[1]) / (WAN_FINAL_SIZE[0] * WAN_FINAL_SIZE[1])
 
 
 class Episode:
@@ -107,6 +124,10 @@ class Episode:
     def checkpoint(self):
         return self.data.get("checkpoint") or gc.DEFAULT_CUSTOM_CHECKPOINT
 
+    @property
+    def fps(self):
+        return self.data.get("fps", DEFAULT_OUTPUT_FPS)
+
     def shot_seed(self, index, shot):
         if shot.get("seed") is not None:
             return int(shot["seed"])
@@ -124,8 +145,14 @@ class Episode:
     def voice(self, shot_id):
         return self.sub("voice", f"{shot_id}.wav")
 
-    def motion(self, shot_id, preview=False):
-        return self.sub("motion", f"{shot_id}_preview.mp4" if preview else f"{shot_id}.mp4")
+    def keyframe_draft_marker(self, shot_id):
+        return self.sub("keyframes", f"{shot_id}.draft")
+
+    def motion(self, shot_id, mode="final"):
+        return self.sub("motion", f"{shot_id}{MOTION_SUFFIX[mode]}.mp4")
+
+    def enhanced(self, shot_id, ext):
+        return self.sub("enhance", "out", f"{shot_id}.{ext}")
 
     def text_file(self, shot_id, kind, n):
         return self.sub("subs", f"{shot_id}_{kind}_{n}.txt")
@@ -179,6 +206,8 @@ def validate_episode(ep):
     bgm = d.get("bgm")
     if bgm and not os.path.isfile(ep.resolve(bgm)):
         errors.append(f"找不到配樂檔：{ep.resolve(bgm)}")
+    if ep.fps not in OUTPUT_FPS_CHOICES:
+        errors.append(f"fps（成片影格率）只能是 {list(OUTPUT_FPS_CHOICES)}")
 
     shots = d.get("shots")
     if not isinstance(shots, list) or not shots:
@@ -340,21 +369,22 @@ def final_cost(frames):
     return RUNPOD_PER_HOUR / 60 * minutes
 
 
-def estimate(ep, shots, preview):
-    """(job count, estimated dollars) for sending these shots' motion in one batch."""
+def estimate(ep, shots, mode):
+    """(job count, estimated dollars) for sending these shots' motion in one batch in `mode`."""
     moving = [(i, s) for i, s in shots if s["type"] in MOVING_TYPES]
     if not moving:
         return 0, 0.0
     cold = RUNPOD_PER_HOUR / 60 * COLD_START_MINUTES
-    if preview:
+    if mode == "preview":
         return len(moving), cold + PREVIEW_COST * len(moving)
-    return len(moving), cold + sum(final_cost(frames_for(s["duration"])) for _i, s in moving)
+    ratio = DRAFT_COST_RATIO if mode == "draft" else 1.0
+    return len(moving), cold + ratio * sum(final_cost(frames_for(s["duration"])) for _i, s in moving)
 
 
 # --- keyframes --------------------------------------------------------------------------------
 
 
-def keyframe_request(ep, index, shot, translate=None):
+def keyframe_request(ep, index, shot, translate=None, draft=False):
     """Everything gen_custom needs for one shot's keyframe, resolved through plan_picker exactly like
     the picker tab: SDXL/Pony get the character as a FaceID anchor and the pose as a ControlNet
     skeleton, and the scene library supplies the setting."""
@@ -375,7 +405,13 @@ def keyframe_request(ep, index, shot, translate=None):
             f"鏡頭 {shot['id']}：角色「{plan.trigger}」還沒有 anchor 圖。先跑 "
             f"`generate_character.py anchors --character {plan.trigger}`"
         )
-    width, height = (None, None) if plan.pose_name else KEYFRAME_SIZE
+    if plan.pose_name:
+        width = height = None   # the skeleton's own canvas
+        if draft:
+            cw, ch = pose_skeletons.canvas_for(plan.pose_name)
+            width, height = _round16(cw * KEYFRAME_DRAFT_POSE_SCALE), _round16(ch * KEYFRAME_DRAFT_POSE_SCALE)
+    else:
+        width, height = KEYFRAME_DRAFT_SIZE if draft else KEYFRAME_SIZE
     return {
         "prompt": plan.prompt_body,
         "trigger": plan.trigger,
@@ -388,8 +424,14 @@ def keyframe_request(ep, index, shot, translate=None):
     }
 
 
-def run_keyframes(ep, shots, *, force=False, ffmpeg, translate=None, gen=None, run=subprocess.run,
+def _round16(value):
+    return int(round(value / 16)) * 16
+
+
+def run_keyframes(ep, shots, *, force=False, draft=False, ffmpeg, translate=None, gen=None, run=subprocess.run,
                   server_up=client.is_server_running):
+    """Generate keyframes. draft=True renders smaller with the face pass off and marks the result;
+    a later non-draft run regenerates marked drafts without needing --force."""
     gen = gen or gc.gen_custom
     shots = [(i, s) for i, s in shots if s["type"] != CARD]   # cards are drawn by ffmpeg, no keyframe
     if not server_up():
@@ -399,20 +441,29 @@ def run_keyframes(ep, shots, *, force=False, ffmpeg, translate=None, gen=None, r
     made = 0
     for index, shot in shots:
         final = ep.keyframe(shot["id"])
-        if os.path.isfile(final) and not force:
-            print(f"{shot['id']}: 已有關鍵幀，略過（--force 重生）", flush=True)
+        marker = ep.keyframe_draft_marker(shot["id"])
+        is_draft = os.path.isfile(marker)
+        if os.path.isfile(final) and not force and (draft or not is_draft):
+            print(f"{shot['id']}: 已有{'草稿' if is_draft else ''}關鍵幀，略過（--force 重生）", flush=True)
             continue
-        req = keyframe_request(ep, index, shot, translate=translate)
+        req = keyframe_request(ep, index, shot, translate=translate, draft=draft)
         for notice in req["notices"]:
             print(f"[注意] {shot['id']}: {notice}", flush=True)
-        print(f"{shot['id']}: 生成關鍵幀（seed {req['seed']}）", flush=True)
+        kind = "草稿關鍵幀" if draft else "關鍵幀"
+        print(f"{shot['id']}: 生成{kind}（seed {req['seed']}）", flush=True)
         stem = f"{shot['id']}_raw"
         gen(req["prompt"], "", ep.tier, req["trigger"], req["anchor_path"], out_dir, req["seed"], stem,
             client.IP_ADAPTER_WEIGHT, width=req["width"], height=req["height"],
+            use_facedetailer=False if draft else None,
             style_positive=gc.REALISTIC_STYLE, style_negative=gc.REALISTIC_NEGATIVE,
             checkpoint=ep.checkpoint, lora_strength=0.0, hq=True, pose_name=req["pose_name"])
         raw = os.path.join(out_dir, f"{stem}.png")
         run(compose.normalise_command(ffmpeg, raw, final), check=True)
+        if draft:
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write(f"{req['width']}x{req['height']}\n")
+        elif is_draft:
+            os.remove(marker)
         made += 1
     return made
 
@@ -523,7 +574,7 @@ def wav_seconds(path):
 # --- motion -----------------------------------------------------------------------------------
 
 
-def motion_specs(ep, shots, preview):
+def motion_specs(ep, shots, mode):
     """One CloudJobSpec per motion/dialogue shot. The first frame is the shot's keyframe at Wan's
     size; the prompt is the raw motion text plus the tier - the worker adds the character's
     description and the safety negatives."""
@@ -532,16 +583,16 @@ def motion_specs(ep, shots, preview):
         if shot["type"] not in MOVING_TYPES:
             continue
         frames = frames_for(shot["duration"])
-        if preview:
+        if mode == "preview":
             params = dict(WAN_PREVIEW)
             params["frames"] = min(frames, WAN_PREVIEW["frames"])
         else:
-            params = {"width": WAN_FINAL_SIZE[0], "height": WAN_FINAL_SIZE[1], "frames": frames,
-                      "steps": client.WAN_STEPS}
+            width, height = WAN_DRAFT_SIZE if mode == "draft" else WAN_FINAL_SIZE
+            params = {"width": width, "height": height, "frames": frames, "steps": client.WAN_STEPS}
         params.update(fps=FPS, cfg=client.WAN_CFG)
         gc.check_wan_params(params["width"], params["height"], params["frames"], params["fps"], params["steps"],
                             params["cfg"], client.WAN_DEFAULT_MODEL)
-        stem = os.path.splitext(os.path.basename(ep.motion(shot["id"], preview)))[0]
+        stem = os.path.splitext(os.path.basename(ep.motion(shot["id"], mode)))[0]
         specs.append(cloud_video.CloudJobSpec(
             stem=stem, prompt=(shot.get("motion") or shot.get("prompt") or "").strip(),
             image_path=ep.wan_input(shot["id"]), trigger=shot.get("character") or None,
@@ -550,22 +601,23 @@ def motion_specs(ep, shots, preview):
     return specs
 
 
-def run_motion(ep, shots, *, preview, force=False, yes=False, provider="runpod", timeout=None, ffmpeg,
+def run_motion(ep, shots, *, mode, force=False, yes=False, provider="runpod", timeout=None, ffmpeg,
                run=subprocess.run, run_batch=None, confirm=input, stdin_isatty=None):
     run_batch = run_batch or cloud_video.run_cloud_batch
     moving = [(i, s) for i, s in shots if s["type"] in MOVING_TYPES]
     if not force:
-        moving = [(i, s) for i, s in moving if not os.path.isfile(ep.motion(s["id"], preview))]
+        moving = [(i, s) for i, s in moving if not os.path.isfile(ep.motion(s["id"], mode))]
     if not moving:
         print("沒有需要送出的動態鏡頭（都已經有了，--force 重送）", flush=True)
         return []
     missing = [s["id"] for _i, s in moving if not os.path.isfile(ep.keyframe(s["id"]))]
     if missing:
         raise gc.UsageError(f"這些鏡頭還沒有關鍵幀，先跑 keyframes：{missing}")
-    specs = motion_specs(ep, moving, preview)
-    count, dollars = estimate(ep, moving, preview)
-    mode = "預覽（480×832、12 步）" if preview else "正式版（704×1280）"
-    print(f"將送出 {count} 支{mode}到 {provider}，估計約 ${dollars:.2f}（未實測）", flush=True)
+    specs = motion_specs(ep, moving, mode)
+    count, dollars = estimate(ep, moving, mode)
+    label = {"preview": "預覽（480×832、12 步）", "draft": "低解析度完整版（480×832，之後交給外部工具加強）",
+             "final": "正式版（704×1280）"}[mode]
+    print(f"將送出 {count} 支{label}到 {provider}，估計約 ${dollars:.2f}（未實測）", flush=True)
     if not yes:
         isatty = sys.stdin.isatty() if stdin_isatty is None else stdin_isatty
         if not isatty:
@@ -578,7 +630,7 @@ def run_motion(ep, shots, *, preview, force=False, yes=False, provider="runpod",
                                       *WAN_FINAL_SIZE), check=True)
     results = run_batch(provider, "video_wan_i2v", specs, out_dir=ep.sub("motion"), max_wait_s=timeout,
                         on_status=cloud_video.print_status)
-    log_motion(ep, results, preview)
+    log_motion(ep, results, mode)
     failed = 0
     for spec, outcome in results:
         if isinstance(outcome, cloud_video.CloudResult):
@@ -591,7 +643,7 @@ def run_motion(ep, shots, *, preview, force=False, yes=False, provider="runpod",
     return results
 
 
-def log_motion(ep, results, preview):
+def log_motion(ep, results, mode):
     """Append each job to motion/jobs.json, with a billed-cost floor from the execution seconds
     (the cold start and idle seconds are billed too, so the real figure is higher)."""
     path = ep.sub("motion", "jobs.json")
@@ -600,7 +652,7 @@ def log_motion(ep, results, preview):
         with open(path, encoding="utf-8") as f:
             entries = json.load(f)
     for spec, outcome in results:
-        entry = {"stem": spec.stem, "preview": preview, "seed": spec.seed, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        entry = {"stem": spec.stem, "mode": mode, "seed": spec.seed, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
         if isinstance(outcome, cloud_video.CloudResult):
             entry.update(job_id=outcome.job_id, queue_s=outcome.queue_s, execution_s=outcome.execution_s,
                          cost_floor=round((outcome.execution_s or 0) / 3600 * RUNPOD_PER_HOUR, 4))
@@ -615,26 +667,35 @@ def log_motion(ep, results, preview):
 # --- assemble ---------------------------------------------------------------------------------
 
 
-def shot_plan(ep, shot, allow_preview=False):
-    """What the assembler will use for one shot: picture source, voice, duration."""
+def shot_plan(ep, shot, allow_preview=False, fps=None):
+    """What the assembler will use for one shot: picture source, voice, duration. A clip or still
+    that came back from an external enhancer (enhance/out/) beats everything generated here."""
+    fps = fps or ep.fps
+    sid = shot["id"]
     has_line = bool((shot.get("line") or "").strip())
-    voice = ep.voice(shot["id"]) if has_line and os.path.isfile(ep.voice(shot["id"])) else None
+    voice = ep.voice(sid) if has_line and os.path.isfile(ep.voice(sid)) else None
     duration = float(shot["duration"])
     if voice:
         duration = max(duration, VOICE_LEAD_S + wav_seconds(voice) + VOICE_TAIL_S)
-    duration = round(compose.frame_exact(duration), 6)
+    duration = round(compose.frame_exact(duration, fps), 6)
     if shot["type"] == CARD:
         background = ep.keyframe(shot["background"]) if shot.get("background") else None
         return {"card": True, "background": background, "voice": voice, "duration": duration}
-    video = None
+    video = source = None
     if shot["type"] in MOVING_TYPES:
-        if os.path.isfile(ep.motion(shot["id"])):
-            video = ep.motion(shot["id"])
-        elif allow_preview and os.path.isfile(ep.motion(shot["id"], preview=True)):
-            video = ep.motion(shot["id"], preview=True)
-    still = None if video else ep.keyframe(shot["id"])
+        candidates = [("增強版", ep.enhanced(sid, "mp4")), ("正式版", ep.motion(sid)), ("低解析度版", ep.motion(sid, "draft"))]
+        if allow_preview:
+            candidates.append(("預覽", ep.motion(sid, "preview")))
+        for label, path in candidates:
+            if os.path.isfile(path):
+                video, source = path, label
+                break
+    still = None
+    if not video:
+        enhanced = ep.enhanced(sid, "png")
+        still, source = (enhanced, "增強靜態圖") if os.path.isfile(enhanced) else (ep.keyframe(sid), "靜態圖")
     return {"card": False, "video": video, "still": still, "voice": voice, "duration": duration,
-            "camera": shot.get("camera") or "push_in"}
+            "camera": shot.get("camera") or "push_in", "source": source}
 
 
 def write_text_lines(ep, shot_id, kind, text, cjk_width, latin_width):
@@ -656,10 +717,11 @@ def card_blocks(ep, shot):
     return blocks
 
 
-def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run):
+def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, fps=None):
+    fps = fps or ep.fps
     plans, missing = [], []
     for shot in ep.shots:
-        plan = shot_plan(ep, shot, allow_preview)
+        plan = shot_plan(ep, shot, allow_preview, fps)
         picture = plan["background"] if plan["card"] else plan["still"]
         if picture and not os.path.isfile(picture):
             missing.append(shot["id"])
@@ -679,7 +741,7 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run):
             print(f"{sid}: {plan['duration']:.2f}s，字卡{spoken}", flush=True)
             cmd = compose.card_command(ffmpeg, out=ep.segment(sid), duration=plan["duration"],
                                        blocks=card_blocks(ep, shot), font=font, background=plan["background"],
-                                       voice=plan["voice"], voice_delay=VOICE_LEAD_S)
+                                       voice=plan["voice"], voice_delay=VOICE_LEAD_S, fps=fps)
         else:
             line = (shot.get("line") or "").strip()
             subtitle = write_text_lines(ep, sid, "line", line, compose.SUBTITLE_CHARS_PER_LINE,
@@ -687,12 +749,12 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run):
             translation = write_text_lines(ep, sid, "tr", shot.get("translation") or "",
                                            compose.TRANSLATION_CHARS_PER_LINE,
                                            compose.SUBTITLE_LATIN_CHARS_PER_LINE) if line else []
-            source = "影片" if plan["video"] else f"靜態圖＋{plan['camera']}"
+            source = plan["source"] if plan["video"] else f"{plan['source']}＋{plan['camera']}"
             print(f"{sid}: {plan['duration']:.2f}s，{source}{spoken}", flush=True)
             cmd = compose.segment_command(
                 ffmpeg, out=ep.segment(sid), duration=plan["duration"], video=plan["video"], still=plan["still"],
                 camera=plan["camera"], voice=plan["voice"], voice_delay=VOICE_LEAD_S, subtitle_lines=subtitle,
-                translation_lines=translation, font=font)
+                translation_lines=translation, font=font, fps=fps)
         run(cmd, check=True)
         segments.append(ep.segment(sid))
         total += plan["duration"]
@@ -710,8 +772,55 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run):
                                 float(ep.data.get("bgm_volume", DEFAULT_BGM_VOLUME))), check=True)
     else:
         run(compose.concat_command(ffmpeg, "concat.txt", out), check=True, cwd=seg_dir)
-    print(f"完成：{out}（{total:.1f} 秒，{len(segments)} 個鏡頭）", flush=True)
+    print(f"完成：{out}（{total:.1f} 秒，{len(segments)} 個鏡頭，{fps} fps）", flush=True)
     return out, total
+
+
+ENHANCE_README = """這些是 {name} 要交給外部工具加強的素材。
+
+- in/ 裡的 .mp4：動態鏡頭，拿去補幀（例如 Topaz Video AI、RIFE、FILM）和放大（例如 Topaz、SeedVR2）
+- in/ 裡的 .png：靜態鏡頭的關鍵幀，可以用圖片放大工具處理到 1080×1920 以上
+- 處理完用「相同檔名」存到 out/（影片 .mp4、圖片 .png），影片長度不要改
+- 補幀到 48 或 60 fps 的話，組裝時加 --fps 48（或 60），或在分鏡表寫 "fps": 48，否則會被降回 {fps} fps
+- 再跑 drama.py assemble，out/ 裡有的檔案會優先使用
+- 要營利時，確認加強工具的授權允許商業使用
+"""
+
+
+def run_export(ep, copy=shutil.copy2):
+    """Copy each shot's best picture to enhance/in/<id>.mp4|png for an external enhancer and write a
+    manifest. Clips: final, else low-res draft, else preview. Stills: the keyframe. Cards are drawn
+    at assembly and have nothing to enhance."""
+    in_dir, out_dir = ep.sub("enhance", "in"), ep.sub("enhance", "out")
+    os.makedirs(in_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
+    manifest, missing = [], []
+    for shot in ep.shots:
+        sid = shot["id"]
+        if shot["type"] == CARD:
+            continue
+        if shot["type"] in MOVING_TYPES:
+            options = [(ep.motion(sid, m), m) for m in ("final", "draft", "preview")] + [(ep.keyframe(sid), "keyframe")]
+        else:
+            options = [(ep.keyframe(sid), "keyframe")]
+        found = next(((path, kind) for path, kind in options if os.path.isfile(path)), None)
+        if not found:
+            missing.append(sid)
+            continue
+        src, kind = found
+        dst = os.path.join(in_dir, f"{sid}{os.path.splitext(src)[1]}")
+        copy(src, dst)
+        manifest.append({"id": sid, "from": kind, "file": os.path.basename(dst), "duration": shot["duration"]})
+    with open(ep.sub("enhance", "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump({"episode": ep.name, "fps": ep.fps, "items": manifest}, f, ensure_ascii=False, indent=2)
+    with open(ep.sub("enhance", "README.txt"), "w", encoding="utf-8") as f:
+        f.write(ENHANCE_README.format(name=ep.name, fps=ep.fps))
+    for item in manifest:
+        print(f"{item['id']}: {item['file']}（來源：{item['from']}）", flush=True)
+    if missing:
+        print(f"[注意] 這些鏡頭還沒有素材，沒有匯出：{missing}", flush=True)
+    print(f"已匯出到 {in_dir}；加強後放到 {out_dir}（同檔名）", flush=True)
+    return manifest
 
 
 # --- plan / status ----------------------------------------------------------------------------
@@ -729,10 +838,12 @@ def print_plan(ep):
         print(f"  {shot['id']:<8} {kinds[shot['type']]}  {shot['duration']:>4.1f}s  {who:<8} "
               f"{shot.get('scene') or '-':<18} {line}")
     everything = select_shots(ep)
-    n_prev, cost_prev = estimate(ep, everything, preview=True)
-    n_final, cost_final = estimate(ep, everything, preview=False)
-    print(f"共 {len(ep.shots)} 個鏡頭，約 {total:.1f} 秒（配音較長的鏡頭會自動延長）")
-    print(f"雲端估計（未實測）：預覽 {n_prev} 支約 ${cost_prev:.2f}；正式版 {n_final} 支約 ${cost_final:.2f}")
+    n_prev, cost_prev = estimate(ep, everything, "preview")
+    _n, cost_draft = estimate(ep, everything, "draft")
+    n_final, cost_final = estimate(ep, everything, "final")
+    print(f"共 {len(ep.shots)} 個鏡頭，約 {total:.1f} 秒（配音較長的鏡頭會自動延長），成片 {ep.fps} fps")
+    print(f"雲端估計（未實測）：預覽 {n_prev} 支約 ${cost_prev:.2f}；低解析度完整版約 ${cost_draft:.2f}；"
+          f"正式版 {n_final} 支約 ${cost_final:.2f}")
     print(f"工作資料夾：{ep.work_dir}")
 
 
@@ -741,15 +852,22 @@ def print_status(ep):
         # Both symbols exist in cp950, the default Traditional Chinese console codepage; a check mark doesn't.
         return "●" if os.path.isfile(path) else "○"
 
-    print(f"{'鏡頭':<8} 關鍵幀 配音 預覽 正式")
+    print(f"{'鏡頭':<8} 關鍵幀 配音 預覽 低解析 正式 增強")
     for shot in ep.shots:
         sid = shot["id"]
         voice = mark(ep.voice(sid)) if (shot.get("line") or "").strip() else " "
         moving = shot["type"] in MOVING_TYPES
-        prev = mark(ep.motion(sid, True)) if moving else " "
+        prev = mark(ep.motion(sid, "preview")) if moving else " "
+        draft = mark(ep.motion(sid, "draft")) if moving else " "
         final = mark(ep.motion(sid)) if moving else " "
-        keyframe = "－" if shot["type"] == CARD else mark(ep.keyframe(sid))
-        print(f"{sid:<10} {keyframe:^5} {voice:^4} {prev:^4} {final:^4}")
+        if shot["type"] == CARD:
+            keyframe, enhanced = "－", " "
+        else:
+            keyframe = "△" if os.path.isfile(ep.keyframe_draft_marker(sid)) else mark(ep.keyframe(sid))
+            enhanced_path = ep.enhanced(sid, "mp4" if moving else "png")
+            enhanced = mark(enhanced_path)
+        print(f"{sid:<10} {keyframe:^5} {voice:^4} {prev:^4} {draft:^5} {final:^4} {enhanced:^4}")
+    print("△＝草稿關鍵幀（跑 keyframes 不加 --draft 會重生）")
     print(f"成片：{ep.output() if os.path.isfile(ep.output()) else '（還沒組裝）'}")
 
 
@@ -770,6 +888,8 @@ def build_parser():
     kf = add("keyframes", "generate each shot's 9:16 keyframe with the local ComfyUI")
     kf.add_argument("--shots", help="comma-separated shot ids (default: all)")
     kf.add_argument("--force", action="store_true", help="regenerate shots that already have one")
+    kf.add_argument("--draft", action="store_true",
+                    help="quick low-res drafts without the face pass; a later run without --draft redoes them")
     vo = add("voice", "speak every dialogue line with CosyVoice3 (stop ComfyUI first)")
     vo.add_argument("--shots")
     vo.add_argument("--force", action="store_true")
@@ -777,6 +897,8 @@ def build_parser():
     mo = add("motion", "send motion/dialogue shots to Wan 2.2 on the cloud as one batch")
     mode = mo.add_mutually_exclusive_group(required=True)
     mode.add_argument("--preview", action="store_true", help="cheap 480x832 drafts (about $0.015 each, estimated)")
+    mode.add_argument("--draft", action="store_true",
+                      help="480x832 at full length and steps, to hand to an external upscaler/interpolator")
     mode.add_argument("--final", action="store_true", help="704x1280 renders for the finished episode")
     mo.add_argument("--shots")
     mo.add_argument("--force", action="store_true")
@@ -786,6 +908,9 @@ def build_parser():
     asm = add("assemble", "cut every shot together with subtitles, voice and music into one 1080x1920 mp4")
     asm.add_argument("--allow-preview", action="store_true",
                      help="use a preview clip where there is no final one (rough cut)")
+    asm.add_argument("--fps", type=int, choices=OUTPUT_FPS_CHOICES,
+                     help="output frame rate (default: the episode's fps, else 24); 48/60 keeps interpolated clips smooth")
+    add("export", "copy clips and stills to enhance/in/ for an external upscaler or frame interpolator")
     return p
 
 
@@ -807,18 +932,23 @@ def main(argv=None):
         print_status(ep)
         return 0
     if args.cmd == "keyframes":
-        run_keyframes(ep, select_shots(ep, args.shots), force=args.force, ffmpeg=_need_ffmpeg())
+        run_keyframes(ep, select_shots(ep, args.shots), force=args.force, draft=args.draft, ffmpeg=_need_ffmpeg())
         return 0
     if args.cmd == "voice":
         run_voice(ep, select_shots(ep, args.shots), force=args.force, ignore_comfyui=args.ignore_comfyui)
         return 0
     if args.cmd == "motion":
-        results = run_motion(ep, select_shots(ep, args.shots, types=MOVING_TYPES), preview=args.preview,
+        mode = "preview" if args.preview else "draft" if args.draft else "final"
+        results = run_motion(ep, select_shots(ep, args.shots, types=MOVING_TYPES), mode=mode,
                              force=args.force, yes=args.yes, provider=args.provider, timeout=args.timeout,
                              ffmpeg=_need_ffmpeg())
         return 1 if any(not isinstance(o, cloud_video.CloudResult) for _s, o in results) else 0
     if args.cmd == "assemble":
-        run_assemble(ep, allow_preview=args.allow_preview, ffmpeg=_need_ffmpeg(), font=compose.find_font())
+        run_assemble(ep, allow_preview=args.allow_preview, ffmpeg=_need_ffmpeg(), font=compose.find_font(),
+                     fps=args.fps)
+        return 0
+    if args.cmd == "export":
+        run_export(ep)
         return 0
     return 2
 

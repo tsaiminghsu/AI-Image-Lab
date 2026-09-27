@@ -167,15 +167,18 @@ def test_frames_for_snaps_to_wan_lengths(seconds, frames):
 def test_estimate_matches_the_cost_report_model():
     ep = drama.load_episode(EXAMPLE)
     shots = drama.select_shots(ep)
-    n, preview = drama.estimate(ep, shots, preview=True)
-    n_final, final = drama.estimate(ep, shots, preview=False)
+    n, preview = drama.estimate(ep, shots, "preview")
+    n_final, final = drama.estimate(ep, shots, "final")
     cold = drama.RUNPOD_PER_HOUR / 60 * drama.COLD_START_MINUTES
     assert n == n_final == 6
     assert preview == pytest.approx(cold + 6 * drama.PREVIEW_COST)
     # a 3 s shot is 19 of the full render's 31 latent frames: 9 min * 19/31 at $1.10/h
     assert drama.final_cost(73) == pytest.approx(1.10 / 60 * 9 * 19 / 31)
     assert final == pytest.approx(cold + 6 * drama.final_cost(73))
-    assert drama.estimate(ep, [(0, ep.shots[0])], preview=False) == (0, 0.0)
+    assert drama.estimate(ep, [(0, ep.shots[0])], "final") == (0, 0.0)
+    _n, draft = drama.estimate(ep, shots, "draft")
+    assert draft == pytest.approx(cold + drama.DRAFT_COST_RATIO * 6 * drama.final_cost(73))
+    assert drama.DRAFT_COST_RATIO == pytest.approx(480 * 832 / (704 * 1280))
 
 
 # --- keyframes --------------------------------------------------------------------------------
@@ -317,12 +320,12 @@ def test_run_voice_needs_the_cosyvoice_venv(monkeypatch):
 # --- motion -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("preview", [True, False])
-def test_motion_specs_are_valid_wan_jobs_carrying_the_tier(preview):
+@pytest.mark.parametrize("mode", drama.MOTION_MODES)
+def test_motion_specs_are_valid_wan_jobs_carrying_the_tier(mode):
     ep = drama.load_episode(EXAMPLE)
-    specs = drama.motion_specs(ep, drama.select_shots(ep), preview)
+    specs = drama.motion_specs(ep, drama.select_shots(ep), mode)
     assert [s.stem for s in specs] == [
-        f"{sid}{'_preview' if preview else ''}" for sid in ("s02", "s03", "s04", "s05", "s06", "s07")
+        f"{sid}{drama.MOTION_SUFFIX[mode]}" for sid in ("s02", "s03", "s04", "s05", "s06", "s07")
     ]
     for spec in specs:
         p = spec.params
@@ -334,10 +337,12 @@ def test_motion_specs_are_valid_wan_jobs_carrying_the_tier(preview):
         assert spec.image_path.endswith("_wan.png")
         assert "safety" not in spec.prompt.lower()  # raw motion text; the worker adds negatives
     first = specs[0].params
-    if preview:
-        assert (first["width"], first["height"], first["steps"], first["frames"]) == (480, 832, 12, 49)
-    else:
-        assert (first["width"], first["height"], first["frames"]) == (704, 1280, 73)
+    expected = {
+        "preview": (480, 832, 12, 49),
+        "draft": (480, 832, client.WAN_STEPS, 73),  # low-res, but the full length and steps
+        "final": (704, 1280, client.WAN_STEPS, 73),
+    }[mode]
+    assert (first["width"], first["height"], first["steps"], first["frames"]) == expected
 
 
 def test_motion_is_never_sent_without_confirmation(tmp_path):
@@ -349,7 +354,7 @@ def test_motion_is_never_sent_without_confirmation(tmp_path):
         drama.run_motion(
             ep,
             drama.select_shots(ep),
-            preview=True,
+            mode="preview",
             ffmpeg="ffmpeg",
             run=Recorder(),
             run_batch=lambda *a, **k: sent.append(a),
@@ -359,7 +364,7 @@ def test_motion_is_never_sent_without_confirmation(tmp_path):
     result = drama.run_motion(
         ep,
         drama.select_shots(ep),
-        preview=True,
+        mode="preview",
         ffmpeg="ffmpeg",
         run=Recorder(),
         run_batch=lambda *a, **k: sent.append(a),
@@ -373,7 +378,7 @@ def test_run_motion_batches_missing_shots_and_logs_cost(tmp_path):
     ep = drama.load_episode(EXAMPLE)
     for _i, shot in drama.select_shots(ep):
         touch(ep.keyframe(shot["id"]))
-    touch(ep.motion("s02", preview=True))  # already drafted
+    touch(ep.motion("s02", "preview"))  # already drafted
     seen = {}
 
     def fake_batch(provider, job_type, specs, **kwargs):
@@ -401,7 +406,7 @@ def test_run_motion_batches_missing_shots_and_logs_cost(tmp_path):
 
     run = Recorder()
     results = drama.run_motion(
-        ep, drama.select_shots(ep), preview=True, yes=True, ffmpeg="ffmpeg", run=run, run_batch=fake_batch
+        ep, drama.select_shots(ep), mode="preview", yes=True, ffmpeg="ffmpeg", run=run, run_batch=fake_batch
     )
     assert seen["provider"] == "runpod" and seen["job_type"] == "video_wan_i2v"
     assert [s.stem for s in seen["specs"]] == [
@@ -426,7 +431,7 @@ def test_run_motion_needs_keyframes_first():
         drama.run_motion(
             ep,
             drama.select_shots(ep),
-            preview=True,
+            mode="preview",
             yes=True,
             ffmpeg="ffmpeg",
             run=Recorder(),
@@ -443,9 +448,9 @@ def test_shot_plan_prefers_final_clip_and_stretches_for_long_lines():
     plan = drama.shot_plan(ep, s04)
     assert plan["video"] is None and plan["still"] == ep.keyframe("s04") and plan["duration"] == 3.0
 
-    touch(ep.motion("s04", preview=True))
+    touch(ep.motion("s04", "preview"))
     assert drama.shot_plan(ep, s04)["video"] is None
-    assert drama.shot_plan(ep, s04, allow_preview=True)["video"] == ep.motion("s04", preview=True)
+    assert drama.shot_plan(ep, s04, allow_preview=True)["video"] == ep.motion("s04", "preview")
     touch(ep.motion("s04"))
     assert drama.shot_plan(ep, s04, allow_preview=True)["video"] == ep.motion("s04")
 
@@ -613,7 +618,7 @@ def test_example_is_not_mutated_by_the_suite():
     before = example_data()
     ep = drama.load_episode(EXAMPLE)
     drama.validate_episode(ep)
-    drama.motion_specs(ep, drama.select_shots(ep), preview=True)
+    drama.motion_specs(ep, drama.select_shots(ep), "preview")
     assert example_data() == copy.deepcopy(before)
 
 
@@ -793,3 +798,117 @@ def test_card_command_plain_background_and_font_required():
     assert "pcm_s16le" in cmd
     with pytest.raises(ValueError):
         compose.card_command("ffmpeg", out="c.mkv", duration=3.0, blocks=[], font=None)
+
+
+# --- low resolution first, external enhancement later ----------------------------------------
+
+
+def test_draft_keyframes_are_smaller_and_keep_the_skeleton_aspect():
+    ep = drama.load_episode(EXAMPLE)
+    req = drama.keyframe_request(ep, 3, ep.shots[3], draft=True)  # close-up, no pose
+    assert (req["width"], req["height"]) == drama.KEYFRAME_DRAFT_SIZE
+    req = drama.keyframe_request(ep, 1, ep.shots[1], draft=True)  # sitting_on_a_chair skeleton
+    assert (req["width"], req["height"]) == (624, 912)
+    import pose_skeletons
+
+    pose_skeletons.check_canvas(req["pose_name"], req["width"], req["height"])  # no ControlNet crop
+
+
+def test_draft_keyframes_skip_the_face_pass_and_are_redone_by_a_final_run():
+    ep = drama.load_episode(EXAMPLE)
+    calls = []
+
+    def fake_gen(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_weight, **kw):
+        calls.append((filename, kw["use_facedetailer"], kw["width"]))
+        touch(os.path.join(out_dir, f"{filename}.png"))
+
+    shots = drama.select_shots(ep, "s02,s04")
+    drama.run_keyframes(ep, shots, draft=True, ffmpeg="ffmpeg", gen=fake_gen, run=touch_last, server_up=lambda: True)
+    assert calls == [("s02_raw", False, 624), ("s04_raw", False, 576)]
+    assert os.path.isfile(ep.keyframe_draft_marker("s02"))
+
+    calls.clear()
+    drama.run_keyframes(ep, shots, draft=True, ffmpeg="ffmpeg", gen=fake_gen, run=touch_last, server_up=lambda: True)
+    assert calls == []  # drafts exist; another draft run leaves them
+
+    drama.run_keyframes(ep, shots, ffmpeg="ffmpeg", gen=fake_gen, run=touch_last, server_up=lambda: True)
+    assert calls == [("s02_raw", None, None), ("s04_raw", None, 768)]  # the final run redoes drafts
+    assert not os.path.isfile(ep.keyframe_draft_marker("s02"))
+
+    calls.clear()
+    drama.run_keyframes(ep, shots, draft=True, ffmpeg="ffmpeg", gen=fake_gen, run=touch_last, server_up=lambda: True)
+    assert calls == []  # a draft run never overwrites a finished keyframe
+
+
+def touch_last(cmd, **kwargs):
+    touch(cmd[-1])
+
+
+def test_assembly_prefers_enhanced_then_final_then_draft():
+    ep = drama.load_episode(EXAMPLE)
+    s04 = ep.shots[3]
+    touch(ep.motion("s04", "draft"))
+    plan = drama.shot_plan(ep, s04)
+    assert plan["video"] == ep.motion("s04", "draft") and plan["source"] == "低解析度版"
+    touch(ep.motion("s04"))
+    assert drama.shot_plan(ep, s04)["video"] == ep.motion("s04")
+    touch(ep.enhanced("s04", "mp4"))
+    plan = drama.shot_plan(ep, s04)
+    assert plan["video"] == ep.enhanced("s04", "mp4") and plan["source"] == "增強版"
+
+    s01 = ep.shots[0]
+    assert drama.shot_plan(ep, s01)["still"] == ep.keyframe("s01")
+    touch(ep.enhanced("s01", "png"))
+    assert drama.shot_plan(ep, s01)["still"] == ep.enhanced("s01", "png")
+
+
+def test_assemble_at_48_fps_renders_every_segment_at_48():
+    ep = drama.load_episode(EXAMPLE)
+    for shot in ep.shots:
+        touch(ep.keyframe(shot["id"]))
+    run = Recorder()
+    _out, total = drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run, fps=48)
+    for cmd, _ in run.calls[:-1]:
+        joined = " ".join(cmd)
+        assert cmd[cmd.index("-r") + 1] == "48" and "fps=48" in joined
+    plan = drama.shot_plan(ep, ep.shots[0], fps=48)
+    assert plan["duration"] * 48 == pytest.approx(round(plan["duration"] * 48))
+
+
+def test_episode_fps_is_validated_and_used(tmp_path):
+    data = example_data()
+    data["fps"] = 60
+    ep = write_episode(tmp_path, data)
+    assert drama.validate_episode(ep)[0] == [] and ep.fps == 60
+    data["fps"] = 29
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="ep_bad_fps"))
+    assert any("fps" in e for e in errors)
+
+
+def test_export_copies_the_best_picture_per_shot_and_explains_the_round_trip():
+    ep = drama.load_episode(JV)
+    touch(ep.motion("s02", "draft"), b"draft")
+    touch(ep.motion("s03"), b"final")
+    touch(ep.motion("s03", "draft"), b"draft")
+    touch(ep.keyframe("s04"), b"png")
+    manifest = drama.run_export(ep)
+    by_id = {m["id"]: m for m in manifest}
+    assert set(by_id) == {"s02", "s03", "s04"}  # cards are drawn at assembly; the rest have nothing yet
+    assert by_id["s02"]["from"] == "draft" and by_id["s03"]["from"] == "final"
+    assert by_id["s04"]["from"] == "keyframe" and by_id["s04"]["file"] == "s04.png"
+    with open(ep.sub("enhance", "in", "s03.mp4"), "rb") as f:
+        assert f.read() == b"final"
+    with open(ep.sub("enhance", "README.txt"), encoding="utf-8") as f:
+        readme = f.read()
+    assert "out/" in readme and "--fps 48" in readme
+    assert os.path.isdir(ep.sub("enhance", "out"))
+
+
+def test_cli_accepts_the_draft_modes_and_fps():
+    parser = drama.build_parser()
+    assert parser.parse_args(["motion", EXAMPLE, "--draft"]).draft
+    assert parser.parse_args(["keyframes", EXAMPLE, "--draft"]).draft
+    assert parser.parse_args(["assemble", EXAMPLE, "--fps", "48"]).fps == 48
+    with pytest.raises(SystemExit):
+        parser.parse_args(["assemble", EXAMPLE, "--fps", "29"])
+    assert parser.parse_args(["export", EXAMPLE]).cmd == "export"
