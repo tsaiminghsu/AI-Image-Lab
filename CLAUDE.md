@@ -30,6 +30,7 @@
   - `.venv-dev`：只有 pytest / ruff / requests / fastapi（無 torch），給 `check.ps1` 和 CI 用。
     刻意分開是因為 `worker/Dockerfile` 從 `comfyui-requirements.lock.txt` 安裝，而那個 lock 是
     `uv pip freeze` 產生的——dev 工具裝進去遲早會被 freeze 進 worker image。
+  - `Kokoro/.venv`：短劇配音用的 Kokoro-82M（CPU 版 torch，約 1 GB），由 `training/kokoro_runner.py` 使用。
   - `SadTalker/.venv`、`MuseTalk/.venv`：第三方 clone 各自的 Python 3.10 環境（共約 13 GB），
     跟上面兩個互不相容。
 
@@ -121,14 +122,16 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   （沒有帳號），worker image 也還沒 build 過。改 workflow 模板後可用
   `training/validate_workflow_nodes.py` 對本機 ComfyUI 做結構檢查。
 - AI 短劇（2026-09-27）：`training/drama.py`（分鏡表 → 關鍵幀 → 配音 → 雲端動態 → 9:16 成片）＋
-  `drama_compose.py`（ffmpeg 指令）＋`cosyvoice_runner.py`（在 CosyVoice 自己的 venv 跑）。分鏡表在
-  `training/episodes/`，工作檔在 `outputs/drama/`。組裝在本機用假素材實跑過；關鍵幀、配音、雲端動態
-  還沒實跑，也還沒有對嘴。「一次送多支」只有 `cloud_video.run_cloud_batch` 一個實作。
+  `drama_compose.py`（ffmpeg 指令）＋`kokoro_runner.py`／`cosyvoice_runner.py`（各在自己的 venv 跑）。分鏡表在
+  `training/episodes/`，工作檔在 `outputs/drama/`。JV 第一集的 Z-Image 草稿關鍵幀和 Kokoro 配音實跑過，
+  組成 39 秒有聲粗剪；雲端動態還沒實跑，也還沒有對嘴。成片音量在 `assemble` 量過後調到 −14 LUFS。
+  「一次送多支」只有 `cloud_video.run_cloud_batch` 一個實作。
   語言學習短劇（JV Tutor Corner）用 `translation`／`speed` 欄位和 `card` 字卡鏡頭，範例
   `jv_en_ep01_cafe_order.json`；英文台詞配中文參考錄音會走跨語言模式（帶口音）。
   低解析度優先：`keyframes --draft`、`motion --draft`、`export`（enhance/in → 外部工具 → enhance/out）、
   `assemble --fps 48`。
-  `"commercial": true` 的集數只准用可營利元件（Z-Image 關鍵幀、Wan、RIFE、有 consent 紀錄的聲音），
+  `"commercial": true` 的集數只准用可營利元件（Z-Image 關鍵幀、Wan、RIFE、Kokoro 內建聲音或有 consent
+  紀錄的 CosyVoice 聲音），
   示範聲音要 `--allow-demo` 才能用。
 - GUI 有 7 個分頁，其中「🎯 圖片選擇生圖」是點縮圖（人物／姿勢／場景）取代打 prompt：
   `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是

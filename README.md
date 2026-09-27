@@ -2044,7 +2044,7 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py plan training\episodes\exampl
 # 2. 關鍵幀：每個鏡頭一張 9:16 圖（本機 ComfyUI，要先啟動）
 ComfyUI\.venv\Scripts\python.exe training\drama.py keyframes training\episodes\example_cafe_reunion.json
 
-# 3. 配音：CosyVoice3（本機；先關掉 ComfyUI 讓出 8 GB 顯卡）
+# 3. 配音：Kokoro 內建聲音在 CPU 上跑，ComfyUI 可以開著；CosyVoice3 複製聲音才要先關掉 ComfyUI 讓出顯卡
 powershell -ExecutionPolicy Bypass -File training\stop_comfyui.ps1
 ComfyUI\.venv\Scripts\python.exe training\drama.py voice training\episodes\example_cafe_reunion.json
 
@@ -2052,7 +2052,7 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py voice training\episodes\examp
 ComfyUI\.venv\Scripts\python.exe training\drama.py motion training\episodes\example_cafe_reunion.json --preview
 ComfyUI\.venv\Scripts\python.exe training\drama.py motion training\episodes\example_cafe_reunion.json --final
 
-# 5. 組裝：運鏡、字幕、配音、配樂 → outputs\drama\example_cafe_reunion\example_cafe_reunion.mp4
+# 5. 組裝：運鏡、字幕、配音、配樂、音量標準化 → outputs\drama\example_cafe_reunion\example_cafe_reunion.mp4
 ComfyUI\.venv\Scripts\python.exe training\drama.py assemble training\episodes\example_cafe_reunion.json
 
 # 隨時看每個鏡頭做到哪
@@ -2076,7 +2076,7 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 | 關鍵幀 | Z-Image Turbo（`"checkpoint": "z_image_turbo"`，含文字編碼器與 VAE） | Apache-2.0 |
 | 動態鏡頭 | Wan 2.2（RunPod） | Apache-2.0 |
 | 補幀 | RIFE（`interpolate`，本機 ComfyUI） | MIT（程式與權重） |
-| 配音 | CosyVoice3，**只用有授權紀錄的聲音** | Apache-2.0 |
+| 配音 | Kokoro-82M 內建聲音，或 CosyVoice3 複製**有授權紀錄的聲音** | Apache-2.0（兩者） |
 | 放大、字幕、組裝 | ffmpeg（lanczos） | — |
 
 - Pony 衍生模型、FaceID／InsightFace、OpenPose ControlNet、UltraSharp 都限制營利，commercial 集數不能用
@@ -2128,7 +2128,7 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py interpolate training\episodes
 | `checkpoint` | 生關鍵幀的模型，預設 `cyberrealistic_pony`。SDXL／Pony 才會鎖臉、吃姿勢骨架 |
 | `tier` | `safe` 或 `suggestive`，跟其他流程同一套安全負面詞 |
 | `seed` | 起始 seed，第 n 個鏡頭用 seed + 10n（鏡頭也能自己指定 `seed`） |
-| `voices` | `{角色: 聲音 id}`，見下方「角色聲音」；沒設定的角色用示範聲音 |
+| `voices` | `{角色: 聲音}`：Kokoro 內建聲音 `{"engine": "kokoro", "voice": "af_heart"}`，或 CosyVoice 聲音 id，見下方「角色聲音」 |
 | `bgm`、`bgm_volume` | 配樂檔（路徑相對於分鏡表）與音量（預設 0.18）；要用有授權的音樂 |
 | `shots` | 鏡頭清單，欄位如下 |
 
@@ -2142,7 +2142,7 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py interpolate training\episodes
 | `framing` | `close`、`medium`、`wide` |
 | `prompt` | 關鍵幀的畫面描述；英文最好，中文會自動翻譯 |
 | `motion` | 動態鏡頭要發生的動作（Wan 中英文都可以） |
-| `line`、`emotion` | 台詞（字幕＋配音）與語氣（例如「驚訝」，交給 CosyVoice3 的語氣控制） |
+| `line`、`emotion` | 台詞（字幕＋配音）與語氣（例如「驚訝」，交給 CosyVoice3 的語氣控制；Kokoro 沒有語氣控制，會略過） |
 | `camera` | 靜態鏡頭的運鏡：`push_in`、`pull_out`、`pan_left`、`pan_right`、`static` |
 | `duration` | 秒數 1.5–5（Wan 最長約 5 秒）；配音比較長時會自動延長 |
 | `translation` | 翻譯字幕，顯示在台詞下方、字比較小（語言學習用） |
@@ -2161,7 +2161,26 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py interpolate training\episodes
 
 ### 角色聲音
 
-`training/voices/<聲音 id>/voice.json`（整個 `training/voices/` 已 gitignore，錄音不會進版控）：
+聲音有兩種，可以在同一集混用（`voices` 對應角色，鏡頭也能用自己的 `voice` 換掉）：
+
+**Kokoro 內建聲音（不用錄音）**：[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) 的權重和聲音包都是
+Apache-2.0，可以營利，也不涉及真人授權。分鏡表直接寫 `{"engine": "kokoro", "voice": "af_heart"}`。目前只裝了
+美式（`af_`／`am_` 開頭）和英式（`bf_`／`bm_`）英文共 28 個聲音；品質較好的是 `af_heart`（女）和
+`am_michael`、`am_fenrir`、`am_puck`（男）。在 CPU 上跑，不佔顯卡。一次性安裝（獨立 venv，不進版控）：
+
+```powershell
+uv venv Kokoro\.venv --python 3.11
+uv pip install --python Kokoro\.venv\Scripts\python.exe torch --index-url https://download.pytorch.org/whl/cpu
+uv pip install --python Kokoro\.venv\Scripts\python.exe kokoro soundfile "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+```
+
+- venv 約 970 MB；模型第一次配音時自動下載約 314 MB 到 `Kokoro\hf_home`
+- `en_core_web_sm` 要先裝：少了它 Kokoro 會在執行時用 pip 下載，但 uv 建的 venv 沒有 pip
+- Kokoro 沒有語氣控制，`emotion` 會被略過；`speed` 有效
+- 模型卡寫明部分訓練資料是大廠封閉 TTS 產生的合成語音。權重本身是 Apache-2.0，但那些資料的使用條款我們
+  無法查證，這是剩下的一點風險
+
+**CosyVoice3 複製聲音（要本人同意的錄音）**：`training/voices/<聲音 id>/voice.json`（整個 `training/voices/` 已 gitignore，錄音不會進版控）：
 
 ```json
 {
@@ -2177,6 +2196,9 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py interpolate training\episodes
 
 沒設定聲音的角色預設**不會**配音；只是內部測試時才加 `voice --allow-demo` 改用 CosyVoice 內建的示範
 聲音（中國口音女聲）。標示 `commercial` 的集數加了也不能用示範聲音。
+
+**成片音量**：`assemble` 最後會量整集的響度（ebur128），用一個固定增益加限幅器調到 −14 LUFS（短影音平台
+播放的音量），只在最後一次編碼時做。Kokoro 的原始輸出約 −26 LUFS，不調的話會比別人的影片小聲約 12 dB。
 
 **英文台詞**：台詞跟參考錄音語言不同時（英文台詞、中文錄音），會自動改用 CosyVoice 的跨語言模式，
 保留音色但**會帶口音**，而且 `emotion` 不會套用。做語言教學時，英文角色請用一段**母語者本人同意**的
@@ -2202,7 +2224,8 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py interpolate training\episodes
   1080×1920、24 fps 的影片，字幕、運鏡、影片補格都正常
 - 英文情境短劇也用假素材實跑過組裝：12 個鏡頭 39.2 秒，字卡（標籤／句型／翻譯／說明逐行置中）、
   雙語字幕、中英混排斷行都正常
-- **關鍵幀、配音、雲端動態鏡頭還沒實跑**：前兩個要用顯卡，雲端要 RunPod 帳號
+- **配音實跑過（Kokoro）**：JV 第一集 8 句在 CPU 上配好，組成 39.0 秒的有聲粗剪，成片 −14.3 LUFS
+- **雲端動態鏡頭還沒實跑**：要 RunPod 帳號
 
 ## 資料夾結構
 

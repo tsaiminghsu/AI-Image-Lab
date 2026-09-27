@@ -6,7 +6,7 @@ spoken line. Work files go to outputs/drama/<episode>/, so a stage can be re-run
 
     python training/drama.py plan       training/episodes/ep01.json   # validate + cost estimate
     python training/drama.py keyframes  training/episodes/ep01.json   # local ComfyUI (GPU)
-    python training/drama.py voice      training/episodes/ep01.json   # CosyVoice3 (GPU, ComfyUI stopped)
+    python training/drama.py voice      training/episodes/ep01.json   # Kokoro (CPU) / CosyVoice3 (GPU)
     python training/drama.py motion     training/episodes/ep01.json --preview   # RunPod, cheap drafts
     python training/drama.py motion     training/episodes/ep01.json --final     # RunPod, 704x1280
     python training/drama.py assemble   training/episodes/ep01.json   # ffmpeg -> ep01.mp4
@@ -32,7 +32,8 @@ card on screen - drawn by ffmpeg over a blurred keyframe of another shot, so it 
 
 An episode marked "commercial": true may only use components licensed for commercial use: a
 keyframe checkpoint from COMMERCIAL_CHECKPOINTS (Z-Image Turbo, Apache-2.0), Wan 2.2 (Apache-2.0),
-RIFE (MIT), CosyVoice3 (Apache-2.0) with voices whose speakers consented - never the demo voice.
+RIFE (MIT), and for voices either Kokoro-82M's built-in voices (Apache-2.0) or CosyVoice3
+(Apache-2.0) cloning a recording whose speaker consented - never the demo voice.
 """
 
 import argparse
@@ -63,6 +64,20 @@ COSYVOICE_RUNNER = os.path.join(TRAINING_DIR, "cosyvoice_runner.py")
 DEMO_VOICE_WAV = "asset/zero_shot_prompt.wav"
 DEMO_VOICE_TEXT = "希望你以后能够做的比我还好呦。"
 COSYVOICE_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
+KOKORO_DIR = os.environ.get("KOKORO_DIR") or os.path.join(gc.PROJECT_ROOT, "Kokoro")
+KOKORO_RUNNER = os.path.join(TRAINING_DIR, "kokoro_runner.py")
+KOKORO_REPO = "hexgrad/Kokoro-82M"
+KOKORO = "kokoro"
+COSYVOICE = "cosyvoice"
+# Kokoro-82M's built-in English voices - weights and voice packs are Apache-2.0 (checked 2026-09-27),
+# so no speaker consent is involved. Only American (a*) and British (b*) English are installed; the
+# other languages need extra G2P packages in Kokoro\.venv.
+KOKORO_VOICES = frozenset({
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova",
+    "af_river", "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+    "am_michael", "am_onyx", "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+})
 # Keyframe checkpoints whose licences allow commercial use (checked 2026-09-27: Z-Image Turbo's
 # repository - transformer, text encoder and VAE - is Apache-2.0). The Pony-derived and SDXL
 # checkpoints here, FaceID/InsightFace, the OpenPose ControlNet and UltraSharp all restrict it.
@@ -220,11 +235,12 @@ def validate_episode(ep):
         warnings.append(f"checkpoint「{ckpt}」沒有 FaceID／ControlNet，角色不會鎖臉、姿勢只用文字描述")
     voices = d.get("voices") or {}
     if not isinstance(voices, dict):
-        errors.append("voices 要是 {角色: 聲音 id} 的物件")
+        errors.append("voices 要是 {角色: 聲音} 的物件")
         voices = {}
-    for character, voice_id in voices.items():
-        if not isinstance(voice_id, str) or not ID_RE.match(voice_id):
-            errors.append(f"voices.{character} 的聲音 id 只能用小寫英數字和 _")
+    for character, spec in voices.items():
+        problem = voice_spec_error(spec)
+        if problem:
+            errors.append(f"voices.{character}：{problem}")
     bgm = d.get("bgm")
     if bgm and not os.path.isfile(ep.resolve(bgm)):
         errors.append(f"找不到配樂檔：{ep.resolve(bgm)}")
@@ -360,9 +376,10 @@ def _validate_speech(shot, label, kind, errors, warnings):
     speed = shot.get("speed")
     if speed is not None and (not isinstance(speed, (int, float)) or not SPEED_RANGE[0] <= speed <= SPEED_RANGE[1]):
         errors.append(f"{label} 的 speed（語速）要在 {SPEED_RANGE[0]}–{SPEED_RANGE[1]} 之間")
-    voice_id = shot.get("voice")
-    if voice_id is not None and (not isinstance(voice_id, str) or not ID_RE.match(voice_id)):
-        errors.append(f"{label} 的 voice 只能用小寫英數字和 _")
+    spec = shot.get("voice")
+    problem = voice_spec_error(spec) if spec is not None else None
+    if problem:
+        errors.append(f"{label} 的 voice：{problem}")
 
 
 def _validate_card(shot, label, errors):
@@ -375,6 +392,19 @@ def _validate_card(shot, label, errors):
         value = shot.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit):
             errors.append(f"{label} 的 {key} 要是 {limit} 字以內的文字")
+
+
+def voice_spec_error(spec):
+    """What is wrong with a voice entry (validation text), or None. A voice is either a CosyVoice
+    voice id - a consented recording in training/voices/<id>/ - or a Kokoro built-in voice written
+    inline as {"engine": "kokoro", "voice": "af_heart"}."""
+    if isinstance(spec, str):
+        return None if ID_RE.match(spec) else "聲音 id 只能用小寫英數字和 _"
+    if isinstance(spec, dict) and spec.get("engine") == KOKORO and set(spec) == {"engine", "voice"}:
+        if spec["voice"] in KOKORO_VOICES:
+            return None
+        return f"Kokoro 內建聲音沒有「{spec['voice']}」；可用的英文聲音：{', '.join(sorted(KOKORO_VOICES))}"
+    return '聲音要是聲音 id，或 Kokoro 內建聲音 {"engine": "kokoro", "voice": "af_heart"}'
 
 
 def require_valid(ep):
@@ -584,8 +614,21 @@ def run_pick(ep, shot_id, seed):
 # --- voice ------------------------------------------------------------------------------------
 
 
+def voice_spec(ep, shot):
+    """A shot's voice: its own `voice`, else the episode's voices[character] (None when neither)."""
+    return shot.get("voice") or (ep.data.get("voices") or {}).get(shot.get("character") or "") or None
+
+
+def is_kokoro(spec):
+    return isinstance(spec, dict) and spec.get("engine") == KOKORO
+
+
+def voice_label(spec):
+    return f"kokoro:{spec['voice']}" if is_kokoro(spec) else spec
+
+
 def resolve_voice(ep, shot, allow_demo=False):
-    """(prompt_wav, prompt_transcript, is_demo) for a shot's speaker.
+    """(prompt_wav, prompt_transcript, is_demo) for a shot's CosyVoice speaker.
 
     A voice lives in training/voices/<id>/voice.json:
         {"prompt_wav": "prompt.wav", "prompt_text": "exact transcript of that recording",
@@ -593,7 +636,9 @@ def resolve_voice(ep, shot, allow_demo=False):
     The consent block records that the speaker agreed to have the voice cloned; a voice without it
     is refused. The CosyVoice demo prompt is only used when allow_demo is set, and never for an
     episode marked commercial."""
-    voice_id = shot.get("voice") or (ep.data.get("voices") or {}).get(shot.get("character") or "")
+    voice_id = voice_spec(ep, shot)
+    if is_kokoro(voice_id):
+        raise gc.UsageError(f"鏡頭 {shot['id']}：用的是 Kokoro 內建聲音，沒有錄音可以複製")
     if not voice_id:
         if ep.data.get("commercial") is True:
             raise gc.UsageError(f"鏡頭 {shot['id']}：這集標示 commercial，不能用示範聲音，請設定已授權的聲音")
@@ -619,21 +664,24 @@ def resolve_voice(ep, shot, allow_demo=False):
 
 
 def voice_status(ep):
-    """[(voice id or None, [character or shot ids], state)] for every voice the episode's lines use."""
-    voices = ep.data.get("voices") or {}
+    """[(voice label or None, [character or shot ids], state)] for every voice the episode's lines use."""
     groups = {}
     for shot in ep.shots:
         if not (shot.get("line") or "").strip():
             continue
-        voice_id = shot.get("voice") or voices.get(shot.get("character") or "")
+        spec = voice_spec(ep, shot)
         who = shot.get("character") or shot["id"]
-        groups.setdefault(voice_id, [])
-        if who not in groups[voice_id]:
-            groups[voice_id].append(who)
+        entry = groups.setdefault(voice_label(spec) if spec else None, (spec, []))
+        if who not in entry[1]:
+            entry[1].append(who)
     out = []
-    for voice_id, who in groups.items():
+    for label, (voice_id, who) in groups.items():
         if not voice_id:
             state = "沒有設定（只能用 --allow-demo 的示範聲音）"
+        elif is_kokoro(voice_id):
+            state = "Kokoro 內建聲音（Apache-2.0，不需要錄音授權）"
+            if not kokoro_python():
+                state += f"；Kokoro 還沒安裝（{KOKORO_DIR}\\.venv）"
         else:
             probe = {"id": "-", "voice": voice_id}
             try:
@@ -641,7 +689,7 @@ def voice_status(ep):
                 state = "已設定、有授權紀錄"
             except gc.UsageError as exc:
                 state = str(exc).replace("鏡頭 -：", "")
-        out.append((voice_id, who, state))
+        out.append((label, who, state))
     return out
 
 
@@ -655,15 +703,23 @@ def voice_mode(line, transcript, emotion):
 
 
 def voice_items(ep, shots, allow_demo=False):
-    """One CosyVoice job item per shot with a line (cards included - their line is the reading)."""
+    """One job item per shot with a line (cards included - their line is the reading); `engine` says
+    which runner speaks it."""
     items, demo_used = [], False
     for _index, shot in shots:
         line = (shot.get("line") or "").strip()
         if not line:
             continue
+        emotion = (shot.get("emotion") or "").strip()
+        spec = voice_spec(ep, shot)
+        if is_kokoro(spec):
+            if emotion:
+                print(f"[注意] {shot['id']}: Kokoro 內建聲音沒有語氣控制，語氣「{emotion}」不會套用", flush=True)
+            items.append({"id": shot["id"], "text": line, "out": ep.voice(shot["id"]), "engine": KOKORO,
+                          "voice": spec["voice"], "speed": float(shot.get("speed", 1.0))})
+            continue
         wav, transcript, is_demo = resolve_voice(ep, shot, allow_demo)
         demo_used = demo_used or is_demo
-        emotion = (shot.get("emotion") or "").strip()
         mode = voice_mode(line, transcript, emotion)
         if mode == "cross_lingual" and emotion:
             print(f"[注意] {shot['id']}: 台詞和參考錄音不同語言，走跨語言配音，語氣「{emotion}」不會套用", flush=True)
@@ -671,6 +727,7 @@ def voice_items(ep, shots, allow_demo=False):
             "id": shot["id"],
             "text": line,
             "out": ep.voice(shot["id"]),
+            "engine": COSYVOICE,
             "prompt_wav": wav,
             "prompt_text": COSYVOICE_PROMPT_PREFIX + transcript,
             "mode": mode,
@@ -681,41 +738,67 @@ def voice_items(ep, shots, allow_demo=False):
     return items, demo_used
 
 
-def cosyvoice_python():
+def _venv_python(folder):
     for rel in ((".venv", "Scripts", "python.exe"), (".venv", "bin", "python")):
-        path = os.path.join(COSYVOICE_DIR, *rel)
+        path = os.path.join(folder, *rel)
         if os.path.isfile(path):
             return path
     return None
 
 
+def cosyvoice_python():
+    return _venv_python(COSYVOICE_DIR)
+
+
+def kokoro_python():
+    return _venv_python(KOKORO_DIR)
+
+
 def run_voice(ep, shots, *, force=False, ignore_comfyui=False, allow_demo=False, run=subprocess.run,
               server_up=client.is_server_running):
-    python = cosyvoice_python()
-    if not python:
-        raise gc.UsageError(f"找不到 CosyVoice 的 venv（{COSYVOICE_DIR}\\.venv），配音需要它")
-    if server_up() and not ignore_comfyui:
-        raise gc.UsageError("ComfyUI 正在跑，會跟 CosyVoice 搶 8 GB 顯卡。先跑 training\\stop_comfyui.ps1，"
-                            "或加 --ignore-comfyui")
+    """Speak every line that has no audio yet. Kokoro runs on the CPU, so only CosyVoice lines need
+    ComfyUI out of the way. Both environments are checked before either runs, so a missing one
+    doesn't leave a half-voiced episode."""
     items, demo_used = voice_items(ep, shots, allow_demo)
     if not force:
         items = [it for it in items if not os.path.isfile(it["out"])]
     if not items:
         print("沒有需要配音的台詞（都已經有了，--force 重配）", flush=True)
         return 0
+    kokoro = [it for it in items if it["engine"] == KOKORO]
+    cosy = [it for it in items if it["engine"] == COSYVOICE]
+    kokoro_py = kokoro_python() if kokoro else None
+    if kokoro and not kokoro_py:
+        raise gc.UsageError(f"找不到 Kokoro 的 venv（{KOKORO_DIR}\\.venv），內建聲音配音需要它；安裝方式見 README")
+    cosy_py = cosyvoice_python() if cosy else None
+    if cosy and not cosy_py:
+        raise gc.UsageError(f"找不到 CosyVoice 的 venv（{COSYVOICE_DIR}\\.venv），配音需要它")
+    if cosy and server_up() and not ignore_comfyui:
+        raise gc.UsageError("ComfyUI 正在跑，會跟 CosyVoice 搶 8 GB 顯卡。先跑 training\\stop_comfyui.ps1，"
+                            "或加 --ignore-comfyui")
     if demo_used:
         print("[注意] 有角色沒有設定聲音，改用 CosyVoice 的示範聲音——只能內部測試，不能公開", flush=True)
     os.makedirs(ep.sub("voice"), exist_ok=True)
-    job = ep.sub("voice", "job.json")
-    with open(job, "w", encoding="utf-8") as f:
-        json.dump({"model_dir": COSYVOICE_MODEL_DIR, "items": items}, f, ensure_ascii=False, indent=2)
-    print(f"配音 {len(items)} 句（CosyVoice3）...", flush=True)
-    # CosyVoice logs Simplified Chinese; on a cp950 console a strict stdout would crash on it.
+    # Both runners log non-ASCII text; on a cp950 console a strict stdout would crash on it.
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
-    run([python, COSYVOICE_RUNNER, job], cwd=COSYVOICE_DIR, check=True, env=env)
+    if kokoro:
+        job = ep.sub("voice", "kokoro_job.json")
+        with open(job, "w", encoding="utf-8") as f:
+            json.dump({"repo_id": KOKORO_REPO, "items": kokoro}, f, ensure_ascii=False, indent=2)
+        print(f"配音 {len(kokoro)} 句（Kokoro，CPU）...", flush=True)
+        # The model and voice packs download into Kokoro\hf_home, so the whole install stays in one folder.
+        # Windows without developer mode can't make the hub cache's symlinks; it copies instead and says so.
+        run([kokoro_py, KOKORO_RUNNER, job], cwd=KOKORO_DIR, check=True,
+            env=dict(env, HF_HOME=os.path.join(KOKORO_DIR, "hf_home"), HF_HUB_DISABLE_SYMLINKS_WARNING="1"))
+    if cosy:
+        job = ep.sub("voice", "job.json")
+        with open(job, "w", encoding="utf-8") as f:
+            json.dump({"model_dir": COSYVOICE_MODEL_DIR, "items": cosy}, f, ensure_ascii=False, indent=2)
+        print(f"配音 {len(cosy)} 句（CosyVoice3）...", flush=True)
+        run([cosy_py, COSYVOICE_RUNNER, job], cwd=COSYVOICE_DIR, check=True, env=env)
     missing = [it["id"] for it in items if not os.path.isfile(it["out"])]
     if missing:
-        raise gc.UsageError(f"CosyVoice 結束了但這些鏡頭沒有音檔：{missing}")
+        raise gc.UsageError(f"配音結束了但這些鏡頭沒有音檔：{missing}")
     return len(items)
 
 
@@ -926,16 +1009,29 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, f
     with open(os.path.join(seg_dir, "concat.txt"), "w", encoding="utf-8") as f:
         f.write(compose.concat_list(segments, base_dir=seg_dir))
     out = ep.output()
+    body = ep.sub("segments", "body.mkv")
+    run(compose.concat_command(ffmpeg, "concat.txt", body, final=False), check=True, cwd=seg_dir)
     bgm = ep.data.get("bgm")
     if bgm:
-        body = ep.sub("segments", "body.mkv")
-        run(compose.concat_command(ffmpeg, "concat.txt", body, final=False), check=True, cwd=seg_dir)
-        run(compose.bgm_command(ffmpeg, body, ep.resolve(bgm), out, total,
+        mixed = ep.sub("segments", "mixed.mkv")
+        run(compose.bgm_command(ffmpeg, body, ep.resolve(bgm), mixed, total,
                                 float(ep.data.get("bgm_volume", DEFAULT_BGM_VOLUME))), check=True)
+        body = mixed
+    measured = measure_loudness(ffmpeg, body, run)
+    audio_filter = compose.loudness_filter(measured)
+    if audio_filter:
+        print(f"音量：{measured:.1f} LUFS → {compose.LOUDNESS_TARGET:.0f} LUFS", flush=True)
     else:
-        run(compose.concat_command(ffmpeg, "concat.txt", out), check=True, cwd=seg_dir)
+        print("[注意] 量不到音量（整集沒有聲音？），成片音量不調整", flush=True)
+    run(compose.finish_command(ffmpeg, body, out, audio_filter), check=True)
     print(f"完成：{out}（{total:.1f} 秒，{len(segments)} 個鏡頭，{fps} fps）", flush=True)
     return out, total
+
+
+def measure_loudness(ffmpeg, path, run=subprocess.run):
+    result = run(compose.loudness_command(ffmpeg, path), check=True, capture_output=True, text=True,
+                 encoding="utf-8", errors="replace")
+    return compose.integrated_loudness(getattr(result, "stderr", None) or "")
 
 
 def run_interpolate(ep, shots, *, force=False, submit=None, upload=None, server_up=client.is_server_running):
@@ -1107,10 +1203,11 @@ def build_parser():
     pk = add("pick", "promote a candidate keyframe and record its seed in the episode file")
     pk.add_argument("--shot", required=True)
     pk.add_argument("--seed", type=int, required=True)
-    vo = add("voice", "speak every dialogue line with CosyVoice3 (stop ComfyUI first)")
+    vo = add("voice", "speak every dialogue line: Kokoro built-in voices (CPU) or CosyVoice3 (stop ComfyUI first)")
     vo.add_argument("--shots")
     vo.add_argument("--force", action="store_true")
-    vo.add_argument("--ignore-comfyui", action="store_true", help="run even though ComfyUI is up")
+    vo.add_argument("--ignore-comfyui", action="store_true",
+                    help="run CosyVoice even though ComfyUI is up (Kokoro never needs the GPU)")
     vo.add_argument("--allow-demo", action="store_true",
                     help="internal tests only: use CosyVoice's demo voice for characters without a consented voice")
     mo = add("motion", "send motion/dialogue shots to Wan 2.2 on the cloud as one batch")

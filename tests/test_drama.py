@@ -9,6 +9,8 @@ and subtitle where the timing says.
 import copy
 import json
 import os
+import re
+import subprocess
 import wave
 
 import pytest
@@ -307,7 +309,7 @@ def test_run_voice_refuses_while_comfyui_holds_the_gpu(monkeypatch):
     monkeypatch.setattr(drama, "cosyvoice_python", lambda: "/cosy/python")
     ep = drama.load_episode(EXAMPLE)
     with pytest.raises(gc.UsageError, match="stop_comfyui"):
-        drama.run_voice(ep, drama.select_shots(ep), server_up=lambda: True)
+        drama.run_voice(ep, drama.select_shots(ep), server_up=lambda: True, allow_demo=True)
 
 
 def test_run_voice_writes_one_job_for_the_whole_episode(monkeypatch):
@@ -332,7 +334,7 @@ def test_run_voice_needs_the_cosyvoice_venv(monkeypatch):
     monkeypatch.setattr(drama, "cosyvoice_python", lambda: None)
     ep = drama.load_episode(EXAMPLE)
     with pytest.raises(gc.UsageError, match="CosyVoice"):
-        drama.run_voice(ep, drama.select_shots(ep), server_up=lambda: False)
+        drama.run_voice(ep, drama.select_shots(ep), server_up=lambda: False, allow_demo=True)
 
 
 # --- motion -----------------------------------------------------------------------------------
@@ -487,7 +489,7 @@ def test_run_assemble_cuts_every_shot_and_concatenates(tmp_path):
     run = Recorder()
     out, total = drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
     assert out == ep.output()
-    assert len(run.calls) == len(ep.shots) + 1  # one per shot + concat, no bgm
+    assert len(run.calls) == len(ep.shots) + 3  # one per shot + concat, measure, finish; no bgm
     assert total == pytest.approx(sum(s["duration"] for s in ep.shots))
     with open(ep.text_file("s05", "line", 0), encoding="utf-8") as f:
         assert f.read() == "好久不見，你一點都沒變。"
@@ -510,8 +512,10 @@ def test_run_assemble_mixes_music_when_the_episode_has_it(tmp_path):
         touch(ep.keyframe(shot["id"]))
     run = Recorder()
     drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
-    last = run.calls[-1][0]
-    assert str(bgm) in last and "volume=0.100" in " ".join(last) and last[-1] == ep.output()
+    mix, measure, finish = (c for c, _ in run.calls[-3:])
+    assert str(bgm) in mix and "volume=0.100" in " ".join(mix) and mix[-1] == ep.sub("segments", "mixed.mkv")
+    assert ep.sub("segments", "mixed.mkv") in measure and "ebur128" in measure  # loudness of the mix
+    assert finish[finish.index("-i") + 1] == ep.sub("segments", "mixed.mkv") and finish[-1] == ep.output()
 
 
 def test_run_assemble_refuses_missing_pictures_and_missing_font():
@@ -719,14 +723,38 @@ def test_voice_mode(line, transcript, emotion, mode):
     assert drama.voice_mode(line, transcript, emotion) == mode
 
 
-def test_jv_voice_items_use_the_consented_english_voices_and_read_cards_slowly():
+JV_COSYVOICE_VOICES = {"xinyi": "jv_customer_en", "taeoh": "jv_barista_en"}
+
+
+def jv_cosyvoice_episode(tmp_path):
+    """The JV episode as if it cloned consented recordings instead of using Kokoro's voices."""
+    data = jv_data()
+    data["voices"] = dict(JV_COSYVOICE_VOICES)
+    return write_episode(tmp_path, data, name="jv_cosy")
+
+
+def test_jv_voice_items_use_kokoro_voices_and_read_cards_slowly():
     ep = drama.load_episode(JV)
+    items, demo = drama.voice_items(ep, drama.select_shots(ep))
+    assert demo is False
+    by_id = {it["id"]: it for it in items}
+    assert set(by_id) == {"s03", "s04", "c05", "s06", "s07", "c08", "c09", "s11"}
+    assert all(it["engine"] == drama.KOKORO for it in items)
+    assert {by_id[i]["voice"] for i in ("s03", "s06", "c08")} == {"am_michael"}  # the barista
+    assert {by_id[i]["voice"] for i in ("s04", "c05", "s07", "c09", "s11")} == {"af_heart"}  # the customer
+    assert by_id["c05"]["speed"] == 0.85 and by_id["s03"]["speed"] == 1.0
+    assert by_id["c05"]["text"] == "Can I get a medium latte, please?"
+
+
+def test_jv_with_consented_cosyvoice_voices_clones_them_and_reads_cards_slowly(tmp_path):
+    ep = jv_cosyvoice_episode(tmp_path)
     make_voice("jv_customer_en", "Hello, this is a sample of my voice for English lessons.")
     make_voice("jv_barista_en", "Good morning, this recording is for the cafe episode.")
     items, demo = drama.voice_items(ep, drama.select_shots(ep))
     assert demo is False
     by_id = {it["id"]: it for it in items}
     assert set(by_id) == {"s03", "s04", "c05", "s06", "s07", "c08", "c09", "s11"}
+    assert all(it["engine"] == drama.COSYVOICE for it in items)
     assert all(it["mode"] == "zero_shot" and it["instruct"] is None for it in items)  # English voice, English line
     assert by_id["s03"]["prompt_wav"].endswith(os.path.join("jv_barista_en", "prompt.wav"))
     assert by_id["s04"]["prompt_wav"].endswith(os.path.join("jv_customer_en", "prompt.wav"))
@@ -755,7 +783,7 @@ def test_jv_assemble_draws_cards_and_bilingual_subtitles():
             touch(ep.keyframe(shot["id"]))
     run = Recorder()
     drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
-    assert len(run.calls) == len(ep.shots) + 1
+    assert len(run.calls) == len(ep.shots) + 3
     cmds = {os.path.basename(c[-1]): " ".join(c) for c, _ in run.calls}
 
     def text_files(sid):
@@ -890,7 +918,7 @@ def test_assemble_at_48_fps_renders_every_segment_at_48():
         touch(ep.keyframe(shot["id"]))
     run = Recorder()
     _out, total = drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run, fps=48)
-    for cmd, _ in run.calls[:-1]:
+    for cmd, _ in run.calls[: len(ep.shots)]:
         joined = " ".join(cmd)
         assert cmd[cmd.index("-r") + 1] == "48" and "fps=48" in joined
     plan = drama.shot_plan(ep, ep.shots[0], fps=48)
@@ -955,8 +983,8 @@ def test_commercial_episodes_never_use_the_demo_voice(tmp_path):
         drama.voice_items(ep, drama.select_shots(ep, "s03"), allow_demo=True)
 
 
-def test_a_voice_without_a_consent_record_is_refused():
-    ep = drama.load_episode(JV)
+def test_a_voice_without_a_consent_record_is_refused(tmp_path):
+    ep = jv_cosyvoice_episode(tmp_path)
     make_voice("jv_barista_en", "Good morning.", consent=None)
     with pytest.raises(gc.UsageError, match="授權紀錄"):
         drama.voice_items(ep, drama.select_shots(ep, "s03"))
@@ -985,10 +1013,11 @@ def test_jv_episode_is_commercial_on_licensed_components():
     assert ep.data["commercial"] is True
     assert ep.checkpoint in drama.COMMERCIAL_CHECKPOINTS
     assert set(ep.data["voices"]) == {"xinyi", "taeoh"}
+    assert all(drama.is_kokoro(spec) for spec in ep.data["voices"].values())
 
 
-def test_voice_status_reports_what_is_missing():
-    ep = drama.load_episode(JV)
+def test_voice_status_reports_what_is_missing(tmp_path):
+    ep = jv_cosyvoice_episode(tmp_path)
     make_voice("jv_customer_en", "Hello there.")
     status = {voice_id: (who, state) for voice_id, who, state in drama.voice_status(ep)}
     assert status["jv_customer_en"] == (["xinyi"], "已設定、有授權紀錄")
@@ -1169,3 +1198,176 @@ def test_cli_candidates_and_pick():
     assert parser.parse_args(["keyframes", JV, "--shots", "s03", "--candidates", "6"]).candidates == 6
     args = parser.parse_args(["pick", JV, "--shot", "s03", "--seed", "9323"])
     assert (args.cmd, args.shot, args.seed) == ("pick", "s03", 9323)
+
+
+# --- Kokoro built-in voices ------------------------------------------------------------------
+
+
+def test_kokoro_voice_list_is_english_only_and_has_the_jv_voices():
+    assert {"af_heart", "am_michael"} <= drama.KOKORO_VOICES
+    assert all(re.fullmatch(r"[ab][fm]_[a-z]+", v) for v in drama.KOKORO_VOICES)
+
+
+@pytest.mark.parametrize(
+    "spec, message",
+    [
+        ({"engine": "kokoro", "voice": "zf_xiaobei"}, "沒有「zf_xiaobei」"),  # Mandarin G2P is not installed
+        ({"engine": "kokoro", "voice": "af_heart", "speed": 0.9}, "engine"),
+        ({"engine": "edge", "voice": "af_heart"}, "engine"),
+        ({"voice": "af_heart"}, "engine"),
+        (3, "聲音要是"),
+        ("Bad Id", "小寫英數字"),
+    ],
+)
+def test_voice_entries_are_a_cosyvoice_id_or_an_inline_kokoro_voice(tmp_path, spec, message):
+    data = jv_data()
+    data["voices"]["taeoh"] = spec
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="jv_voice"))
+    assert any(e.startswith("voices.taeoh") and message in e for e in errors), errors
+    data = jv_data()
+    data["shots"][2]["voice"] = spec
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="jv_voice"))
+    assert any("s03 的 voice" in e and message in e for e in errors), errors
+
+
+def test_a_shot_can_switch_to_another_kokoro_voice(tmp_path):
+    data = jv_data()
+    data["shots"][2]["voice"] = {"engine": "kokoro", "voice": "bm_george"}
+    ep = write_episode(tmp_path, data, name="jv_shot_voice")
+    assert drama.validate_episode(ep)[0] == []
+    items, _ = drama.voice_items(ep, drama.select_shots(ep, "s03,s06"))
+    assert [it["voice"] for it in items] == ["bm_george", "am_michael"]
+
+
+def test_kokoro_ignores_emotion_and_says_so(tmp_path, capsys):
+    data = jv_data()
+    data["shots"][2]["emotion"] = "開心"
+    ep = write_episode(tmp_path, data, name="jv_emotion")
+    items, _ = drama.voice_items(ep, drama.select_shots(ep, "s03"))
+    assert "語氣「開心」不會套用" in capsys.readouterr().out
+    assert set(items[0]) == {"id", "text", "out", "engine", "voice", "speed"}
+
+
+def test_resolve_voice_refuses_a_kokoro_voice():
+    ep = drama.load_episode(JV)
+    with pytest.raises(gc.UsageError, match="Kokoro"):
+        drama.resolve_voice(ep, ep.shots[2])
+
+
+def test_run_voice_with_kokoro_runs_on_the_cpu_even_while_comfyui_is_up(monkeypatch):
+    monkeypatch.setattr(drama, "kokoro_python", lambda: "/kokoro/python")
+    monkeypatch.setattr(drama, "cosyvoice_python", lambda: None)  # not needed at all
+    ep = drama.load_episode(JV)
+    touch(ep.voice("s04"))
+
+    def fake_run(cmd, **kwargs):
+        with open(cmd[-1], encoding="utf-8") as f:
+            job = json.load(f)
+        for item in job["items"]:
+            touch(item["out"])
+        fake_run.cmd, fake_run.job, fake_run.kwargs = cmd, job, kwargs
+
+    done = drama.run_voice(ep, drama.select_shots(ep), run=fake_run, server_up=lambda: True)
+    assert done == 7  # s04 already had audio
+    assert fake_run.cmd[:2] == ["/kokoro/python", drama.KOKORO_RUNNER]
+    assert os.path.basename(fake_run.cmd[-1]) == "kokoro_job.json"
+    assert fake_run.job["repo_id"] == drama.KOKORO_REPO
+    assert "s04" not in [it["id"] for it in fake_run.job["items"]]
+    assert fake_run.kwargs["cwd"] == drama.KOKORO_DIR
+    assert fake_run.kwargs["env"]["HF_HOME"] == os.path.join(drama.KOKORO_DIR, "hf_home")
+    assert fake_run.kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_run_voice_needs_the_kokoro_venv(monkeypatch):
+    monkeypatch.setattr(drama, "kokoro_python", lambda: None)
+    ep = drama.load_episode(JV)
+    with pytest.raises(gc.UsageError, match="Kokoro"):
+        drama.run_voice(ep, drama.select_shots(ep), run=Recorder(), server_up=lambda: False)
+
+
+def test_mixed_voices_check_both_environments_before_speaking_anything(tmp_path, monkeypatch):
+    data = jv_data()
+    data["voices"]["taeoh"] = "jv_barista_en"
+    ep = write_episode(tmp_path, data, name="jv_mixed")
+    make_voice("jv_barista_en", "Good morning, this recording is for the cafe episode.")
+    monkeypatch.setattr(drama, "kokoro_python", lambda: "/kokoro/python")
+    monkeypatch.setattr(drama, "cosyvoice_python", lambda: None)
+    run = Recorder()
+    with pytest.raises(gc.UsageError, match="CosyVoice"):
+        drama.run_voice(ep, drama.select_shots(ep), run=run, server_up=lambda: False)
+    assert run.calls == []  # Kokoro did not run first and leave half the episode voiced
+
+    monkeypatch.setattr(drama, "cosyvoice_python", lambda: "/cosy/python")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        with open(cmd[-1], encoding="utf-8") as f:
+            job = json.load(f)
+        calls.append((cmd[0], sorted(it["id"] for it in job["items"])))
+        for item in job["items"]:
+            touch(item["out"])
+
+    assert drama.run_voice(ep, drama.select_shots(ep), run=fake_run, server_up=lambda: False) == 8
+    assert calls == [("/kokoro/python", ["c05", "c09", "s04", "s07", "s11"]), ("/cosy/python", ["c08", "s03", "s06"])]
+
+
+def test_voice_status_names_kokoro_voices(monkeypatch):
+    monkeypatch.setattr(drama, "kokoro_python", lambda: "/kokoro/python")
+    status = {label: (who, state) for label, who, state in drama.voice_status(drama.load_episode(JV))}
+    assert status["kokoro:af_heart"] == (["xinyi"], "Kokoro 內建聲音（Apache-2.0，不需要錄音授權）")
+    assert status["kokoro:am_michael"][0] == ["taeoh"]
+    monkeypatch.setattr(drama, "kokoro_python", lambda: None)
+    status = {label: state for label, _, state in drama.voice_status(drama.load_episode(JV))}
+    assert "還沒安裝" in status["kokoro:af_heart"]
+
+
+# --- loudness -------------------------------------------------------------------------------
+
+EBUR128_LOG = """[Parsed_ebur128_0 @ 000001] t: 38.9 TARGET:-23 LUFS M: -70.0 S: -38.1 I: -25.9 LUFS LRA: 4.4 LU
+[Parsed_ebur128_0 @ 000001] Summary:
+
+  Integrated loudness:
+    I:         -25.6 LUFS
+    Threshold: -36.0 LUFS
+
+  Loudness range:
+    LRA:         4.5 LU
+"""
+
+
+def test_integrated_loudness_reads_the_summary_not_the_running_value():
+    assert compose.integrated_loudness(EBUR128_LOG) == -25.6
+    assert compose.integrated_loudness("no summary here") is None
+
+
+@pytest.mark.parametrize("measured, gain", [(-25.6, "11.60"), (-10.0, "-4.00"), (-14.0, "0.00")])
+def test_loudness_filter_is_one_fixed_gain_and_a_limiter(measured, gain):
+    assert compose.loudness_filter(measured) == f"volume={gain}dB,alimiter=limit=0.84:level=false"
+
+
+@pytest.mark.parametrize("measured", [None, -70.0])
+def test_silence_or_no_measurement_is_left_alone(measured):
+    assert compose.loudness_filter(measured) is None
+    cmd = compose.finish_command("ffmpeg", "body.mkv", "out.mp4", None)
+    assert "-af" not in cmd and cmd[cmd.index("-c:v") + 1] == "copy" and "aac" in cmd and cmd[-1] == "out.mp4"
+
+
+def test_assemble_measures_the_mix_and_raises_it_to_the_target():
+    ep = drama.load_episode(JV)
+    for shot in ep.shots:
+        if shot["type"] != "card":
+            touch(ep.keyframe(shot["id"]))
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if "ebur128" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr=EBUR128_LOG)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=fake_run)
+    concat, measure, finish = (c for c, _ in calls[-3:])
+    assert concat[-1] == ep.sub("segments", "body.mkv") and "-c:a" in concat and "aac" not in concat
+    assert calls[-2][1]["capture_output"] is True and ep.sub("segments", "body.mkv") in measure
+    assert finish[finish.index("-af") + 1] == "volume=11.60dB,alimiter=limit=0.84:level=false"
+    assert finish[finish.index("-c:v") + 1] == "copy" and finish[-1] == ep.output()

@@ -5,6 +5,31 @@
 
 ## 2026-09-27
 
+### JV 第一集加上聲音：Kokoro 內建聲音（CPU），成片音量調到 −14 LUFS
+
+- **為什麼選 Kokoro**：這集是 commercial，配音只能用允許營利的元件。CosyVoice3 本身是 Apache-2.0，但要複製一段
+  本人同意的真人錄音，目前沒有。Kokoro-82M 的權重和聲音包是 Apache-2.0（Hugging Face `hexgrad/Kokoro-82M`，
+  commit `f3ff357` 的模型卡），內建聲音不涉及真人授權。模型卡也寫明部分訓練資料是大廠封閉 TTS 產生的合成語音，
+  那些資料的條款無法查證，README 記為剩下的風險。
+- **分鏡表**：`voices` 的值（和鏡頭自己的 `voice`）除了 CosyVoice 聲音 id，也可以寫
+  `{"engine": "kokoro", "voice": "af_heart"}`。只收美式／英式英文 28 個聲音（`KOKORO_VOICES`，跟 repo 的
+  `voices/` 逐一核對過）；其他語言要另裝 G2P 套件。JV EP1：xinyi＝`af_heart`、taeoh＝`am_michael`。Kokoro
+  沒有語氣控制，`emotion` 會略過並提醒。
+- **執行**：`training/kokoro_runner.py` 在獨立的 `Kokoro\.venv`（Python 3.11、CPU 版 torch 2.14）裡跑，模型下載到
+  `Kokoro\hf_home`，整個資料夾不進版控。Kokoro 不用顯卡，所以只有 CosyVoice 的台詞才要求先關 ComfyUI；兩種
+  引擎混用時先確認兩個環境都在才開始，不會配到一半停下。
+- **實測（CPU）**：8 句共 20.2 秒語音。第一次 123 秒（含下載 314 MB 模型，pipeline 載入 98.6 秒）；之後整個
+  `voice` 指令 16 秒：pipeline 載入 2.8 秒，每句 0.6–1.0 秒（約 0.3 倍即時）。重配同一句長度完全相同。
+- **成片音量**：Kokoro 的輸出只有 −25.6 LUFS，比短影音平台播放的 −14 LUFS 小約 12 dB（YouTube 只把太大聲的調
+  小，不會把小聲的調大）。`assemble` 現在先把各鏡頭接成 PCM 的 `body.mkv`（有配樂就先混進去），用 ebur128 量
+  整體響度，再用一個固定增益加限幅器做唯一一次 AAC 編碼：成片 **−14.3 LUFS、峰值 −1.4 dBFS、LRA 5.1**。比較過
+  單次 loudnorm：只到 −17.5 LUFS，而且在句子之間把音量拉高拉低（LRA 11.3）。
+- **有聲粗剪**：39.0 秒（原本 38.5 秒；s03、s04、s07 台詞較長，自動延長），1080×1920、24 fps，組裝 28 秒。
+- **安裝時遇到的**：這台機器連 PyPI 走 IPv6 只有約 30 KB/s、走 IPv4 約 1 MB/s，uv 預設走 IPv6，相依套件裝了
+  十幾分鐘沒裝完。改用一個只走 IPv4 的本機 CONNECT proxy（`HTTPS_PROXY=http://127.0.0.1:18765`）後很快裝完。
+  不動系統的網路設定。Kokoro 的 venv 972 MB、模型 314 MB。
+- **驗證（離線）**：1939 passed（原 1917，新增 22 例）。
+
 ### 一個鏡頭多試幾個 seed：`keyframes --candidates N` 與 `pick`
 
 - **為什麼**：沒有鎖臉，taeoh 在 s03 看起來像另一個人。最省的做法是同一個鏡頭多生幾個 seed，挑最像的。

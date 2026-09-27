@@ -6,8 +6,14 @@
   "tier": "safe",
   "seed": 9300,
   "voices": {
-    "xinyi": "jv_customer_en",
-    "taeoh": "jv_barista_en"
+    "xinyi": {
+      "engine": "kokoro",
+      "voice": "af_heart"
+    },
+    "taeoh": {
+      "engine": "kokoro",
+      "voice": "am_michael"
+    }
   },
   "cast": {
     "taeoh": {

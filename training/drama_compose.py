@@ -13,6 +13,7 @@ is covered by captions and buttons.
 
 import math
 import os
+import re
 import shutil
 import textwrap
 import unicodedata
@@ -45,6 +46,14 @@ CARD_BLOCK_GAP = 34
 VIDEO_CODEC = ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"]
 AUDIO_CODEC = ["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
 SEGMENT_AUDIO_CODEC = ["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
+# The published mix is brought to -14 LUFS, where short-video platforms play back: Kokoro's voices
+# came out at -25.6 LUFS and YouTube only turns loud uploads down, never quiet ones up. It is
+# measured first and then raised by one fixed gain with a peak limiter, which landed at -14.2 LUFS
+# and kept the speech's own dynamics (LRA 4.5 -> 5.1). Single-pass loudnorm stopped at -17.5 and
+# pumped the level between lines (LRA 11.3).
+LOUDNESS_TARGET = -14.0
+PEAK_LIMIT = 0.84  # about -1.5 dBFS
+SILENT_BELOW = -50.0  # an episode with no voice measures -70; don't amplify silence
 QUIET = ["-y", "-hide_banner", "-loglevel", "error"]
 
 _WINDOWS_FONTS = (r"C:\Windows\Fonts\msjhbd.ttc", r"C:\Windows\Fonts\msjh.ttc")
@@ -291,17 +300,45 @@ def concat_list(paths, base_dir=None):
 
 
 def concat_command(ffmpeg, list_file, out, final=True):
-    """Join the segments, copying video. final=True encodes the audio to AAC for the mp4 that gets
-    published; final=False keeps PCM for an intermediate that still gets music mixed in."""
+    """Join the segments, copying video. final=True encodes the audio to AAC for an mp4 as is;
+    final=False keeps PCM for an intermediate that still gets music mixed in and its loudness set."""
     audio = [*AUDIO_CODEC, "-movflags", "+faststart"] if final else ["-c:a", "copy"]
     return [ffmpeg, *QUIET, "-f", "concat", "-safe", "0", "-i", list_file, "-c:v", "copy", *audio, out]
 
 
 def bgm_command(ffmpeg, body, bgm, out, total_seconds, volume):
-    """Lay a looped music bed under the finished cut at a fixed low volume, fading out at the end."""
+    """Lay a looped music bed under the cut at a fixed low volume, fading out at the end. The mix
+    stays PCM: its loudness is measured and set by finish_command."""
     fade_start = max(total_seconds - 1.5, 0.0)
     graph = (f"[1:a]aresample=48000,aformat=channel_layouts=stereo,volume={volume:.3f},"
              f"atrim=0:{total_seconds:.3f},afade=t=out:st={fade_start:.3f}:d=1.5[b];"
              f"[0:a][b]amix=inputs=2:duration=first:normalize=0[a]")
     return [ffmpeg, *QUIET, "-i", body, "-stream_loop", "-1", "-i", bgm, "-filter_complex", graph,
-            "-map", "0:v", "-map", "[a]", "-c:v", "copy", *AUDIO_CODEC, "-movflags", "+faststart", out]
+            "-map", "0:v", "-map", "[a]", "-c:v", "copy", *SEGMENT_AUDIO_CODEC, out]
+
+
+def loudness_command(ffmpeg, path):
+    """Measure a file's integrated loudness; the ebur128 summary goes to stderr at the info level."""
+    return [ffmpeg, "-hide_banner", "-nostats", "-i", path, "-vn", "-af", "ebur128", "-f", "null", "-"]
+
+
+def integrated_loudness(log):
+    """The integrated loudness (LUFS) from ebur128's summary, or None when there is none."""
+    summary = log[log.rfind("Summary:"):] if "Summary:" in log else ""
+    match = re.search(r"I:\s*(-?[0-9.]+)\s*LUFS", summary)
+    return float(match.group(1)) if match else None
+
+
+def loudness_filter(measured):
+    """The fixed gain + limiter that brings a mix measured at `measured` LUFS to LOUDNESS_TARGET, or
+    None when there is nothing to normalise (no measurement, or silence)."""
+    if measured is None or measured < SILENT_BELOW:
+        return None
+    return f"volume={LOUDNESS_TARGET - measured:.2f}dB,alimiter=limit={PEAK_LIMIT}:level=false"
+
+
+def finish_command(ffmpeg, body, out, audio_filter=None):
+    """The one encode of the published mp4: video copied, audio gain-adjusted and encoded to AAC."""
+    af = ["-af", audio_filter] if audio_filter else []
+    return [ffmpeg, *QUIET, "-i", body, "-map", "0:v", "-map", "0:a", "-c:v", "copy", *af, *AUDIO_CODEC,
+            "-movflags", "+faststart", out]
