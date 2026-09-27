@@ -1090,3 +1090,82 @@ def test_motion_prompts_carry_the_wardrobe_instead_of_the_character_id():
     assert barista.prompt.startswith("22 year old adult man") and "barista apron" in barista.prompt
     assert "taeoh" not in barista.prompt
     assert "dark chestnut brown hair" in specs["s04_draft"].prompt
+
+
+# --- candidate seeds and pick ----------------------------------------------------------------
+
+
+def test_candidates_render_the_next_seeds_without_touching_the_keyframe(tmp_path):
+    ep = write_episode(tmp_path, jv_data(), name="jv_cand")
+    touch(ep.keyframe("s03"), b"current")
+    rendered = []
+
+    def fake_gen(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_weight, **kw):
+        rendered.append((seed, filename))
+        touch(os.path.join(out_dir, f"{filename}.png"))
+
+    made = drama.run_keyframes(
+        ep,
+        drama.select_shots(ep, "s03"),
+        draft=True,
+        candidates=3,
+        ffmpeg="ffmpeg",
+        gen=fake_gen,
+        run=touch_last,
+        server_up=lambda: True,
+    )
+    base = ep.shot_seed(2, ep.shots[2])
+    assert made == 3 and [seed for seed, _ in rendered] == [base + 1, base + 2, base + 3]
+    for seed in (base + 1, base + 2, base + 3):
+        assert os.path.isfile(ep.candidate("s03", seed))
+        assert os.path.isfile(ep.candidate_draft_marker("s03", seed))
+    with open(ep.keyframe("s03"), "rb") as f:
+        assert f.read() == b"current"
+    rendered.clear()
+    drama.run_keyframes(
+        ep,
+        drama.select_shots(ep, "s03"),
+        draft=True,
+        candidates=3,
+        ffmpeg="ffmpeg",
+        gen=fake_gen,
+        run=touch_last,
+        server_up=lambda: True,
+    )
+    assert rendered == []  # existing candidates are kept
+
+
+def test_candidates_count_is_bounded():
+    ep = drama.load_episode(JV)
+    with pytest.raises(gc.UsageError, match="candidates"):
+        drama.run_keyframes(ep, drama.select_shots(ep, "s03"), candidates=13, ffmpeg="ffmpeg", server_up=lambda: True)
+
+
+def test_pick_promotes_a_candidate_and_records_the_seed(tmp_path):
+    ep = write_episode(tmp_path, jv_data(), name="jv_pick")
+    touch(ep.candidate("s03", 9333), b"candidate")
+    touch(ep.candidate_draft_marker("s03", 9333))
+    touch(ep.motion("s03", "draft"))
+    drama.run_pick(ep, "s03", 9333)
+    with open(ep.keyframe("s03"), "rb") as f:
+        assert f.read() == b"candidate"
+    assert os.path.isfile(ep.keyframe_draft_marker("s03"))
+    reloaded = drama.load_episode(ep.path)
+    assert next(s for s in reloaded.shots if s["id"] == "s03")["seed"] == 9333
+    assert drama.validate_episode(reloaded)[0] == []
+    assert reloaded.shot_seed(2, reloaded.shots[2]) == 9333
+
+
+def test_pick_refuses_unknown_shots_cards_and_missing_candidates(tmp_path):
+    ep = write_episode(tmp_path, jv_data(), name="jv_pick_bad")
+    with pytest.raises(gc.UsageError, match="c05"):
+        drama.run_pick(ep, "c05", 1)
+    with pytest.raises(gc.UsageError, match="candidates"):
+        drama.run_pick(ep, "s03", 1)
+
+
+def test_cli_candidates_and_pick():
+    parser = drama.build_parser()
+    assert parser.parse_args(["keyframes", JV, "--shots", "s03", "--candidates", "6"]).candidates == 6
+    args = parser.parse_args(["pick", JV, "--shot", "s03", "--seed", "9323"])
+    assert (args.cmd, args.shot, args.seed) == ("pick", "s03", 9323)

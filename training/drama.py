@@ -83,6 +83,7 @@ MAX_LINE_CHARS = 120
 MAX_CARD_TEXT = 80
 MAX_CARD_LABEL = 20
 MAX_CAST_TEXT = 200
+MAX_CANDIDATES = 12
 SPEED_RANGE = (0.6, 1.4)
 ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 EPISODE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -162,6 +163,12 @@ class Episode:
 
     def keyframe_draft_marker(self, shot_id):
         return self.sub("keyframes", f"{shot_id}.draft")
+
+    def candidate(self, shot_id, seed):
+        return self.sub("keyframes", "candidates", f"{shot_id}_seed{seed}.png")
+
+    def candidate_draft_marker(self, shot_id, seed):
+        return self.sub("keyframes", "candidates", f"{shot_id}_seed{seed}.draft")
 
     def motion(self, shot_id, mode="final"):
         return self.sub("motion", f"{shot_id}{MOTION_SUFFIX[mode]}.mp4")
@@ -474,45 +481,104 @@ def _round16(value):
     return int(round(value / 16)) * 16
 
 
-def run_keyframes(ep, shots, *, force=False, draft=False, ffmpeg, translate=None, gen=None, run=subprocess.run,
-                  server_up=client.is_server_running):
+def candidate_seeds(ep, index, shot, count):
+    """The seeds a --candidates run tries for a shot: the next `count` after its current seed."""
+    base = ep.shot_seed(index, shot)
+    return [base + k for k in range(1, count + 1)]
+
+
+def _render_keyframe(ep, req, seed, stem, dst, *, draft, gen, run, ffmpeg):
+    out_dir = os.path.dirname(dst)
+    gen(req["prompt"], "", ep.tier, req["trigger"], req["anchor_path"], out_dir, seed, stem,
+        client.IP_ADAPTER_WEIGHT, width=req["width"], height=req["height"],
+        use_facedetailer=False if draft else None,
+        style_positive=gc.REALISTIC_STYLE, style_negative=gc.REALISTIC_NEGATIVE,
+        checkpoint=ep.checkpoint, lora_strength=0.0, hq=True, pose_name=req["pose_name"],
+        character_overrides=ep.cast_for(req["trigger"]) if req["trigger"] else None)
+    run(compose.normalise_command(ffmpeg, os.path.join(out_dir, f"{stem}.png"), dst), check=True)
+
+
+def _set_marker(path, on, text=""):
+    if on:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    elif os.path.isfile(path):
+        os.remove(path)
+
+
+def run_keyframes(ep, shots, *, force=False, draft=False, candidates=0, ffmpeg, translate=None, gen=None,
+                  run=subprocess.run, server_up=client.is_server_running):
     """Generate keyframes. draft=True renders smaller with the face pass off and marks the result;
-    a later non-draft run regenerates marked drafts without needing --force."""
+    a later non-draft run regenerates marked drafts without needing --force.
+
+    candidates=N instead renders N alternatives per shot (the next N seeds) into
+    keyframes/candidates/ and leaves the shot's keyframe alone; `pick` then promotes one."""
     gen = gen or gc.gen_custom
     shots = [(i, s) for i, s in shots if s["type"] != CARD]   # cards are drawn by ffmpeg, no keyframe
+    if candidates and not 1 <= candidates <= MAX_CANDIDATES:
+        raise gc.UsageError(f"--candidates 要在 1–{MAX_CANDIDATES} 之間")
     if not server_up():
         raise gc.UsageError("ComfyUI 沒有在跑。先啟動它（或開 GUI，會自動啟動），再生關鍵幀")
-    out_dir = ep.sub("keyframes")
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(ep.sub("keyframes"), exist_ok=True)
+    kind = "草稿關鍵幀" if draft else "關鍵幀"
     made = 0
     for index, shot in shots:
-        final = ep.keyframe(shot["id"])
-        marker = ep.keyframe_draft_marker(shot["id"])
+        sid = shot["id"]
+        req = None
+        if candidates:
+            os.makedirs(ep.sub("keyframes", "candidates"), exist_ok=True)
+            for seed in candidate_seeds(ep, index, shot, candidates):
+                dst = ep.candidate(sid, seed)
+                if os.path.isfile(dst) and not force:
+                    print(f"{sid}: 候選 seed {seed} 已存在，略過", flush=True)
+                    continue
+                req = req or keyframe_request(ep, index, shot, translate=translate, draft=draft)
+                print(f"{sid}: 生成候選{kind}（seed {seed}）", flush=True)
+                _render_keyframe(ep, req, seed, f"{sid}_seed{seed}_raw", dst, draft=draft, gen=gen, run=run,
+                                 ffmpeg=ffmpeg)
+                _set_marker(ep.candidate_draft_marker(sid, seed), draft, f"{req['width']}x{req['height']}\n")
+                made += 1
+            continue
+        final = ep.keyframe(sid)
+        marker = ep.keyframe_draft_marker(sid)
         is_draft = os.path.isfile(marker)
         if os.path.isfile(final) and not force and (draft or not is_draft):
-            print(f"{shot['id']}: 已有{'草稿' if is_draft else ''}關鍵幀，略過（--force 重生）", flush=True)
+            print(f"{sid}: 已有{'草稿' if is_draft else ''}關鍵幀，略過（--force 重生）", flush=True)
             continue
         req = keyframe_request(ep, index, shot, translate=translate, draft=draft)
         for notice in req["notices"]:
-            print(f"[注意] {shot['id']}: {notice}", flush=True)
-        kind = "草稿關鍵幀" if draft else "關鍵幀"
-        print(f"{shot['id']}: 生成{kind}（seed {req['seed']}）", flush=True)
-        stem = f"{shot['id']}_raw"
-        gen(req["prompt"], "", ep.tier, req["trigger"], req["anchor_path"], out_dir, req["seed"], stem,
-            client.IP_ADAPTER_WEIGHT, width=req["width"], height=req["height"],
-            use_facedetailer=False if draft else None,
-            style_positive=gc.REALISTIC_STYLE, style_negative=gc.REALISTIC_NEGATIVE,
-            checkpoint=ep.checkpoint, lora_strength=0.0, hq=True, pose_name=req["pose_name"],
-            character_overrides=ep.cast_for(req["trigger"]) if req["trigger"] else None)
-        raw = os.path.join(out_dir, f"{stem}.png")
-        run(compose.normalise_command(ffmpeg, raw, final), check=True)
-        if draft:
-            with open(marker, "w", encoding="utf-8") as f:
-                f.write(f"{req['width']}x{req['height']}\n")
-        elif is_draft:
-            os.remove(marker)
+            print(f"[注意] {sid}: {notice}", flush=True)
+        print(f"{sid}: 生成{kind}（seed {req['seed']}）", flush=True)
+        _render_keyframe(ep, req, req["seed"], f"{sid}_raw", final, draft=draft, gen=gen, run=run, ffmpeg=ffmpeg)
+        _set_marker(marker, draft, f"{req['width']}x{req['height']}\n")
         made += 1
+    if candidates:
+        print("挑一張：drama.py pick <分鏡表> --shot <鏡頭> --seed <seed>", flush=True)
     return made
+
+
+def run_pick(ep, shot_id, seed):
+    """Promote a candidate to the shot's keyframe and write its seed into the episode file, so a
+    later regeneration of this shot starts from the same seed. The seed reproduces the picture only
+    at the same size - a final-size regeneration of a picked draft is a new picture."""
+    shot = next((s for s in ep.shots if s["id"] == shot_id), None)
+    if shot is None or shot["type"] == CARD:
+        raise gc.UsageError(f"分鏡表裡沒有可以挑關鍵幀的鏡頭「{shot_id}」")
+    src = ep.candidate(shot_id, seed)
+    if not os.path.isfile(src):
+        raise gc.UsageError(f"找不到候選 {src}；先跑 keyframes --shots {shot_id} --candidates N")
+    shutil.copy2(src, ep.keyframe(shot_id))
+    was_draft = os.path.isfile(ep.candidate_draft_marker(shot_id, seed))
+    _set_marker(ep.keyframe_draft_marker(shot_id), was_draft, "picked\n")
+    shot["seed"] = int(seed)
+    with open(ep.path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(ep.data, ensure_ascii=False, indent=2) + "\n")
+    print(f"{shot_id}: 改用 seed {seed}（{'草稿' if was_draft else '正式'}），已寫回分鏡表", flush=True)
+    stale = [p for p in (ep.motion(shot_id, m) for m in MOTION_MODES) if os.path.isfile(p)]
+    stale += [p for p in (ep.enhanced(shot_id, "mp4"),) if os.path.isfile(p)]
+    if stale:
+        print(f"[注意] {shot_id} 已有用舊關鍵幀做的影片，要重做：{[os.path.basename(p) for p in stale]}", flush=True)
+    return ep.keyframe(shot_id)
 
 
 # --- voice ------------------------------------------------------------------------------------
@@ -1035,6 +1101,12 @@ def build_parser():
     kf.add_argument("--force", action="store_true", help="regenerate shots that already have one")
     kf.add_argument("--draft", action="store_true",
                     help="quick low-res drafts without the face pass; a later run without --draft redoes them")
+    kf.add_argument("--candidates", type=int, default=0,
+                    help=f"render N alternative seeds per shot into keyframes/candidates/ (1-{MAX_CANDIDATES}); "
+                         "the keyframe itself is untouched until `pick`")
+    pk = add("pick", "promote a candidate keyframe and record its seed in the episode file")
+    pk.add_argument("--shot", required=True)
+    pk.add_argument("--seed", type=int, required=True)
     vo = add("voice", "speak every dialogue line with CosyVoice3 (stop ComfyUI first)")
     vo.add_argument("--shots")
     vo.add_argument("--force", action="store_true")
@@ -1082,7 +1154,8 @@ def main(argv=None):
         print_status(ep)
         return 0
     if args.cmd == "keyframes":
-        run_keyframes(ep, select_shots(ep, args.shots), force=args.force, draft=args.draft, ffmpeg=_need_ffmpeg())
+        run_keyframes(ep, select_shots(ep, args.shots), force=args.force, draft=args.draft,
+                      candidates=args.candidates, ffmpeg=_need_ffmpeg())
         return 0
     if args.cmd == "voice":
         run_voice(ep, select_shots(ep, args.shots), force=args.force, ignore_comfyui=args.ignore_comfyui,
@@ -1097,6 +1170,9 @@ def main(argv=None):
     if args.cmd == "assemble":
         run_assemble(ep, allow_preview=args.allow_preview, ffmpeg=_need_ffmpeg(), font=compose.find_font(),
                      fps=args.fps)
+        return 0
+    if args.cmd == "pick":
+        run_pick(ep, args.shot, args.seed)
         return 0
     if args.cmd == "export":
         run_export(ep)
