@@ -2064,6 +2064,28 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 - `motion` 在非互動環境（例如排程）需要加 `--yes` 才會送出，避免意外計費
 - 工作檔都在 `outputs/drama/<集名>/`：`keyframes/`、`voice/`、`motion/`、`segments/`
 
+### 先做低解析度，之後再交給外部工具加強
+
+```powershell
+# 草稿關鍵幀：576×1024（有姿勢的是骨架尺寸的 0.75 倍），關掉臉部精修，比較快
+ComfyUI\.venv\Scripts\python.exe training\drama.py keyframes training\episodes\jv_en_ep01_cafe_order.json --draft
+
+# 低解析度完整版動態鏡頭：480×832、完整長度和步數，估計約正式版的 44% 費用
+ComfyUI\.venv\Scripts\python.exe training\drama.py motion training\episodes\jv_en_ep01_cafe_order.json --draft
+
+# 把要加強的素材複製到 enhance\in\（動態鏡頭 .mp4、靜態鏡頭 .png），附說明和清單
+ComfyUI\.venv\Scripts\python.exe training\drama.py export training\episodes\jv_en_ep01_cafe_order.json
+
+# 用補幀／放大工具處理後，以「相同檔名」放進 enhance\out\，再組裝（補幀到 48 fps 時加 --fps 48）
+ComfyUI\.venv\Scripts\python.exe training\drama.py assemble training\episodes\jv_en_ep01_cafe_order.json --fps 48
+```
+
+- 組裝時每個鏡頭依序用：`enhance\out\` 的加強版 → 正式版 → 低解析度版（→ 加 `--allow-preview` 時的預覽）
+- 草稿關鍵幀在 `status` 顯示為 △；之後跑一次不加 `--draft` 的 `keyframes` 會自動重生成正式品質
+- 成片影格率可以是 24／25／30／48／50／60（分鏡表的 `"fps"` 或 `assemble --fps`）。補幀後沒有提高
+  影格率，組裝時會被降回原本的影格率，補幀就白做了
+- 加強工具的授權要自己確認；要營利時必須是允許商業使用的工具
+
 ### 分鏡表格式
 
 | 欄位 | 說明 |
