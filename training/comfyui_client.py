@@ -41,6 +41,7 @@ WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH = os.path.join(os.path.dirname(__file__), "wo
 WORKFLOW_TEMPLATE_IMG2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2img.json")
 WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img_zimage.json")
 WORKFLOW_TEMPLATE_WAN_I2V_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_wan_i2v.json")
+WORKFLOW_TEMPLATE_RIFE_INTERP_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_rife_interp.json")
 
 CHECKPOINTS = {
     "juggernaut": "juggernaut_xl_v9_photo.safetensors",
@@ -165,6 +166,7 @@ WAN_SAMPLER = "uni_pc"
 WAN_SCHEDULER = "simple"
 # Generous: first job on a cold RunPod worker loads ~15 GB of weights off a network volume.
 POLL_TIMEOUT_SECONDS_WAN = 2400
+POLL_TIMEOUT_SECONDS_RIFE = 900
 WIDTH, HEIGHT = 1024, 1024   # switch to 768/832/896 as needed - not hardcoded elsewhere
 BATCH_SIZE = 1                # RTX 2070 8GB - always 1, no multi-image batches
 STEPS = 30
@@ -1524,6 +1526,30 @@ def submit_generation_wan_i2v(
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
     wf["9"]["inputs"]["codec.encoding.crf"] = float(video_crf)
     return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_WAN)
+
+
+def submit_interpolation_rife(video_filename: str, filename_prefix: str, multiplier: int = 2,
+                              fps: float = WAN_FPS, video_crf: float = 18.0) -> str:
+    """Frame-interpolate a clip already in ComfyUI's input/ (upload_reference_image takes any file)
+    with RIFE - Practical-RIFE code and rife47 weights are MIT, as is ComfyUI-Frame-Interpolation.
+    No sampler and no text: it only adds in-between frames to footage that exists.
+
+    fps is the SOURCE rate; the output plays at fps * multiplier, so motion keeps its speed and the
+    clip its length. Returns the local path of the saved .mp4."""
+    if not has_node(RIFE_NODE):
+        raise RuntimeError(f"frame interpolation needs the '{RIFE_NODE}' node - install "
+                           "ComfyUI-Frame-Interpolation and restart ComfyUI")
+    multiplier = int(multiplier)
+    if multiplier < 2:
+        raise ValueError(f"multiplier must be at least 2, got {multiplier}")
+    wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_RIFE_INTERP_PATH))
+    wf["1"]["inputs"]["file"] = video_filename
+    wf["3"]["inputs"]["ckpt_name"] = RIFE_CKPT
+    wf["3"]["inputs"]["multiplier"] = multiplier
+    wf["4"]["inputs"]["fps"] = float(fps) * multiplier
+    wf["9"]["inputs"]["filename_prefix"] = filename_prefix
+    wf["9"]["inputs"]["codec.encoding.crf"] = float(video_crf)
+    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_RIFE)
 
 
 def submit_img2vid_generation(

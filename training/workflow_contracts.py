@@ -180,6 +180,10 @@ CONTRACTS: dict[str, dict[str, str]] = {
         "10": "LoadImage", "11": "Wan22ImageToVideoLatent", "12": "KSampler", "8": "VAEDecode",
         "90": "CreateVideo", "9": "SaveVideo",
     },
+    # Frame interpolation of existing footage: no sampler, no text, nothing generated from a prompt.
+    "workflow_template_rife_interp.json": {
+        "1": "LoadVideo", "2": "GetVideoComponents", "3": "RIFE VFI", "4": "CreateVideo", "9": "SaveVideo",
+    },
 }
 
 # Semantic roles shared by every still-image template that has them (all but img2vid, whose

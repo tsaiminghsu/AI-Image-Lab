@@ -273,7 +273,8 @@ def _resolve_negative_source(wf, ref, _seen=None):
 # not a text encoder pair) - it has no node 7 / no CLIPTextEncode at all, so the id scheme
 # genuinely doesn't apply here. Skipped deliberately, not silently: see workflow_contracts's
 # _IMG2VID comment for the same point made at the contract-authoring end.
-_SKIP_NEGATIVE_WIRING_CHECK = {"workflow_template_img2vid.json"}
+# rife_interp only adds in-between frames to an existing clip: no sampler, no text at all.
+_SKIP_NEGATIVE_WIRING_CHECK = {"workflow_template_img2vid.json", "workflow_template_rife_interp.json"}
 
 
 def _negative_wiring_cases():

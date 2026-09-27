@@ -67,6 +67,31 @@ def test_every_real_builder_graph_passes(monkeypatch, captured_submit, key):
     assert ws.check_negative_safety(wf, gc.AGE_SAFETY_NEGATIVE) >= 1
 
 
+def test_rife_interpolation_graph_is_valid_and_generates_nothing_from_text(monkeypatch, captured_submit):
+    """Not in BUILDERS on purpose: every builder there generates from a prompt and must carry the
+    safety negative; RIFE only adds in-between frames to a clip that already exists."""
+    monkeypatch.setattr(client, "has_node", lambda name: True)
+    client.submit_interpolation_rife(video_filename="clip.mp4", filename_prefix="stem", multiplier=2, fps=24)
+    call = captured_submit[-1]
+    wf = call["wf"]
+    ws.validate_graph(wf, call["output_node_id"])
+    assert ws.check_negative_safety(wf, gc.AGE_SAFETY_NEGATIVE) == 0
+    assert not any(n["class_type"] in ("KSampler", "CLIPTextEncode") for n in wf.values())
+    assert wf["1"]["inputs"]["file"] == "clip.mp4"
+    assert wf["3"]["inputs"]["multiplier"] == 2 and wf["3"]["inputs"]["ckpt_name"] == client.RIFE_CKPT
+    assert wf["4"]["inputs"]["fps"] == 48.0  # source rate x multiplier: same speed, same length
+    assert ws.output_kind(wf, call["output_node_id"]) == ("mp4", "video/mp4")
+
+
+def test_rife_interpolation_needs_the_node_pack_and_a_real_multiplier(monkeypatch):
+    monkeypatch.setattr(client, "has_node", lambda name: False)
+    with pytest.raises(RuntimeError, match="ComfyUI-Frame-Interpolation"):
+        client.submit_interpolation_rife(video_filename="clip.mp4", filename_prefix="stem")
+    monkeypatch.setattr(client, "has_node", lambda name: True)
+    with pytest.raises(ValueError):
+        client.submit_interpolation_rife(video_filename="clip.mp4", filename_prefix="stem", multiplier=1)
+
+
 def test_svd_graph_passes_without_any_text_encoder(monkeypatch, captured_submit):
     client.submit_img2vid_generation(init_image_filename="i.png", seed=1, filename_prefix="stem")
     call = captured_submit[-1]
