@@ -3,6 +3,40 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-09-27
+
+### 資源排程：依電腦配置決定本地生圖、本地影片、等降溫、排時段或建議上雲
+
+- **問題**：8 GB 卡、PCIe x1、84°C 降頻、32 GB RAM 被高清完整版吃到 15.8 GB——這些極限只寫在
+  README 和 CLAUDE.md，要操作者自己記。影片什麼時候跑、什麼時候該上雲，完全靠手動切換
+  （GUI 勾選、雲端影片分頁、CLI `--backend`），repo 裡連 `nvidia-smi` 都沒有被程式呼叫過。
+- **做法**：
+  - `training/resource_policy.py`：`JOB_COSTS`（本 README 與 CHANGELOG 的實測）、`probe()`（nvidia-smi
+    溫度／VRAM／降頻旗標、ComfyUI `/system_stats`＋`/queue`、psutil 可用 RAM 與 ComfyUI RSS、本 process
+    正在跑的工作）、`decide()` 八條有順序的規則。只用 requests＋stdlib，psutil 延後 import。
+  - 延後的工作**沒有另開佇列**：就是 job store 裡 `queued`＋新欄位 `not_before` 的紀錄（schema 2，
+    v1 紀錄照樣讀得進來）。`job_scheduler.py` 每 30 秒挑到期的工作重新判斷再跑；
+    `_begin_submitting` 本來就是 store 鎖內的 compare-and-swap，所以 GUI 和 image_api 同時跑排程器
+    也不會重複執行同一筆（有測試）。
+  - GUI：六個本地分頁都先判斷；新增「🖥️ 資源排程」分頁與 AnimateDiff 的「☁️ 改送雲端」按鈕
+    （用 `cloud` concurrency id，不佔本地 GPU 佇列）。判斷放在 `_ensure_comfyui` 之前，排程或建議上雲
+    都不會先把 ComfyUI 開起來。
+  - image_api：建議上雲回 409 不建工作，`force_local` 覆寫；時段外排程；新增 `GET /v2/route`；
+    `gen_custom` 參數只建一次並存進紀錄，執行緒和排程器跑的是同一個呼叫；重啟後殘留的 queued 工作
+    由排程器接手。
+- **雲端只建議不送出**：這個 repo 的雲端路徑從沒在真的帳號上跑過，也會花錢，所以沒有任何自動送雲端。
+- **測試**：`test_resource_policy.py`（每條規則與優先序、跨午夜時段、nvidia-smi 解析含 `[N/A]` 與舊驅動
+  退回、設定檔壞掉回預設、降溫等待與逾時）、`test_job_scheduler.py`（真的 FileJobStore＋假時鐘：到期才跑、
+  一輪最多一個、過熱等待逾時照跑、夜間建議上雲留在佇列、另一個 process 搶走的回 `taken`）、
+  `test_image_api.py` 新增 409／force_local／defer／wait／`/v2/route`；`test_gui_arity.py` 認得
+  `_run_or_defer(gc.X, plan, **kw)` 轉發，並多檢查 `rp.*` 呼叫。
+- **實機驗證（沒有用 GPU 生成）**：用 ComfyUI\.venv 的 Gradio 6.24 import `gui.py` 並直接呼叫 handler
+  （暫存的 store 與設定檔）：讀數和 nvidia-smi 一致（52°C、0.4/8.0 GB、可用 RAM 20.9 GB）；時段外按
+  AnimateDiff 排到 20:00、沒有啟動 ComfyUI、上傳的臉已複製進 store；排程器沒有提早執行；取消有效；
+  SadTalker 在時段外顯示「不能排程」。另外實際啟動 GUI 在瀏覽器看過新分頁與兩個預覽，console 沒有錯誤。
+  **還沒有真的讓排程器在時段開始時跑一次本地生成**，也沒有測過雲端確認按鈕（沒有雲端帳號）。
+- **預估不是量測**：SVD、SadTalker、Z-Image、Wan 的成本是估計值，畫面上會標明；之後量到再更新 `JOB_COSTS`。
+
 ## 2026-09-18
 
 ### Pony 關鍵字詞庫：必備四類補齊 `source_*`／`rating_*`，並在 GUI 做成可勾選
