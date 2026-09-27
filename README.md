@@ -2060,6 +2060,9 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
 ```
 
 - 每個步驟都能用 `--shots s02,s04` 只做部分鏡頭；已經有的檔案會略過，`--force` 重做
+- 某個鏡頭不滿意（例如沒有鎖臉時長相跟其他鏡頭不像），用 `keyframes --shots s03 --candidates 6` 一次生 6 個
+  seed 的候選到 `keyframes\candidates\`，看過後用 `pick --shot s03 --seed 9326` 選定，seed 會寫回分鏡表。
+  同一個 seed 只在同一尺寸下會得到同一張圖，草稿選好的 seed 換成正式尺寸會是新的一張
 - 還沒出正式版時，`assemble --allow-preview` 先用預覽片段組一版粗剪
 - `motion` 在非互動環境（例如排程）需要加 `--yes` 才會送出，避免意外計費
 - 工作檔都在 `outputs/drama/<集名>/`：`keyframes/`、`voice/`、`motion/`、`segments/`

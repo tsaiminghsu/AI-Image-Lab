@@ -5,6 +5,19 @@
 
 ## 2026-09-27
 
+### 一個鏡頭多試幾個 seed：`keyframes --candidates N` 與 `pick`
+
+- **為什麼**：沒有鎖臉，taeoh 在 s03 看起來像另一個人。最省的做法是同一個鏡頭多生幾個 seed，挑最像的。
+- `keyframes --shots s03 --candidates 6` 把接下來 6 個 seed 生到 `keyframes/candidates/`，不動原本的關鍵幀；
+  `pick --shot s03 --seed N` 選定一張、帶上草稿標記、把 seed 寫回分鏡表（重生時從它開始），並在該鏡頭已經有
+  舊關鍵幀做的影片時提醒要重做。同一個 seed 只在同一尺寸下重現同一張圖。
+- **實測**：s03 的 6 個候選（同一個提示詞，不用重置模型）共 6 分 30 秒：第一張 94 秒（含載入），之後 41、51、59、
+  69、75 秒逐張變慢，GPU 45°C → 84°C，平均使用率 96%，VRAM 峰值 7838 MiB，ComfyUI RSS 13.6 GB。同樣的工作
+  越跑越慢，是過熱降頻的樣子。
+- **挑選**：用眼睛比對 s06／s10 的臉（凌亂瀏海、瘦長臉、細長眼），選 seed 9326，9325 次之。沒有用
+  `face_similarity.py`：它用的 InsightFace 模型限制營利，這集是 commercial。
+- **驗證（離線）**：1917 passed（原 1912，新增 5 例）。
+
 ### Z-Image 不放角色代號、每集服裝覆蓋（cast），JV 草稿關鍵幀重跑
 
 - **修正**：`_build_prompt_and_negative` 遇到 Z-Image 時不把角色代號放進提示詞（它是 LoRA 觸發詞，Z-Image
