@@ -82,6 +82,7 @@ DURATION_RANGE = (1.5, 5.0)     # Wan's 121-frame ceiling is 5.04 s at 24 fps
 MAX_LINE_CHARS = 120
 MAX_CARD_TEXT = 80
 MAX_CARD_LABEL = 20
+MAX_CAST_TEXT = 200
 SPEED_RANGE = (0.6, 1.4)
 ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 EPISODE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -137,6 +138,10 @@ class Episode:
     @property
     def fps(self):
         return self.data.get("fps", DEFAULT_OUTPUT_FPS)
+
+    def cast_for(self, character):
+        """This episode's appearance/style overrides for a character (e.g. a barista apron), or None."""
+        return (self.data.get("cast") or {}).get(character) or None
 
     def shot_seed(self, index, shot):
         if shot.get("seed") is not None:
@@ -218,6 +223,23 @@ def validate_episode(ep):
         errors.append(f"找不到配樂檔：{ep.resolve(bgm)}")
     if ep.fps not in OUTPUT_FPS_CHOICES:
         errors.append(f"fps（成片影格率）只能是 {list(OUTPUT_FPS_CHOICES)}")
+    cast = d.get("cast") or {}
+    if not isinstance(cast, dict):
+        errors.append("cast 要是 {角色: {appearance／style 覆蓋}} 的物件")
+    else:
+        for character, overrides in cast.items():
+            if character not in gc.CHARACTERS:
+                errors.append(f"cast 裡的角色「{character}」不在角色表裡")
+                continue
+            if not isinstance(overrides, dict) or not overrides:
+                errors.append(f"cast.{character} 要是 {{\"appearance\": ..., \"style\": ...}} 的物件")
+                continue
+            for key, value in overrides.items():
+                if key not in gc.CHARACTER_OVERRIDE_KEYS:
+                    errors.append(f"cast.{character} 只能覆蓋 {list(gc.CHARACTER_OVERRIDE_KEYS)}（年齡和性別不能改），"
+                                  f"不能有「{key}」")
+                elif not isinstance(value, str) or not value.strip() or len(value) > MAX_CAST_TEXT:
+                    errors.append(f"cast.{character}.{key} 要是 {MAX_CAST_TEXT} 字以內的文字")
     commercial = d.get("commercial", False)
     if not isinstance(commercial, bool):
         errors.append("commercial 要是 true 或 false")
@@ -480,7 +502,8 @@ def run_keyframes(ep, shots, *, force=False, draft=False, ffmpeg, translate=None
             client.IP_ADAPTER_WEIGHT, width=req["width"], height=req["height"],
             use_facedetailer=False if draft else None,
             style_positive=gc.REALISTIC_STYLE, style_negative=gc.REALISTIC_NEGATIVE,
-            checkpoint=ep.checkpoint, lora_strength=0.0, hq=True, pose_name=req["pose_name"])
+            checkpoint=ep.checkpoint, lora_strength=0.0, hq=True, pose_name=req["pose_name"],
+            character_overrides=ep.cast_for(req["trigger"]) if req["trigger"] else None)
         raw = os.path.join(out_dir, f"{stem}.png")
         run(compose.normalise_command(ffmpeg, raw, final), check=True)
         if draft:
@@ -657,9 +680,18 @@ def motion_specs(ep, shots, mode):
         gc.check_wan_params(params["width"], params["height"], params["frames"], params["fps"], params["steps"],
                             params["cfg"], client.WAN_DEFAULT_MODEL)
         stem = os.path.splitext(os.path.basename(ep.motion(shot["id"], mode)))[0]
+        motion = (shot.get("motion") or shot.get("prompt") or "").strip()
+        character = shot.get("character") or None
+        overrides = ep.cast_for(character) if character else None
+        if overrides:
+            # The worker only knows the character table, so an episode's wardrobe travels in the prompt:
+            # the overridden description (age and gender still from CHARACTERS) and no characterId, or
+            # the worker would add the default outfit back and Wan would fight the first frame's.
+            profile = gc.character_profile(character, overrides)
+            motion = f"{gc.character_base_prompt(character, profile, include_trigger=False)}, {motion}"
+            character = None
         specs.append(cloud_video.CloudJobSpec(
-            stem=stem, prompt=(shot.get("motion") or shot.get("prompt") or "").strip(),
-            image_path=ep.wan_input(shot["id"]), trigger=shot.get("character") or None,
+            stem=stem, prompt=motion, image_path=ep.wan_input(shot["id"]), trigger=character,
             seed=ep.shot_seed(index, shot), params=params, tier=ep.tier,
         ))
     return specs

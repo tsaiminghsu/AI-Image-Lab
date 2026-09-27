@@ -9,6 +9,15 @@
     "xinyi": "jv_customer_en",
     "taeoh": "jv_barista_en"
   },
+  "cast": {
+    "taeoh": {
+      "style": "crisp white shirt under a dark brown barista apron"
+    },
+    "xinyi": {
+      "appearance": "shoulder-length wavy dark chestnut brown hair, almond eyes, heart-shaped face, slim build",
+      "style": "light grey tailored blazer over a white blouse, grey trousers"
+    }
+  },
   "bgm": null,
   "shots": [
     {
@@ -36,7 +45,7 @@
       "character": "taeoh",
       "scene": "cozy_cafe",
       "framing": "close",
-      "prompt": "barista behind the counter wearing a dark apron, friendly smile",
+      "prompt": "standing behind the cafe counter next to the espresso machine, friendly smile",
       "motion": "he looks up, smiles warmly and greets the customer",
       "line": "Hi! What can I get for you today?",
       "translation": "嗨！今天想喝點什麼？",
@@ -73,7 +82,7 @@
       "character": "taeoh",
       "scene": "cozy_cafe",
       "framing": "close",
-      "prompt": "barista behind the counter wearing a dark apron, nodding",
+      "prompt": "standing behind the cafe counter, nodding",
       "motion": "he nods and asks a quick question with a smile",
       "line": "Sure. For here or to go?",
       "translation": "好的。內用還是外帶？",
@@ -123,7 +132,7 @@
       "character": "taeoh",
       "scene": "cozy_cafe",
       "framing": "medium",
-      "prompt": "barista wearing a dark apron handing a paper coffee cup across the counter",
+      "prompt": "standing behind the cafe counter, handing a paper coffee cup across it",
       "motion": "he hands over the latte across the counter with a smile",
       "duration": 3
     },

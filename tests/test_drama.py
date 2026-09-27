@@ -1038,3 +1038,55 @@ def test_cli_voice_demo_flag_and_interpolate():
     assert parser.parse_args(["voice", EXAMPLE, "--allow-demo"]).allow_demo
     assert not parser.parse_args(["voice", EXAMPLE]).allow_demo
     assert parser.parse_args(["interpolate", JV, "--shots", "s02"]).cmd == "interpolate"
+
+
+# --- per-episode cast overrides --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cast, message",
+    [
+        ({"nobody": {"style": "apron"}}, "角色表"),
+        ({"taeoh": {"age": 30}}, "年齡和性別不能改"),
+        ({"taeoh": {"style": ""}}, "文字"),
+        ({"taeoh": {"style": "x" * 201}}, "文字"),
+        ({"taeoh": {}}, "物件"),
+        (["taeoh"], "物件"),
+    ],
+)
+def test_cast_validation(tmp_path, cast, message):
+    data = jv_data()
+    data["cast"] = cast
+    errors, _ = drama.validate_episode(write_episode(tmp_path, data, name="jv_cast"))
+    assert any(message in e for e in errors), errors
+
+
+def test_keyframes_carry_the_episode_wardrobe():
+    ep = drama.load_episode(JV)
+    seen = {}
+
+    def fake_gen(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_weight, **kw):
+        seen[filename] = (trigger, kw["character_overrides"])
+        touch(os.path.join(out_dir, f"{filename}.png"))
+
+    drama.run_keyframes(
+        ep,
+        drama.select_shots(ep, "s03,s04"),
+        draft=True,
+        ffmpeg="ffmpeg",
+        gen=fake_gen,
+        run=touch_last,
+        server_up=lambda: True,
+    )
+    assert seen["s03_raw"] == ("taeoh", {"style": "crisp white shirt under a dark brown barista apron"})
+    assert seen["s04_raw"][1]["appearance"].startswith("shoulder-length wavy dark chestnut")
+
+
+def test_motion_prompts_carry_the_wardrobe_instead_of_the_character_id():
+    ep = drama.load_episode(JV)
+    specs = {s.stem: s for s in drama.motion_specs(ep, drama.select_shots(ep), "draft")}
+    barista = specs["s03_draft"]
+    assert barista.trigger is None  # the worker would add the default outfit back
+    assert barista.prompt.startswith("22 year old adult man") and "barista apron" in barista.prompt
+    assert "taeoh" not in barista.prompt
+    assert "dark chestnut brown hair" in specs["s04_draft"].prompt
