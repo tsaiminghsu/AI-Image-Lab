@@ -54,6 +54,12 @@ SEGMENT_AUDIO_CODEC = ["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
 LOUDNESS_TARGET = -14.0
 PEAK_LIMIT = 0.84  # about -1.5 dBFS
 SILENT_BELOW = -50.0  # an episode with no voice measures -70; don't amplify silence
+# Before the mix, every spoken line is brought to one reference loudness, so a character whose voice
+# comes out louder doesn't stand out: Kokoro's am_fenrir measured -21 LUFS against af_heart's -25.7 in
+# the same scene. The reference only sets the balance; the final gain above sets the published level.
+# -23 (EBU R128) leaves headroom in the 16-bit segments, and a line is never raised past a -1 dBFS peak.
+VOICE_REFERENCE = -23.0
+VOICE_PEAK_CEILING = -1.0
 QUIET = ["-y", "-hide_banner", "-loglevel", "error"]
 
 _WINDOWS_FONTS = (r"C:\Windows\Fonts\msjhbd.ttc", r"C:\Windows\Fonts\msjh.ttc")
@@ -222,17 +228,18 @@ def frame_exact(seconds, fps=FPS):
     return math.ceil(seconds * fps - 1e-6) / fps
 
 
-def _audio(voice, voice_delay, duration):
+def _audio(voice, voice_delay, duration, voice_gain_db=None):
     dur = f"{duration:.3f}"
     if voice:
         delay = int(round(voice_delay * 1000))
-        return ["-i", voice], (f"aresample=48000,aformat=channel_layouts=stereo,adelay={delay}|{delay},"
+        gain = f"volume={voice_gain_db:.2f}dB," if voice_gain_db is not None else ""
+        return ["-i", voice], (f"{gain}aresample=48000,aformat=channel_layouts=stereo,adelay={delay}|{delay},"
                                f"apad,atrim=0:{dur}")
     return ["-f", "lavfi", "-t", dur, "-i", "anullsrc=r=48000:cl=stereo"], f"aresample=48000,atrim=0:{dur}"
 
 
-def _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out):
-    audio_in, achain = _audio(voice, voice_delay, duration)
+def _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out, voice_gain_db=None):
+    audio_in, achain = _audio(voice, voice_delay, duration, voice_gain_db)
     dur = f"{duration:.3f}"
     graph = f"[0:v]{vchain},format=yuv420p[v];[1:a]{achain}[a]"
     return [ffmpeg, *QUIET, *picture_in, *audio_in, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
@@ -240,10 +247,12 @@ def _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out)
 
 
 def segment_command(ffmpeg, *, out, duration, video=None, still=None, camera="push_in", voice=None,
-                    voice_delay=0.25, subtitle_lines=(), translation_lines=(), font=None, fps=FPS):
+                    voice_delay=0.25, voice_gain_db=None, subtitle_lines=(), translation_lines=(), font=None,
+                    fps=FPS):
     """One shot as a finished segment (.mkv): picture (clip or still with a camera move), optional
-    burned-in subtitle and translation (lists of one-line text files), and the voice line delayed by
-    voice_delay and padded with silence to the shot length. duration should already be frame_exact."""
+    burned-in subtitle and translation (lists of one-line text files), and the voice line - levelled by
+    voice_gain_db, delayed by voice_delay and padded with silence to the shot length. duration should
+    already be frame_exact."""
     if (video is None) == (still is None):
         raise ValueError("pass exactly one of video / still")
     if (subtitle_lines or translation_lines) and not font:
@@ -257,10 +266,11 @@ def segment_command(ffmpeg, *, out, duration, video=None, still=None, camera="pu
     subs = subtitle_filters(list(subtitle_lines), font, list(translation_lines)) if font else []
     if subs:
         vchain += "," + ",".join(subs)
-    return _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out)
+    return _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out, voice_gain_db)
 
 
-def card_command(ffmpeg, *, out, duration, blocks, font, background=None, voice=None, voice_delay=0.25, fps=FPS):
+def card_command(ffmpeg, *, out, duration, blocks, font, background=None, voice=None, voice_delay=0.25,
+                 voice_gain_db=None, fps=FPS):
     """A text card (phrase of the day, end card) as a segment: text blocks over a blurred, darkened
     keyframe or a plain background, with an optional voice reading."""
     if not font:
@@ -276,7 +286,7 @@ def card_command(ffmpeg, *, out, duration, blocks, font, background=None, voice=
     texts = card_filters(blocks, font)
     if texts:
         vchain += "," + ",".join(texts)
-    return _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out)
+    return _segment(ffmpeg, picture_in, vchain, voice, voice_delay, duration, fps, out, voice_gain_db)
 
 
 def normalise_command(ffmpeg, src, dst, width=OUT_W, height=OUT_H):
@@ -318,8 +328,9 @@ def bgm_command(ffmpeg, body, bgm, out, total_seconds, volume):
 
 
 def loudness_command(ffmpeg, path):
-    """Measure a file's integrated loudness; the ebur128 summary goes to stderr at the info level."""
-    return [ffmpeg, "-hide_banner", "-nostats", "-i", path, "-vn", "-af", "ebur128", "-f", "null", "-"]
+    """Measure a file's integrated loudness and sample peak; the ebur128 summary goes to stderr at the
+    info level."""
+    return [ffmpeg, "-hide_banner", "-nostats", "-i", path, "-vn", "-af", "ebur128=peak=sample", "-f", "null", "-"]
 
 
 def integrated_loudness(log):
@@ -327,6 +338,24 @@ def integrated_loudness(log):
     summary = log[log.rfind("Summary:"):] if "Summary:" in log else ""
     match = re.search(r"I:\s*(-?[0-9.]+)\s*LUFS", summary)
     return float(match.group(1)) if match else None
+
+
+def sample_peak(log):
+    """The sample peak (dBFS) from ebur128's summary, or None; digital silence reads -inf."""
+    summary = log[log.rfind("Summary:"):] if "Summary:" in log else ""
+    match = re.search(r"Peak:\s*(-inf|-?[0-9.]+)\s*dBFS", summary)
+    return float(match.group(1)) if match else None
+
+
+def line_gain(measured, peak=None):
+    """The gain (dB) that levels one spoken line to VOICE_REFERENCE without lifting its peak past
+    VOICE_PEAK_CEILING, or None when the line can't be measured or is silent."""
+    if measured is None or measured < SILENT_BELOW:
+        return None
+    gain = VOICE_REFERENCE - measured
+    if peak is not None:
+        gain = min(gain, VOICE_PEAK_CEILING - peak)
+    return round(gain, 2)
 
 
 def loudness_filter(measured):

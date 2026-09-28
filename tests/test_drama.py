@@ -489,11 +489,11 @@ def test_run_assemble_cuts_every_shot_and_concatenates(tmp_path):
     run = Recorder()
     out, total = drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
     assert out == ep.output()
-    assert len(run.calls) == len(ep.shots) + 3  # one per shot + concat, measure, finish; no bgm
+    assert len(run.calls) == len(ep.shots) + 4  # one per shot + s05's voice level + concat, measure, finish
     assert total == pytest.approx(sum(s["duration"] for s in ep.shots))
     with open(ep.text_file("s05", "line", 0), encoding="utf-8") as f:
         assert f.read() == "好久不見，你一點都沒變。"
-    s05_cmd = " ".join(run.calls[4][0])
+    s05_cmd = " ".join(next(c for c, _ in run.calls if c[-1] == ep.segment("s05")))
     assert "drawtext" in s05_cmd and ep.voice("s05") in s05_cmd
     s01_cmd = " ".join(run.calls[0][0])
     assert "zoompan" in s01_cmd and "drawtext" not in s01_cmd and "anullsrc" in s01_cmd
@@ -514,7 +514,7 @@ def test_run_assemble_mixes_music_when_the_episode_has_it(tmp_path):
     drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=run)
     mix, measure, finish = (c for c, _ in run.calls[-3:])
     assert str(bgm) in mix and "volume=0.100" in " ".join(mix) and mix[-1] == ep.sub("segments", "mixed.mkv")
-    assert ep.sub("segments", "mixed.mkv") in measure and "ebur128" in measure  # loudness of the mix
+    assert ep.sub("segments", "mixed.mkv") in measure and "ebur128=peak=sample" in measure  # loudness of the mix
     assert finish[finish.index("-i") + 1] == ep.sub("segments", "mixed.mkv") and finish[-1] == ep.output()
 
 
@@ -740,7 +740,7 @@ def test_jv_voice_items_use_kokoro_voices_and_read_cards_slowly():
     by_id = {it["id"]: it for it in items}
     assert set(by_id) == {"s03", "s04", "c05", "s06", "s07", "c08", "c09", "s11"}
     assert all(it["engine"] == drama.KOKORO for it in items)
-    assert {by_id[i]["voice"] for i in ("s03", "s06", "c08")} == {"am_michael"}  # the barista
+    assert {by_id[i]["voice"] for i in ("s03", "s06", "c08")} == {"am_fenrir"}  # the barista
     assert {by_id[i]["voice"] for i in ("s04", "c05", "s07", "c09", "s11")} == {"af_heart"}  # the customer
     assert by_id["c05"]["speed"] == 0.85 and by_id["s03"]["speed"] == 1.0
     assert by_id["c05"]["text"] == "Can I get a medium latte, please?"
@@ -1236,7 +1236,7 @@ def test_a_shot_can_switch_to_another_kokoro_voice(tmp_path):
     ep = write_episode(tmp_path, data, name="jv_shot_voice")
     assert drama.validate_episode(ep)[0] == []
     items, _ = drama.voice_items(ep, drama.select_shots(ep, "s03,s06"))
-    assert [it["voice"] for it in items] == ["bm_george", "am_michael"]
+    assert [it["voice"] for it in items] == ["bm_george", "am_fenrir"]
 
 
 def test_kokoro_ignores_emotion_and_says_so(tmp_path, capsys):
@@ -1315,7 +1315,7 @@ def test_voice_status_names_kokoro_voices(monkeypatch):
     monkeypatch.setattr(drama, "kokoro_python", lambda: "/kokoro/python")
     status = {label: (who, state) for label, who, state in drama.voice_status(drama.load_episode(JV))}
     assert status["kokoro:af_heart"] == (["xinyi"], "Kokoro 內建聲音（Apache-2.0，不需要錄音授權）")
-    assert status["kokoro:am_michael"][0] == ["taeoh"]
+    assert status["kokoro:am_fenrir"][0] == ["taeoh"]
     monkeypatch.setattr(drama, "kokoro_python", lambda: None)
     status = {label: state for label, _, state in drama.voice_status(drama.load_episode(JV))}
     assert "還沒安裝" in status["kokoro:af_heart"]
@@ -1361,7 +1361,7 @@ def test_assemble_measures_the_mix_and_raises_it_to_the_target():
 
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
-        if "ebur128" in cmd:
+        if "ebur128=peak=sample" in cmd:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr=EBUR128_LOG)
         return subprocess.CompletedProcess(cmd, 0)
 
@@ -1371,3 +1371,70 @@ def test_assemble_measures_the_mix_and_raises_it_to_the_target():
     assert calls[-2][1]["capture_output"] is True and ep.sub("segments", "body.mkv") in measure
     assert finish[finish.index("-af") + 1] == "volume=11.60dB,alimiter=limit=0.84:level=false"
     assert finish[finish.index("-c:v") + 1] == "copy" and finish[-1] == ep.output()
+
+
+# --- per-line voice levelling -----------------------------------------------------------------
+
+
+def ebur128_log(integrated, peak):
+    return (
+        f"[Parsed_ebur128_0 @ 000001] Summary:\n\n  Integrated loudness:\n    I:         {integrated} LUFS\n"
+        f"    Threshold: -33.0 LUFS\n\n  Sample peak:\n    Peak:       {peak} dBFS\n"
+    )
+
+
+def test_sample_peak_reads_the_summary():
+    assert compose.sample_peak(ebur128_log(-21.0, -5.2)) == -5.2
+    assert compose.sample_peak(ebur128_log(-70.0, "-inf")) == float("-inf")
+    assert compose.sample_peak(EBUR128_LOG) is None  # measured without peak=sample
+
+
+@pytest.mark.parametrize(
+    "measured, peak, gain",
+    [
+        (-25.7, -7.0, 2.7),  # af_heart: raised to the reference
+        (-21.0, -5.0, -2.0),  # am_fenrir: brought down to it
+        (-35.0, -3.0, 2.0),  # a quiet line with a loud peak: raised only up to the -1 dBFS ceiling
+        (-23.0, None, 0.0),
+        (-70.0, "-inf", None),  # silence
+        (None, None, None),
+    ],
+)
+def test_line_gain_levels_to_the_reference_without_clipping(measured, peak, gain):
+    peak = float(peak) if peak is not None else None
+    assert compose.line_gain(measured, peak) == gain
+
+
+def test_the_voice_gain_goes_in_front_of_the_voice_chain_only_when_given():
+    levelled = compose.segment_command(
+        "ffmpeg", out="o.mkv", duration=3, still="k.png", voice="v.wav", voice_gain_db=-2.04
+    )
+    graph = levelled[levelled.index("-filter_complex") + 1]
+    assert "[1:a]volume=-2.04dB,aresample=48000" in graph
+    plain = compose.segment_command("ffmpeg", out="o.mkv", duration=3, still="k.png", voice="v.wav")
+    assert "volume=" not in plain[plain.index("-filter_complex") + 1]
+    card = compose.card_command(
+        "ffmpeg", out="c.mkv", duration=3, blocks=[], font="f.ttc", voice="v.wav", voice_gain_db=2.7
+    )
+    assert "[1:a]volume=2.70dB," in card[card.index("-filter_complex") + 1]
+
+
+def test_assemble_levels_each_line_before_the_mix():
+    ep = drama.load_episode(JV)
+    for shot in ep.shots:
+        if shot["type"] != "card":
+            touch(ep.keyframe(shot["id"]))
+    write_wav(ep.voice("s03"), 2.0)  # the barista, louder
+    write_wav(ep.voice("s04"), 2.0)  # the customer, quieter
+    levels = {ep.voice("s03"): ebur128_log(-21.0, -5.0), ep.voice("s04"): ebur128_log(-25.7, -8.0)}
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr=levels.get(cmd[cmd.index("-i") + 1], ""))
+
+    drama.run_assemble(ep, ffmpeg="ffmpeg", font="C:/font.ttc", run=fake_run)
+    segments = {os.path.basename(c[-1]): c[c.index("-filter_complex") + 1] for c in calls if "-filter_complex" in c}
+    assert "[1:a]volume=-2.00dB," in segments["s03.mkv"]
+    assert "[1:a]volume=2.70dB," in segments["s04.mkv"]
+    assert "volume=" not in segments["s02.mkv"]  # no line, nothing to level

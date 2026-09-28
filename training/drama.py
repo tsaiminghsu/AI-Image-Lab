@@ -981,12 +981,13 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, f
     segments, total = [], 0.0
     for shot, plan in plans:
         sid = shot["id"]
-        spoken = "，有配音" if plan["voice"] else ""
+        gain = voice_gain(ffmpeg, plan["voice"], run) if plan["voice"] else None
+        spoken = ("，有配音" + (f"（{gain:+.1f} dB）" if gain is not None else "")) if plan["voice"] else ""
         if plan["card"]:
             print(f"{sid}: {plan['duration']:.2f}s，字卡{spoken}", flush=True)
             cmd = compose.card_command(ffmpeg, out=ep.segment(sid), duration=plan["duration"],
                                        blocks=card_blocks(ep, shot), font=font, background=plan["background"],
-                                       voice=plan["voice"], voice_delay=VOICE_LEAD_S, fps=fps)
+                                       voice=plan["voice"], voice_delay=VOICE_LEAD_S, voice_gain_db=gain, fps=fps)
         else:
             line = (shot.get("line") or "").strip()
             subtitle = write_text_lines(ep, sid, "line", line, compose.SUBTITLE_CHARS_PER_LINE,
@@ -998,8 +999,8 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, f
             print(f"{sid}: {plan['duration']:.2f}s，{source}{spoken}", flush=True)
             cmd = compose.segment_command(
                 ffmpeg, out=ep.segment(sid), duration=plan["duration"], video=plan["video"], still=plan["still"],
-                camera=plan["camera"], voice=plan["voice"], voice_delay=VOICE_LEAD_S, subtitle_lines=subtitle,
-                translation_lines=translation, font=font, fps=fps)
+                camera=plan["camera"], voice=plan["voice"], voice_delay=VOICE_LEAD_S, voice_gain_db=gain,
+                subtitle_lines=subtitle, translation_lines=translation, font=font, fps=fps)
         run(cmd, check=True)
         segments.append(ep.segment(sid))
         total += plan["duration"]
@@ -1017,7 +1018,7 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, f
         run(compose.bgm_command(ffmpeg, body, ep.resolve(bgm), mixed, total,
                                 float(ep.data.get("bgm_volume", DEFAULT_BGM_VOLUME))), check=True)
         body = mixed
-    measured = measure_loudness(ffmpeg, body, run)
+    measured = compose.integrated_loudness(_ebur128_log(ffmpeg, body, run))
     audio_filter = compose.loudness_filter(measured)
     if audio_filter:
         print(f"音量：{measured:.1f} LUFS → {compose.LOUDNESS_TARGET:.0f} LUFS", flush=True)
@@ -1028,10 +1029,16 @@ def run_assemble(ep, *, allow_preview=False, ffmpeg, font, run=subprocess.run, f
     return out, total
 
 
-def measure_loudness(ffmpeg, path, run=subprocess.run):
+def _ebur128_log(ffmpeg, path, run=subprocess.run):
     result = run(compose.loudness_command(ffmpeg, path), check=True, capture_output=True, text=True,
                  encoding="utf-8", errors="replace")
-    return compose.integrated_loudness(getattr(result, "stderr", None) or "")
+    return getattr(result, "stderr", None) or ""
+
+
+def voice_gain(ffmpeg, path, run=subprocess.run):
+    """The gain that levels one voice line to compose.VOICE_REFERENCE (None if it can't be measured)."""
+    log = _ebur128_log(ffmpeg, path, run)
+    return compose.line_gain(compose.integrated_loudness(log), compose.sample_peak(log))
 
 
 def run_interpolate(ep, shots, *, force=False, submit=None, upload=None, server_up=client.is_server_running):
