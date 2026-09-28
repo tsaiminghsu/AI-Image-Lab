@@ -5,6 +5,30 @@
 
 ## 2026-09-28
 
+### 小美、宛伶用新描述重畫錨點圖
+
+- **為什麼**：描述改成成人寫法（`e5b0e1c`）之後，錨點圖還是舊描述畫的，FaceID 鎖住的仍是那張臉；ai-companion 的
+  形象照也是從錨點圖裁的。
+- **怎麼畫**：用 `main` 的 `anchor` 流程（`--variant full`，juggernaut，1024²，`NEGATIVE_PROMPT` 含年齡安全負面詞），
+  每人 seed 3101–3104 四張候選，由使用者挑選：小美 3101、宛伶 3104。
+  - 新錨點：`reference_candidates/mei/anchor_seed3101.png`、`reference_candidates/wanling/anchor_seed3104.png`，
+    `picker_anchor_path()` 現在拿到的就是這兩張。
+  - 舊的 3001、3002 搬到各自的 `retired_2026-09-28/`，沒選上的候選留在 `candidates_2026-09-28/`，都在 git 忽略的
+    資料夾裡。
+  - README 範例指令裡的 `mei\anchor_seed3001.png` 改成 `anchor_seed3101.png`。
+  - README「快速測試安裝是否成功」的 `anchor --character mei --seeds 3001` 加上 `--out ..\outputs\install_test`。以前
+    那張 3001 就在錨點資料夾裡，測試會直接跳過；搬走之後，照舊指令會畫出一張新的 3001，排序在 3101 前面，
+    `picker_anchor_path()` 就會悄悄改用它。
+- **實測（RTX 2070，ComfyUI 啟動 12 秒）**：
+  - 小美 4 張共 124 秒：第一張 40 秒（含載入模型），之後每張約 27 秒。
+  - 宛伶前兩張 308 秒、178 秒，後兩張各 26–27 秒。慢的兩張 VRAM 停在 7.8／8 GB、利用率 100%，溫度卻從 77°C 降到
+    60°C，像是換 prompt 後文字編碼器和 UNet 擠滿顯存、落到共享記憶體。只在同一個 session 換角色時出現，連續畫兩個
+    角色時，中間先 `POST /free` 或重開 ComfyUI 比較保險。
+  - 整批峰值：溫度 78°C、VRAM 7,858 MiB、ComfyUI RSS 9.67 GB（nvidia-smi＋psutil 每 2 秒取樣）。跑完用
+    `stop_comfyui.ps1` 關掉，VRAM 回到 326 MiB。
+- **還沒處理**：`datasets/wanling` 的 10 張 LoRA 訓練圖（2026-08-16）是用舊錨點生成的，臉是舊的樣子，要訓練宛伶的
+  LoRA 得用新錨點重做。小美沒有資料集。
+
 ### 小美、宛伶的外觀描述改成成人的寫法
 
 - **為什麼**：兩人的年齡合格（19、18），外觀卻寫成 `soft round face`／`youthful round face`、`petite build`，

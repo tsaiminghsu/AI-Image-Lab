@@ -276,10 +276,10 @@ curl http://127.0.0.1:8188/system_stats
 
 ```powershell
 cd D:\AI-Image-Lab\training
-D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py anchor --character mei --seeds 3001
+D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py anchor --character mei --seeds 3001 --out ..\outputs\install_test
 ```
 
-跑完會在 `training/reference_candidates/mei/anchor_seed3001.png` 產生一張圖，
+跑完會在 `outputs/install_test/anchor_seed3001.png` 產生一張圖（`--out` 讓它不要寫進角色的錨點資料夾），
 用檔案總管打開確認畫面正常，就代表整個環境裝好了。之後可以直接跳到下面的
 「網頁 GUI」用瀏覽器操作，或繼續看「怎麼生成角色」用 CLI 批次生成 dataset。
 
@@ -1252,7 +1252,7 @@ python generate_character.py anchor --character mei --seeds 3001 3002 3003
 ### Stage 2：Variations（IP-Adapter 生成完整 dataset）
 
 ```powershell
-python generate_character.py variations --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --count 100
+python generate_character.py variations --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --count 100
 ```
 
 以 anchor 圖的臉部特徵透過 IP-Adapter 條件化，生成 `--count` 張不同角度/姿勢/
@@ -1262,7 +1262,7 @@ caption `.txt`（kohya_ss 訓練用）。已存在的檔案會自動跳過，可
 ### 加分測試：擦邊但非露骨內容（單張）
 
 ```powershell
-python generate_character.py test-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3001.png"
+python generate_character.py test-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3101.png"
 ```
 
 用單獨的 `SUGGESTIVE_NEGATIVE`（只封鎖露骨性器官/性行為/色情字眼，允許泳裝/
@@ -1272,7 +1272,7 @@ python generate_character.py test-suggestive --character mei --anchor "reference
 ### Stage 2b：擦邊內容批次（suggestive-tier dataset）
 
 ```powershell
-python generate_character.py variations-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --count 20
+python generate_character.py variations-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --count 20
 ```
 
 跟 `variations` 同一套續傳邏輯，但用泳裝/運動內衣等詞庫（`SUGGESTIVE_OUTFITS`/
@@ -1283,7 +1283,7 @@ python generate_character.py variations-suggestive --character mei --anchor "ref
 ### 自由輸入 Prompt（單張，CLI 版）
 
 ```powershell
-python generate_character.py custom --prompt "sitting in a cozy library, reading a book" --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --tier safe
+python generate_character.py custom --prompt "sitting in a cozy library, reading a book" --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --tier safe
 ```
 
 `--character`/`--anchor` 皆可省略（純文字生圖，不接 IP-Adapter）；兩者也可以
@@ -1414,7 +1414,7 @@ seed。同一個測試裡男性角色 taeoh 的 4 張都是男生，沒有 SD1.5
 ### 批次生成 GIF（快速預覽，CLI 版）
 
 ```powershell
-python generate_character.py gif --prompt "standing in a park, looking at the camera" --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --frames 8 --seed 9000
+python generate_character.py gif --prompt "standing in a park, looking at the camera" --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --frames 8 --seed 9000
 ```
 
 **第一張是完整生成**（建立人物/姿勢/場景），**後面 `--frames`-1 張都是拿
@@ -1489,7 +1489,7 @@ python generate_character.py video-animatediff --face-ref "reference_candidates\
 ### 會講話的嘴型影片（SadTalker）
 
 ```powershell
-python generate_character.py talk --image "reference_candidates\mei\anchor_seed3001.png" --audio "D:\voice\hello.wav"
+python generate_character.py talk --image "reference_candidates\mei\anchor_seed3101.png" --audio "D:\voice\hello.wav"
 ```
 
 來源人像**僅限虛構/AI 生成的臉**，禁止真人照片。輸出
@@ -1954,10 +1954,10 @@ shift 8、20 步、cfg 5、uni_pc／simple、預設 1280×704、121 幀（5 秒�
 #### CLI
 
 ```powershell
-ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --frames 81
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3101.png --character mei --prompt "她轉頭看向鏡頭微笑" --frames 81
 ComfyUI\.venv\Scripts\python.exe training\cloud_video.py cancel --provider runpod --job-id <工作 ID>
 # 先出三個便宜的預覽（480×832、49 幀、12 步，約正式版的十分之一），一次送出
-ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --preview --count 3
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3101.png --character mei --prompt "她轉頭看向鏡頭微笑" --preview --count 3
 ```
 
 - 結果存到 `training/reference_candidates/videos/`，檔名含雲端工作 ID（不會跟別的工作撞名）
@@ -1996,7 +1996,7 @@ endpoint ID）：
 - 環境變數：`GENERATION_BACKEND=runpod`（優先序：GUI 勾選 > `--backend` > 環境變數 > 預設本機）
 
 ```powershell
-ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod custom --prompt "portrait photo" --character mei --anchor training\reference_candidates\mei\anchor_seed3001.png --pose standing_straight
+ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod custom --prompt "portrait photo" --character mei --anchor training\reference_candidates\mei\anchor_seed3101.png --pose standing_straight
 ```
 
 **安全檢查在兩邊各做一次**（`training/workflow_safety.py`）：本機送出前先檢查，不合格的圖不會送出、
