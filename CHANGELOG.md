@@ -5,6 +5,37 @@
 
 ## 2026-09-28
 
+### 宛伶的 LoRA 資料集用新錨點重做
+
+- **為什麼**：`datasets/wanling` 的 10 張（2026-08-16）是用舊錨點生成的。錨點換成 `anchor_seed3104.png` 之後，拿這批
+  訓練的 LoRA 會把舊臉帶回來。
+- **怎麼做**：`main` 的 `variations` 流程（`--variant full`，juggernaut，FaceID Plus V2 權重 1.0、背面構圖自動降到 0.3，
+  `NEGATIVE_PROMPT` 含年齡安全負面詞），參數跟上次一樣：`--count 10 --seed 2000`。
+  - 同一個 seed 抽出同樣的角度、姿勢、服裝、光線和背景，10 個 caption 跟舊的逐字相同；差別只在臉（新錨點）和 prompt
+    裡的外觀描述（`e5b0e1c` 的寫法）。
+  - 舊的 10 張搬到 `datasets/wanling_old_anchor/`（照 `xinyi_old_plusface` 的命名），留著對照，不要拿來訓練。
+    `runpod_bundle.py pack` 只讀 `datasets/<角色>/`，不會打包到它。
+- **臉部比對**（`face_similarity` 的 InsightFace buffalo_l，CPU）：
+  - 新的 10 張對新錨點平均 0.77（0.69–0.82）；舊的 10 張對同一張新錨點平均 0.56，對兩張舊錨點也只有 0.44、0.55。
+  - 對照：新舊三張錨點兩兩之間（明顯是不同的臉）是 0.46–0.58，舊資料集落在這個範圍裡。
+  - 背面構圖的 4 張照樣畫成正臉或側臉，跟舊資料集一樣（見 `BACK_VIEW_PICK_RATE` 的註解）。
+- **第 4 張卡在 VAE 解碼**：
+  - 取樣 30 步正常（每步 1.12 秒），印出 `0 models unloaded.` 之後卡了 13 分鐘：VRAM 7.9／8 GB、利用率 100%，溫度
+    從 71°C 降到 60°C。
+  - 原因：現在的 ComfyUI 預設開 DynamicVRAM，載入 VAE 時不會卸下同樣是 dynamic 的 UNet（`comfy/model_management.py`
+    的 `free_memory`："don't actually unload dynamic models for the sake of other dynamic models"）。8 GB 放不下 UNet
+    加上解碼要的記憶體，驅動就把多的部分放到系統記憶體，經過 PCIe x1 存取。
+  - 下面那則重畫錨點時慢的兩張（307、176 秒）原本歸因於換角色。查 log 更正：那兩張取樣也正常（30 步約 19 秒），多出來
+    的時間都在 VAE 解碼，是同一件事，同一個角色的批次裡也會發生。
+  - 關掉 ComfyUI、加 `--disable-smart-memory` 重開（每次載入前先把其他模型卸到系統 RAM），剩下 7 張沒再卡住。
+    ComfyUI 記錄的執行時間：第一張 71 秒（含載入模型），之後 50–67 秒；預設設定下沒卡住的 3 張是 78、49、45 秒。
+    README「疑難排解」加了一節。
+  - 補跑用的是 scratch 腳本：先依序抽完 10 組 prompt，再只生成缺的。CLI 的續傳會從 `random.Random(2000)` 重新抽，
+    第 4 張會拿到第 1 張的組合（另外修）。
+- **實測（RTX 2070）**：ComfyUI 啟動 10–12 秒。峰值溫度 77°C；VRAM 7,948 MiB（卡住時）、加旗標後 7,351 MiB；ComfyUI RSS
+  12.8 GB、加旗標後 9.75 GB（nvidia-smi＋psutil 每 2 秒取樣）。跑完用 `stop_comfyui.ps1` 關掉，VRAM 回到 516 MiB。
+- **還沒處理**：README 建議訓練前補到 40–60 張，這次只照原本的 10 張重做。
+
 ### 小美、宛伶用新描述重畫錨點圖
 
 - **為什麼**：描述改成成人寫法（`e5b0e1c`）之後，錨點圖還是舊描述畫的，FaceID 鎖住的仍是那張臉；ai-companion 的
@@ -22,12 +53,12 @@
 - **實測（RTX 2070，ComfyUI 啟動 12 秒）**：
   - 小美 4 張共 124 秒：第一張 40 秒（含載入模型），之後每張約 27 秒。
   - 宛伶前兩張 308 秒、178 秒，後兩張各 26–27 秒。慢的兩張 VRAM 停在 7.8／8 GB、利用率 100%，溫度卻從 77°C 降到
-    60°C，像是換 prompt 後文字編碼器和 UNet 擠滿顯存、落到共享記憶體。只在同一個 session 換角色時出現，連續畫兩個
-    角色時，中間先 `POST /free` 或重開 ComfyUI 比較保險。
+    60°C。當時以為是換角色造成的，後來查清楚是 VAE 解碼落到共享記憶體，跟換角色無關，見上面「宛伶的 LoRA 資料集
+    用新錨點重做」。
   - 整批峰值：溫度 78°C、VRAM 7,858 MiB、ComfyUI RSS 9.67 GB（nvidia-smi＋psutil 每 2 秒取樣）。跑完用
     `stop_comfyui.ps1` 關掉，VRAM 回到 326 MiB。
 - **還沒處理**：`datasets/wanling` 的 10 張 LoRA 訓練圖（2026-08-16）是用舊錨點生成的，臉是舊的樣子，要訓練宛伶的
-  LoRA 得用新錨點重做。小美沒有資料集。
+  LoRA 得用新錨點重做（當天晚上重做了，見上面那則）。小美沒有資料集。
 
 ### 小美、宛伶的外觀描述改成成人的寫法
 

@@ -2397,8 +2397,9 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 步驟：
 
 1. **補資料集（若太少）**：目前 `wanling` 10 張、`xinyi` 9 張、`yuqing` 9 張、
-   `ruoxi` 4 張（`datasets/character` 另有 100 張，是 `mylora` 那次用的），
-   先在本地補到 40-60 張：
+   `ruoxi` 4 張（`datasets/character` 另有 100 張，是 `mylora` 那次用的）。
+   `wanling` 那 10 張是 2026-09-28 用新錨點 `anchor_seed3104.png` 重做的；舊臉的 10 張收在
+   `datasets/wanling_old_anchor/`，不要拿來訓練。先在本地補到 40-60 張：
    ```powershell
    python generate_character.py variations --character xinyi --anchor <anchor.png> --count 60
    ```
@@ -2446,6 +2447,23 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 從哪裡繼續），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
 繼續，不會重跑已完成的部分。長時間批次生成前，建議先關閉不必要的背景程式騰出
 系統 RAM。
+
+### 批次生成卡在 VAE 解碼（VRAM 停在 7.8 GB、利用率 100%、溫度往下掉）
+
+ComfyUI 終端機的取樣進度條已經跑完（30/30），印出 `Model AutoencoderKL prepared for dynamic VRAM loading` 和
+`0 models unloaded.` 之後就停住好幾分鐘，這是 VAE 解碼落到了共享記憶體。現在的 ComfyUI 預設開 DynamicVRAM，它不會
+為了載入 VAE 而卸下 UNet；8 GB 的卡放不下 UNet 加上解碼要的記憶體，驅動就把多的部分放到系統記憶體，經過 PCIe x1
+存取，一張圖會多花 2 分鐘到 13 分鐘以上。不是每張都會發生：2026-09-28 宛伶的資料集前 3 張正常，第 4 張卡住。
+
+批次生成（`variations`、一次好幾個 seed 的 `anchor`）前，用這個旗標啟動 ComfyUI：
+
+```powershell
+D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py --listen 127.0.0.1 --port 8188 --disable-smart-memory
+```
+
+每次載入模型前，它會先把其他模型卸到系統 RAM，VAE 解碼就有足夠的顯存。代價是每張都要重新搬 UNet：那次加旗標後
+每張 50–67 秒，預設設定沒卡住時是 45–49 秒（ComfyUI 記錄的執行時間，都不含第一張的載入）。GUI 自動啟動的 ComfyUI 沒有加這個旗標；先用上面的
+指令手動啟動，GUI 會直接沿用。已經卡住的話，用 `training\stop_comfyui.ps1` 關掉 ComfyUI，加旗標重開後再接著跑。
 
 ### 影片生成：高清階段 VRAM 不足
 
