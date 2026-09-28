@@ -21,6 +21,7 @@ import argparse
 import glob
 import os
 import random
+import re
 import shutil
 import sys
 from types import SimpleNamespace
@@ -443,23 +444,36 @@ def build_variation_prompt(trigger, profile, rng):
     return prompt, caption, width, height, weight_override
 
 
+def _resume_point(out_dir, prefix):
+    """(images already in out_dir, index the next one gets) for a resumable dataset batch.
+
+    Files are named <prefix><index:04d>_seed<seed>.png. A batch continues after the HIGHEST
+    existing index, not at the number of files: deleting a bad image while curating the set
+    leaves a gap, and counting files restarted inside the numbered range and overwrote the
+    newest image."""
+    pattern = re.compile(rf"{re.escape(prefix)}(\d+)_seed\d+\.png")
+    indices = [int(m.group(1)) for m in map(pattern.fullmatch, os.listdir(out_dir)) if m]
+    return len(indices), max(indices, default=-1) + 1
+
+
 def gen_variations(trigger, anchor_path, out_dir, count, ip_adapter_weight, base_seed):
     profile = get_character(trigger)
     os.makedirs(out_dir, exist_ok=True)
-    existing = [
-        f for f in os.listdir(out_dir)
-        if f.startswith("var_") and f.endswith(".png")
-    ]
-    start_idx = len(existing)
-    if start_idx >= count:
-        print(f"already have {start_idx} variations >= requested {count}, nothing to do", flush=True)
+    have, start_idx = _resume_point(out_dir, "var_")
+    if have >= count:
+        print(f"already have {have} variations >= requested {count}, nothing to do", flush=True)
         return
 
     ref_filename = client.upload_reference_image(anchor_path)
     rng = random.Random(base_seed)
+    # Image i gets draw i however the batch was split across runs. A resumed run used to start
+    # over at draw 0 and repeat image 0's angle/pose/outfit and caption. Replay the builder rather
+    # than skipping a fixed number of calls: rng.choice consumes a variable amount of randomness.
+    for _ in range(start_idx):
+        build_variation_prompt(trigger, profile, rng)
 
     client.log_gpu_memory("before_variation_batch")
-    for i in range(start_idx, count):
+    for i in range(start_idx, start_idx + count - have):
         prompt, caption, width, height, weight_override = build_variation_prompt(trigger, profile, rng)
         seed = base_seed + i
         stem = f"var_{i:04d}_seed{seed}"
@@ -541,26 +555,24 @@ def build_suggestive_variation_prompt(trigger, profile, rng):
 
 
 def gen_suggestive_variations(trigger, anchor_path, out_dir, count, ip_adapter_weight, base_seed):
-    """Batch suggestive-tier variations, same resumable-by-file-count shape
-    as gen_variations. Filenames are prefixed "sugg_" so they can share a
+    """Batch suggestive-tier variations, resumed the same way as gen_variations
+    (see _resume_point). Filenames are prefixed "sugg_" so they can share a
     dataset folder with gen_variations' "var_" files without colliding."""
     profile = get_character(trigger)
     os.makedirs(out_dir, exist_ok=True)
-    existing = [
-        f for f in os.listdir(out_dir)
-        if f.startswith("sugg_") and f.endswith(".png")
-    ]
-    start_idx = len(existing)
-    if start_idx >= count:
-        print(f"already have {start_idx} suggestive variations >= requested {count}, nothing to do", flush=True)
+    have, start_idx = _resume_point(out_dir, "sugg_")
+    if have >= count:
+        print(f"already have {have} suggestive variations >= requested {count}, nothing to do", flush=True)
         return
 
     ref_filename = client.upload_reference_image(anchor_path)
     rng = random.Random(base_seed)
+    for _ in range(start_idx):  # image i gets draw i, as in gen_variations
+        build_suggestive_variation_prompt(trigger, profile, rng)
     negative_prompt = f"{SUGGESTIVE_NEGATIVE}, {REALISTIC_NEGATIVE}"
 
     client.log_gpu_memory("before_suggestive_variation_batch")
-    for i in range(start_idx, count):
+    for i in range(start_idx, start_idx + count - have):
         prompt, caption, width, height, weight_override = build_suggestive_variation_prompt(trigger, profile, rng)
         seed = base_seed + i
         stem = f"sugg_{i:04d}_seed{seed}"

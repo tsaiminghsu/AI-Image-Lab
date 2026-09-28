@@ -1257,7 +1257,9 @@ python generate_character.py variations --character mei --anchor "reference_cand
 
 以 anchor 圖的臉部特徵透過 IP-Adapter 條件化，生成 `--count` 張不同角度/姿勢/
 服裝/光線/背景的變化圖，輸出到 `datasets/<character>/`，每張圖同時輸出對應的
-caption `.txt`（kohya_ss 訓練用）。已存在的檔案會自動跳過，可安全中斷後續傳。
+caption `.txt`（kohya_ss 訓練用）。可安全中斷後續傳：重跑同一條指令會從編號最大的那張往後接，
+每張的角度、姿勢、服裝跟一次跑完的一樣，直到資料夾裡有 `--count` 張。挑圖時刪掉的不會補回來，也不會
+被覆蓋。
 
 ### 加分測試：擦邊但非露骨內容（單張）
 
@@ -2443,8 +2445,8 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 之後沒再崩潰過，但還是會吃緊：跑 GUI 預設高清時完整版 checkpoint 就佔 15.5-15.8GB，系統
 只剩約 4GB 可用、開始用分頁檔，同一批的第三張因此從 167 秒變成 530 秒（量化版可以省下約
 3GB，見「3c. 量化版模型」）。
-`gen_variations`/`gen_suggestive_variations` 都是續傳邏輯（依已存在檔案數判斷
-從哪裡繼續），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
+`gen_variations`/`gen_suggestive_variations` 都是續傳邏輯（從已存在的最大編號
+往後接），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
 繼續，不會重跑已完成的部分。長時間批次生成前，建議先關閉不必要的背景程式騰出
 系統 RAM。
 
