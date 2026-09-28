@@ -115,7 +115,7 @@
       "translation": "內用還是外帶？",
       "note": "回答：For here. / To go, please.",
       "line": "For here or to go?",
-      "speed": 0.85,
+      "speed": 0.75,
       "character": "taeoh",
       "background": "s06",
       "duration": 3.5
