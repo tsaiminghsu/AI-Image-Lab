@@ -124,6 +124,8 @@ MINIMUM_AGE = 18
 # own identity, own anchor + dataset folder. Ages vary 18-25, each with a
 # distinct face/build and a distinct modern style so they stay visually
 # separable from one another and from the original "mylora" character.
+# Descriptions read as adults: no youth-coded wording (petite, youthful, baby
+# face, school uniform...) - test_safety_invariants pins that.
 CHARACTERS = {
     "mylora": {
         "age": 28,
@@ -134,8 +136,8 @@ CHARACTERS = {
     "mei": {
         "age": 19,
         "gender": "woman",
-        "appearance": "long straight jet-black hair with blunt bangs, bright round eyes, soft round face, petite build",
-        "style": "casual campus style, oversized hoodie and pleated skirt, sneakers",
+        "appearance": "long straight jet-black hair with blunt bangs, bright dark eyes, oval face with defined cheekbones, slender build",
+        "style": "artsy casual style, oversized cardigan over a fitted t-shirt, wide-leg jeans, canvas sneakers",
     },
     "xinyi": {
         "age": 21,
@@ -158,7 +160,7 @@ CHARACTERS = {
     "wanling": {
         "age": 18,
         "gender": "woman",
-        "appearance": "high ponytail, big expressive eyes, youthful round face, petite build",
+        "appearance": "high ponytail, lively expressive eyes, sharp cheekbones, small beauty mark under one eye, slim build",
         "style": "y2k fashion, colorful crop top and cargo pants",
     },
     "minjun": {

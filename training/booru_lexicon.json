@@ -255,18 +255,10 @@
     },
     {
       "match": [
-        "bright round eyes"
+        "bright dark eyes"
       ],
       "tags": [
-        "round eyes"
-      ]
-    },
-    {
-      "match": [
-        "big expressive eyes"
-      ],
-      "tags": [
-        "big eyes"
+        "black eyes"
       ]
     },
     {
@@ -327,12 +319,18 @@
     },
     {
       "match": [
-        "soft round face",
-        "youthful round face",
         "round face"
       ],
       "tags": [
         "round face"
+      ]
+    },
+    {
+      "match": [
+        "beauty mark under one eye"
+      ],
+      "tags": [
+        "mole under eye"
       ]
     },
     {
@@ -359,14 +357,6 @@
       ],
       "tags": [
         "v-shaped chin"
-      ]
-    },
-    {
-      "match": [
-        "petite build"
-      ],
-      "tags": [
-        "petite"
       ]
     },
     {

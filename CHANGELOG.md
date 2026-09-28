@@ -5,6 +5,29 @@
 
 ## 2026-09-28
 
+### 小美、宛伶的外觀描述改成成人的寫法
+
+- **為什麼**：兩人的年齡合格（19、18），外觀卻寫成 `soft round face`／`youthful round face`、`petite build`，
+  小美的穿著還是 `casual campus style ... pleated skirt`。年齡欄位過得了 `MINIMUM_AGE`，描述卻把模型往更年輕的
+  臉和身形拉；詞庫還會在 Pony 上把 `petite build` 轉成 booru 標籤 `petite`。ai-companion 投資報告的風險表把這點
+  列為「部分完成」。
+- **改了什麼**：
+  - `mei`：`bright dark eyes, oval face with defined cheekbones, slender build`，穿著改成
+    `artsy casual style, oversized cardigan over a fitted t-shirt, wide-leg jeans, canvas sneakers`（設計系學生，
+    不再用校園風和百褶裙）。髮型沒變，`test_prompt_adapter` 靠它推出 `straight hair`。
+  - `wanling`：`lively expressive eyes, sharp cheekbones, small beauty mark under one eye, slim build`，Y2K 穿著沒變。
+  - `booru_lexicon.json`：拿掉只為舊描述存在的 `bright round eyes`→`round eyes`、`big expressive eyes`→`big eyes`、
+    `petite build`→`petite`，以及 round face 的 soft／youthful 兩種說法；新增 `bright dark eyes`→`black eyes`、
+    `beauty mark under one eye`→`mole under eye`。
+  - `prompt_adapter.FORBIDDEN_TAG_TERMS` 加上 `youthful`、`petite`，詞庫不能再推出這兩個標籤。
+  - `test_safety_invariants.py` 新增一條：任何角色的 `appearance`／`style` 都不能有 petite、youthful、baby、child、
+    teen、school、girlish 這類字（整字比對）。
+  - [PROMPT_GUIDE.md](training/PROMPT_GUIDE.md) 4d 的角色表、展開後的前綴與範例 5b 跟著更新，5b 推出的 booru 標籤變成
+    `1girl, solo, long hair, straight hair, black eyes, slim, denim, pants`。README 角色表的小美改成「文青休閒風」。
+- **沒有改到圖**：`reference_candidates/mei`、`wanling` 的錨點圖是用舊描述生成的，FaceID 鎖住的仍是那張臉；
+  ai-companion 的形象照也是從錨點圖裁的。要讓圖跟上描述，得用 GPU 重新產生錨點再挑圖，這次沒有跑。
+  JV 劇集只用到 `taeoh`、`xinyi`，不受影響。
+
 ### JV EP1 店員改用 am_fenrir，每句配音先對齊音量
 
 - **為什麼**：試聽比較後，店員 taeoh 從 `am_michael` 改成 `am_fenrir`。但 am_fenrir 的原始輸出約 −21 LUFS，比同場

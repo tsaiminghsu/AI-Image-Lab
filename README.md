@@ -1226,7 +1226,7 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py list-char
 | trigger | 年齡 | 性別 | 風格 |
 |---|---|---|---|
 | `mylora` | 28 | 女 | 鄰家女孩、休閒穿搭 |
-| `mei` | 19 | 女 | 台灣校園風 |
+| `mei` | 19 | 女 | 文青休閒風 |
 | `xinyi` | 21 | 女 | 現代極簡通勤 |
 | `ruoxi` | 23 | 女 | 潮流街頭 |
 | `yuqing` | 25 | 女 | 優雅辦公室穿搭 |

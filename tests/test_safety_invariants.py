@@ -9,6 +9,7 @@ safety guarantee.
 """
 
 import itertools
+import re
 
 import comfyui_client as client
 import generate_character as gc
@@ -30,6 +31,36 @@ def test_every_character_meets_minimum_age_and_has_a_lora_key():
     for name, profile in gc.CHARACTERS.items():
         assert profile["age"] >= gc.MINIMUM_AGE, f"{name} is below MINIMUM_AGE"
         assert "lora" in profile, f"{name} profile missing 'lora' key (setdefault loop didn't run?)"
+
+
+# An age of 18+ says nothing about what the description asks the model to draw. Until 2026-09-28
+# mei (19) and wanling (18) were "soft/youthful round face, petite build", and the booru lexicon
+# turned "petite build" into the tag "petite" on Pony. These words pull a prompt toward a younger
+# face or body, so no character's appearance or style may use them (whole words, any case).
+YOUTH_CODED_WORDS = (
+    "petite",
+    "youthful",
+    "baby",
+    "babyface",
+    "childlike",
+    "child",
+    "kid",
+    "teen",
+    "school",
+    "schoolgirl",
+    "girlish",
+    "loli",
+)
+
+
+def test_no_character_description_reads_younger_than_its_age():
+    offenders = []
+    for name, profile in gc.CHARACTERS.items():
+        text = f"{profile['appearance']}, {profile['style']}".lower()
+        hits = [w for w in YOUTH_CODED_WORDS if re.search(rf"(?<![a-z]){re.escape(w)}(?![a-z])", text)]
+        if hits:
+            offenders.append(f"{name}: {hits}")
+    assert not offenders, "youth-coded wording in CHARACTERS: " + "; ".join(offenders)
 
 
 # --- the safety constants must actually SAY something ------------------------------------------

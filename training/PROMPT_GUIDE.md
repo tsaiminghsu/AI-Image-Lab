@@ -372,11 +372,11 @@ lakeside dock
 | trigger | 年齡 | 性別 | 外觀 | 風格 |
 |---|---|---|---|---|
 | `mylora` | 28 | woman | long straight black hair, dark brown eyes, oval face, mature adult features, natural healthy build | girl-next-door style, casual outfit |
-| `mei` | 19 | woman | long straight jet-black hair with blunt bangs, bright round eyes, soft round face, petite build | casual campus style, oversized hoodie and pleated skirt, sneakers |
+| `mei` | 19 | woman | long straight jet-black hair with blunt bangs, bright dark eyes, oval face with defined cheekbones, slender build | artsy casual style, oversized cardigan over a fitted t-shirt, wide-leg jeans, canvas sneakers |
 | `xinyi` | 21 | woman | shoulder-length wavy chestnut brown hair, almond eyes, heart-shaped face, slim build | modern minimalist chic, tailored blazer and trousers |
 | `ruoxi` | 23 | woman | long layered hair with soft curls, dark brown eyes, oval face, athletic build | trendy streetwear, cropped jacket and jeans |
 | `yuqing` | 25 | woman | sleek short bob haircut, sharp eyes, angular face, tall slender build | elegant office chic, fitted blouse and skirt |
-| `wanling` | 18 | woman | high ponytail, big expressive eyes, youthful round face, petite build | y2k fashion, colorful crop top and cargo pants |
+| `wanling` | 18 | woman | high ponytail, lively expressive eyes, sharp cheekbones, small beauty mark under one eye, slim build | y2k fashion, colorful crop top and cargo pants |
 | `minjun` | 18 | man | tousled black hair, warm friendly eyes, soft face, slim build | Taiwanese street style, oversized hoodie and cargo pants |
 | `junho` | 20 | man | undercut hairstyle, calm reserved eyes, angular face, lean build | Japanese minimalist style, monochrome knit sweater and slim trousers |
 | `taeoh` | 22 | man | soft permed hair, cool detached eyes, refined face, toned build | Korean urban style, oversized shirt and black trousers |
@@ -387,11 +387,11 @@ lakeside dock
 
 ```
 mylora, 28 year old adult woman, east asian, long straight black hair, dark brown eyes, oval face, mature adult features, natural healthy build, girl-next-door style, casual outfit
-mei, 19 year old adult woman, east asian, long straight jet-black hair with blunt bangs, bright round eyes, soft round face, petite build, casual campus style, oversized hoodie and pleated skirt, sneakers
+mei, 19 year old adult woman, east asian, long straight jet-black hair with blunt bangs, bright dark eyes, oval face with defined cheekbones, slender build, artsy casual style, oversized cardigan over a fitted t-shirt, wide-leg jeans, canvas sneakers
 xinyi, 21 year old adult woman, east asian, shoulder-length wavy chestnut brown hair, almond eyes, heart-shaped face, slim build, modern minimalist chic, tailored blazer and trousers
 ruoxi, 23 year old adult woman, east asian, long layered hair with soft curls, dark brown eyes, oval face, athletic build, trendy streetwear, cropped jacket and jeans
 yuqing, 25 year old adult woman, east asian, sleek short bob haircut, sharp eyes, angular face, tall slender build, elegant office chic, fitted blouse and skirt
-wanling, 18 year old adult woman, east asian, high ponytail, big expressive eyes, youthful round face, petite build, y2k fashion, colorful crop top and cargo pants
+wanling, 18 year old adult woman, east asian, high ponytail, lively expressive eyes, sharp cheekbones, small beauty mark under one eye, slim build, y2k fashion, colorful crop top and cargo pants
 minjun, 18 year old adult man, east asian, tousled black hair, warm friendly eyes, soft face, slim build, Taiwanese street style, oversized hoodie and cargo pants
 junho, 20 year old adult man, east asian, undercut hairstyle, calm reserved eyes, angular face, lean build, Japanese minimalist style, monochrome knit sweater and slim trousers
 taeoh, 22 year old adult man, east asian, soft permed hair, cool detached eyes, refined face, toned build, Korean urban style, oversized shirt and black trousers
@@ -527,12 +527,12 @@ nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, 
 
 ### 5b. Pony（`cyberrealistic_pony`）、safe、角色 `mei`
 
-比 5a 多了 score 標籤和身分前綴，負面詞前面多了 `score_6, score_5, score_4`。身分前綴與 prompt 後面那串 `1girl, solo, long hair, straight hair` 是 `prompt_adapter` 從句子推出來的 booru 標籤（見 2a）；已經在文字裡出現的詞不會重複加。
+比 5a 多了 score 標籤和身分前綴，負面詞前面多了 `score_6, score_5, score_4`。身分前綴與 prompt 後面那串 `1girl, solo, long hair, straight hair, black eyes, slim, denim, pants` 是 `prompt_adapter` 從句子推出來的 booru 標籤（見 2a）；已經在文字裡出現的詞不會重複加。
 
 <!-- example: {"checkpoint": "cyberrealistic_pony", "fn": "build", "id": "pony_safe", "prompt": "sitting at a wooden cafe table, holding a ceramic coffee cup, soft window light", "tier": "safe", "trigger": "mei"} -->
 **Positive**
 ```
-score_9, score_8_up, score_7_up, mei, 19 year old adult woman, east asian, long straight jet-black hair with blunt bangs, bright round eyes, soft round face, petite build, casual campus style, oversized hoodie and pleated skirt, sneakers, sitting at a wooden cafe table, holding a ceramic coffee cup, soft window light, 1girl, solo, long hair, straight hair, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
+score_9, score_8_up, score_7_up, mei, 19 year old adult woman, east asian, long straight jet-black hair with blunt bangs, bright dark eyes, oval face with defined cheekbones, slender build, artsy casual style, oversized cardigan over a fitted t-shirt, wide-leg jeans, canvas sneakers, sitting at a wooden cafe table, holding a ceramic coffee cup, soft window light, 1girl, solo, long hair, straight hair, black eyes, slim, denim, pants, shot on DSLR, natural skin texture, visible pores, film photo, candid photograph, slight film grain
 ```
 **Negative**
 ```
