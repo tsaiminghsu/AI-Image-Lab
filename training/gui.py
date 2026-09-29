@@ -154,15 +154,17 @@ def _cloud_advice(decision):
     return "\n".join(lines)
 
 
-def _route(kind, force_local, *, est_seconds=None, can_defer=False, progress=None):
+def _route(kind, force_local, *, est_seconds=None, can_defer=False, progress=None, interactive=False):
     """Ask resource_policy whether this click may run on the local card now.
 
     Returns the decision to proceed on: LOCAL, or DEFER when the caller can record the job for
     later (can_defer). A cloud suggestion, or a deferral the caller cannot record, stops the click
     with gr.Error. A hot card is waited out here, with the countdown in the progress bar.
+    interactive=True (one clicked image) uses the looser single-image cool-down gate.
     """
     settings = rp.load_settings()
-    decision = rp.decide(kind, settings, rp.probe(), est_seconds=est_seconds, force_local=force_local)
+    decision = rp.decide(kind, settings, rp.probe(), est_seconds=est_seconds, force_local=force_local,
+                         interactive=interactive)
     if decision.route == rp.WAIT:
         gr.Info("⏳ " + "；".join(decision.reasons))
 
@@ -171,7 +173,7 @@ def _route(kind, force_local, *, est_seconds=None, can_defer=False, progress=Non
                 progress(None, desc=f"等待中：{'；'.join(d.reasons)}（最多再等 {remaining} 秒）")
 
         decision = rp.wait_until_ready(kind, decision, settings=settings, on_status=on_status,
-                                       est_seconds=est_seconds, force_local=force_local)
+                                       est_seconds=est_seconds, force_local=force_local, interactive=interactive)
     if decision.route == rp.CLOUD:
         raise gr.Error(_cloud_advice(decision))
     if decision.route == rp.DEFER and not can_defer:
@@ -230,10 +232,10 @@ def _upscale_to(upscale_choice):
     return 0 if upscale_choice == UPSCALE_OFF else int(upscale_choice.split()[1].rstrip("px"))
 
 
-def _preview(kind, force_local, *, est_seconds=None):
+def _preview(kind, force_local, *, est_seconds=None, interactive=False):
     try:
         return rp.decide(kind, rp.load_settings(), rp.probe(), est_seconds=est_seconds,
-                         force_local=force_local).summary()
+                         force_local=force_local, interactive=interactive).summary()
     except Exception as exc:  # noqa: BLE001 - a preview must never break the tab
         return f"⚠️ 無法判斷資源狀態：{exc}"
 
@@ -241,7 +243,8 @@ def _preview(kind, force_local, *, est_seconds=None):
 def custom_route_preview(checkpoint_choice, use_hq, pose_library, pose_reference, use_cloud, force_local):
     if use_cloud:
         return "**☁️ 這次會送 RunPod 雲端**（按 GPU 秒數計費；不佔本機顯卡）"
-    return _preview(_custom_kind(checkpoint_choice, use_hq, pose_reference, pose_library), force_local)
+    return _preview(_custom_kind(checkpoint_choice, use_hq, pose_reference, pose_library), force_local,
+                    interactive=True)
 
 
 def animatediff_route_preview(hires, use_facedetailer, upscale_choice, interp, lcm, force_local):
@@ -543,8 +546,9 @@ def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, s
         gr.Info("雲端生成：沒有暖機的 worker 時要先冷啟動，第一張可能要等好幾分鐘")
     else:
         # Before _ensure_comfyui: a cloud suggestion or a deferral must not start a ~2 GB process.
+        # One click = one image here (the 🎯 picker tab lands here too), so the single-image gate.
         decision = _route(_custom_kind(checkpoint_choice, use_hq, pose_reference, pose_library), force_local,
-                          can_defer=True, progress=progress)
+                          can_defer=True, progress=progress, interactive=True)
         if decision.route != rp.DEFER:
             _ensure_comfyui()
     deferred = decision is not None and decision.route == rp.DEFER
@@ -1013,11 +1017,12 @@ def resource_panel():
     return rp.status_markdown(), _deferred_rows()
 
 
-def save_resource_settings(max_start_temp_c, cooldown_timeout_s, ram_margin_gb, max_local_wait_s,
-                           video_windows, image_windows):
+def save_resource_settings(max_start_temp_c, interactive_start_temp_c, cooldown_timeout_s, ram_margin_gb,
+                           max_local_wait_s, video_windows, image_windows):
     try:
         rp.save_settings({
-            "max_start_temp_c": int(max_start_temp_c), "cooldown_timeout_s": int(cooldown_timeout_s),
+            "max_start_temp_c": int(max_start_temp_c), "interactive_start_temp_c": int(interactive_start_temp_c),
+            "cooldown_timeout_s": int(cooldown_timeout_s),
             "ram_margin_gb": float(ram_margin_gb), "max_local_wait_s": int(max_local_wait_s),
             "video_windows": video_windows or "", "image_windows": image_windows or "",
         })
@@ -1673,8 +1678,13 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     res_status = gr.Markdown(rp.status_markdown(_res_settings))
                     res_refresh_btn = gr.Button("🔄 重新讀取", size="sm")
                 with gr.Column():
-                    res_temp = gr.Slider(50, 84, value=_res_settings["max_start_temp_c"], step=1,
-                                         label="開始門檻溫度 °C（高於這個就先等降溫；84°C 是硬體降頻點）")
+                    res_temp = gr.Slider(
+                        40, _res_settings["throttle_temp_c"], value=_res_settings["max_start_temp_c"], step=1,
+                        label=f"批次／排程／API 的開始門檻 °C（到這個溫度就先等降溫；這張卡約 "
+                              f"{_res_settings['throttle_temp_c']}°C 開始降頻）")
+                    res_itemp = gr.Slider(
+                        40, _res_settings["throttle_temp_c"], value=_res_settings["interactive_start_temp_c"], step=1,
+                        label="單張生圖的開始門檻 °C（自訂生圖、圖片選擇生圖按一次一張；可以比批次高，少等一點）")
                     res_cooldown = gr.Number(value=_res_settings["cooldown_timeout_s"], precision=0,
                                              label="最多等降溫幾秒（超過就照樣開始，不會一直卡住）")
                     res_margin = gr.Slider(0, 8, value=_res_settings["ram_margin_gb"], step=0.5,
@@ -1700,7 +1710,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
             res_refresh_btn.click(resource_panel, inputs=None, outputs=[res_status, res_table])
             gr.Timer(15).tick(resource_panel, inputs=None, outputs=[res_status, res_table])
             res_save_btn.click(save_resource_settings,
-                               inputs=[res_temp, res_cooldown, res_margin, res_wait, res_video_windows,
+                               inputs=[res_temp, res_itemp, res_cooldown, res_margin, res_wait, res_video_windows,
                                        res_image_windows],
                                outputs=[res_status, res_table])
             res_run_btn.click(run_deferred_now, inputs=res_job, outputs=[res_status, res_table])

@@ -156,6 +156,58 @@ def test_default_start_threshold_is_55c():
     assert rp.decide("txt2img", settings(), calm(gpu_temp_c=54.0), NOON).route == rp.LOCAL
 
 
+def test_throttle_point_default_is_the_measured_80c():
+    assert rp.DEFAULT_SETTINGS["throttle_temp_c"] == 80
+
+
+def test_a_clicked_single_image_uses_the_looser_gate():
+    """65C: a batch job waits (>= 55), one clicked image starts (< 70). 70C: both wait."""
+    assert rp.DEFAULT_SETTINGS["interactive_start_temp_c"] == 70
+    warm = calm(gpu_temp_c=65.0)
+    assert rp.decide("txt2img", settings(), warm, NOON).route == rp.WAIT
+    assert rp.decide("txt2img", settings(), warm, NOON, interactive=True).route == rp.LOCAL
+    d = rp.decide("txt2img", settings(), calm(gpu_temp_c=70.0), NOON, interactive=True)
+    assert d.route == rp.WAIT
+    assert "70°C" in d.reasons[0]
+
+
+def test_the_throttle_flag_still_stops_a_clicked_image():
+    snap = calm(gpu_temp_c=50.0, gpu_throttling=True)
+    assert rp.decide("txt2img", settings(), snap, NOON, interactive=True).route == rp.WAIT
+
+
+def test_start_temp_picks_the_gate():
+    s = settings(max_start_temp_c=52, interactive_start_temp_c=66)
+    assert rp.start_temp_c(s) == 52
+    assert rp.start_temp_c(s, interactive=True) == 66
+
+
+def test_neither_gate_may_sit_above_the_throttle_point(tmp_path):
+    path = str(tmp_path / "hardware.json")
+    with pytest.raises(ValueError):
+        rp.save_settings({"interactive_start_temp_c": 85}, path)
+    with pytest.raises(ValueError):
+        rp.save_settings({"max_start_temp_c": 81}, path)
+    assert rp.save_settings({"interactive_start_temp_c": 80}, path)["interactive_start_temp_c"] == 80
+
+
+def test_wait_until_ready_keeps_the_interactive_gate():
+    """68C is ready for a clicked image but not for a batch job: the re-probe must use the same gate."""
+    slept = []
+    first = rp.decide("txt2img", settings(), calm(gpu_temp_c=75.0), NOON, interactive=True)
+    final = rp.wait_until_ready(
+        "txt2img",
+        first,
+        settings=settings(),
+        probe_fn=lambda: calm(gpu_temp_c=68.0),
+        sleep=slept.append,
+        clock=lambda: 0.0,
+        interactive=True,
+    )
+    assert final.route == rp.LOCAL
+    assert len(slept) == 1
+
+
 def test_force_local_does_not_skip_the_cool_down_but_skip_wait_does():
     hot = calm(gpu_temp_c=82.0)
     assert rp.decide("txt2img", settings(), hot, NOON, force_local=True).route == rp.WAIT

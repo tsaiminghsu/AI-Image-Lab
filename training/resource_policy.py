@@ -47,13 +47,18 @@ DEFAULT_SETTINGS = {
     "version": 1,
     "gpu_vram_gb": 8.0,
     "system_ram_gb": 32.0,
-    "throttle_temp_c": 84,       # the card's own hardware slowdown point
-    # Don't START a job above this; wait for it to cool first. 55, not a few degrees under the
-    # throttle point: one SDXL image takes this card from 68C past 80C (where hw_thermal_slowdown
-    # already goes Active) in about 40 s. Measured 2026-09-29, fp8 juggernaut + FaceID: starting
-    # each image at <= 68C still spent 36% of samples throttled, at <= 55C 2 of 963 (79C peak),
-    # for about 1-2.5 min of cooling per image.
+    # The card's own hardware slowdown point: nvidia-smi's hw_thermal_slowdown goes Active from
+    # about 80C on this RTX 2070 (sampled every 2 s, 2026-09-29), not the 84C first assumed.
+    "throttle_temp_c": 80,
+    # Don't START a batch/scheduled/API job above this; wait for it to cool first. 55, not a few
+    # degrees under the throttle point: one SDXL image takes this card from 68C past 80C in about
+    # 40 s. Measured 2026-09-29, fp8 juggernaut + FaceID: starting each image at <= 68C still spent
+    # 36% of samples throttled, at <= 55C 2 of 963 (79C peak), for 1-2.5 min of cooling per image.
     "max_start_temp_c": 55,
+    # The same gate for a single image someone clicked in the GUI (decide(interactive=True)). One
+    # image started at ~70C throttles for its last few seconds at most, which costs less than making
+    # the person wait 1-2.5 min before every click; back-to-back work keeps the stricter 55C.
+    "interactive_start_temp_c": 70,
     "cooldown_timeout_s": 600,   # ...but never wait longer than this - then run anyway
     "ram_margin_gb": 3.0,        # left for Windows + the browser + the GUI itself
     "max_local_wait_s": 1800,    # local backlog above this -> suggest the cloud (when a route exists)
@@ -65,6 +70,7 @@ _NUMERIC_BOUNDS = {
     "system_ram_gb": (4.0, 1024.0),
     "throttle_temp_c": (50, 110),
     "max_start_temp_c": (40, 105),
+    "interactive_start_temp_c": (40, 105),
     "cooldown_timeout_s": (0, 7200),
     "ram_margin_gb": (0.0, 64.0),
     "max_local_wait_s": (0, 86400),
@@ -155,8 +161,9 @@ def _clean_settings(data):
         if not lo <= value <= hi:
             raise ValueError(f"{name} 要在 {lo} 到 {hi} 之間，收到 {value}")
         settings[name] = value
-    if settings["max_start_temp_c"] > settings["throttle_temp_c"]:
-        raise ValueError("開始門檻溫度不能高於降頻溫度")
+    for name, label in (("max_start_temp_c", "開始門檻溫度"), ("interactive_start_temp_c", "單張互動生圖的開始門檻")):
+        if settings[name] > settings["throttle_temp_c"]:
+            raise ValueError(f"{label}（{settings[name]}°C）不能高於降頻溫度（{settings['throttle_temp_c']}°C）")
     for name in ("video_windows", "image_windows"):
         settings[name] = parse_windows(data.get(name, settings[name]))
     return settings
@@ -480,12 +487,23 @@ def _state_notes(snap):
     return notes + list(snap.errors)
 
 
-def decide(kind, settings, snap, now=None, *, est_seconds=None, force_local=False, skip_wait=False):
+def start_temp_c(settings, interactive=False):
+    """The temperature at or above which a job waits before starting: interactive_start_temp_c for a
+    single image someone just clicked, max_start_temp_c for everything else."""
+    return settings["interactive_start_temp_c"] if interactive else settings["max_start_temp_c"]
+
+
+def decide(kind, settings, snap, now=None, *, est_seconds=None, force_local=False, skip_wait=False,
+           interactive=False):
     """Pure: the same inputs always give the same Decision. `now` is a naive local datetime.
 
     force_local is the operator overriding the *advice* (cloud suggestion, time window, RAM/backlog
     warnings). It does not skip the cool-down wait, which is protection with a timeout, not advice;
     skip_wait does that (the scheduler sets it once a job has waited cooldown_timeout_s already).
+
+    interactive marks a single image a person is waiting on (the GUI's image buttons). It only
+    raises the cool-down gate to interactive_start_temp_c; the throttle flag still makes it wait.
+    The caller decides, because only it knows whether one click means one image (a GIF is many).
 
     Rule order is the one in the plan and the tests pin it:
       1. the card cannot run it at all          -> cloud
@@ -553,10 +571,11 @@ def decide(kind, settings, snap, now=None, *, est_seconds=None, force_local=Fals
                     not_before=start.timestamp() if start else None, suggest_quant=suggest_quant)
 
     if not skip_wait:
-        hot = snap.gpu_temp_c is not None and snap.gpu_temp_c >= settings["max_start_temp_c"]
+        gate = start_temp_c(settings, interactive)
+        hot = snap.gpu_temp_c is not None and snap.gpu_temp_c >= gate
         if hot or snap.gpu_throttling:
             why = (f"GPU {snap.gpu_temp_c:.0f}°C" if snap.gpu_temp_c is not None else "GPU")
-            why += "，正在降頻" if snap.gpu_throttling else f"，高於開始門檻 {settings['max_start_temp_c']}°C"
+            why += "，正在降頻" if snap.gpu_throttling else f"，高於開始門檻 {gate}°C"
             return make(WAIT, *warnings, why + f"；降溫後自動開始（最多等 {int(settings['cooldown_timeout_s'])} 秒）",
                         suggest_quant=suggest_quant)
 
@@ -564,7 +583,7 @@ def decide(kind, settings, snap, now=None, *, est_seconds=None, force_local=Fals
 
 
 def wait_until_ready(kind, decision, *, settings=None, probe_fn=probe, sleep=time.sleep, clock=time.monotonic,
-                     cancel_event=None, on_status=None, est_seconds=None, force_local=False):
+                     cancel_event=None, on_status=None, est_seconds=None, force_local=False, interactive=False):
     """Block while `decision` is WAIT, re-probing every WAIT_POLL_SECONDS. Returns the decision it
     finally proceeds on: LOCAL once the card is ready, or the last WAIT with skip_wait applied once
     cooldown_timeout_s runs out (a hot card is slower, not broken - never block forever). Any other
@@ -575,7 +594,7 @@ def wait_until_ready(kind, decision, *, settings=None, probe_fn=probe, sleep=tim
         remaining = deadline - clock()
         if remaining <= 0:
             final = decide(kind, settings, probe_fn(), est_seconds=est_seconds, force_local=force_local,
-                           skip_wait=True)
+                           skip_wait=True, interactive=interactive)
             final.notes.append(f"已等 {int(settings['cooldown_timeout_s'])} 秒仍未就緒，照樣開始")
             return final
         if on_status:
@@ -583,7 +602,8 @@ def wait_until_ready(kind, decision, *, settings=None, probe_fn=probe, sleep=tim
         if cancel_event is not None and cancel_event.is_set():
             return decision
         sleep(min(WAIT_POLL_SECONDS, max(remaining, 0.1)))
-        decision = decide(kind, settings, probe_fn(), est_seconds=est_seconds, force_local=force_local)
+        decision = decide(kind, settings, probe_fn(), est_seconds=est_seconds, force_local=force_local,
+                          interactive=interactive)
     return decision
 
 
@@ -593,7 +613,8 @@ def status_markdown(settings=None, snap=None):
     snap = snap or probe()
     rows = [
         ("GPU 溫度", "—" if snap.gpu_temp_c is None else
-         f"{snap.gpu_temp_c:.0f}°C（開始門檻 {settings['max_start_temp_c']}°C、降頻 {settings['throttle_temp_c']}°C）"
+         f"{snap.gpu_temp_c:.0f}°C（開始門檻：批次 {settings['max_start_temp_c']}°C、單張 "
+         f"{settings['interactive_start_temp_c']}°C；降頻 {settings['throttle_temp_c']}°C）"
          + ("⚠️ 降頻中" if snap.gpu_throttling else "")),
         ("VRAM", "—" if snap.vram_used_gb is None else f"{snap.vram_used_gb:.1f} / {snap.vram_total_gb:.1f} GB"),
         ("可用 RAM", "—" if snap.ram_available_gb is None else f"{snap.ram_available_gb:.1f} GB"
