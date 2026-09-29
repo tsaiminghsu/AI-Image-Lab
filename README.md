@@ -276,10 +276,10 @@ curl http://127.0.0.1:8188/system_stats
 
 ```powershell
 cd D:\AI-Image-Lab\training
-D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py anchor --character mei --seeds 3001
+D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py anchor --character mei --seeds 3001 --out ..\outputs\install_test
 ```
 
-跑完會在 `training/reference_candidates/mei/anchor_seed3001.png` 產生一張圖，
+跑完會在 `outputs/install_test/anchor_seed3001.png` 產生一張圖（`--out` 讓它不要寫進角色的錨點資料夾），
 用檔案總管打開確認畫面正常，就代表整個環境裝好了。之後可以直接跳到下面的
 「網頁 GUI」用瀏覽器操作，或繼續看「怎麼生成角色」用 CLI 批次生成 dataset。
 
@@ -1226,7 +1226,7 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe generate_character.py list-char
 | trigger | 年齡 | 性別 | 風格 |
 |---|---|---|---|
 | `mylora` | 28 | 女 | 鄰家女孩、休閒穿搭 |
-| `mei` | 19 | 女 | 台灣校園風 |
+| `mei` | 19 | 女 | 文青休閒風 |
 | `xinyi` | 21 | 女 | 現代極簡通勤 |
 | `ruoxi` | 23 | 女 | 潮流街頭 |
 | `yuqing` | 25 | 女 | 優雅辦公室穿搭 |
@@ -1252,17 +1252,19 @@ python generate_character.py anchor --character mei --seeds 3001 3002 3003
 ### Stage 2：Variations（IP-Adapter 生成完整 dataset）
 
 ```powershell
-python generate_character.py variations --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --count 100
+python generate_character.py variations --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --count 100
 ```
 
 以 anchor 圖的臉部特徵透過 IP-Adapter 條件化，生成 `--count` 張不同角度/姿勢/
 服裝/光線/背景的變化圖，輸出到 `datasets/<character>/`，每張圖同時輸出對應的
-caption `.txt`（kohya_ss 訓練用）。已存在的檔案會自動跳過，可安全中斷後續傳。
+caption `.txt`（kohya_ss 訓練用）。可安全中斷後續傳：重跑同一條指令會從編號最大的那張往後接，
+每張的角度、姿勢、服裝跟一次跑完的一樣，直到資料夾裡有 `--count` 張。挑圖時刪掉的不會補回來，也不會
+被覆蓋。
 
 ### 加分測試：擦邊但非露骨內容（單張）
 
 ```powershell
-python generate_character.py test-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3001.png"
+python generate_character.py test-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3101.png"
 ```
 
 用單獨的 `SUGGESTIVE_NEGATIVE`（只封鎖露骨性器官/性行為/色情字眼，允許泳裝/
@@ -1272,7 +1274,7 @@ python generate_character.py test-suggestive --character mei --anchor "reference
 ### Stage 2b：擦邊內容批次（suggestive-tier dataset）
 
 ```powershell
-python generate_character.py variations-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --count 20
+python generate_character.py variations-suggestive --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --count 20
 ```
 
 跟 `variations` 同一套續傳邏輯，但用泳裝/運動內衣等詞庫（`SUGGESTIVE_OUTFITS`/
@@ -1283,7 +1285,7 @@ python generate_character.py variations-suggestive --character mei --anchor "ref
 ### 自由輸入 Prompt（單張，CLI 版）
 
 ```powershell
-python generate_character.py custom --prompt "sitting in a cozy library, reading a book" --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --tier safe
+python generate_character.py custom --prompt "sitting in a cozy library, reading a book" --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --tier safe
 ```
 
 `--character`/`--anchor` 皆可省略（純文字生圖，不接 IP-Adapter）；兩者也可以
@@ -1414,7 +1416,7 @@ seed。同一個測試裡男性角色 taeoh 的 4 張都是男生，沒有 SD1.5
 ### 批次生成 GIF（快速預覽，CLI 版）
 
 ```powershell
-python generate_character.py gif --prompt "standing in a park, looking at the camera" --character mei --anchor "reference_candidates\mei\anchor_seed3001.png" --frames 8 --seed 9000
+python generate_character.py gif --prompt "standing in a park, looking at the camera" --character mei --anchor "reference_candidates\mei\anchor_seed3101.png" --frames 8 --seed 9000
 ```
 
 **第一張是完整生成**（建立人物/姿勢/場景），**後面 `--frames`-1 張都是拿
@@ -1489,7 +1491,7 @@ python generate_character.py video-animatediff --face-ref "reference_candidates\
 ### 會講話的嘴型影片（SadTalker）
 
 ```powershell
-python generate_character.py talk --image "reference_candidates\mei\anchor_seed3001.png" --audio "D:\voice\hello.wav"
+python generate_character.py talk --image "reference_candidates\mei\anchor_seed3101.png" --audio "D:\voice\hello.wav"
 ```
 
 來源人像**僅限虛構/AI 生成的臉**，禁止真人照片。輸出
@@ -1954,10 +1956,10 @@ shift 8、20 步、cfg 5、uni_pc／simple、預設 1280×704、121 幀（5 秒�
 #### CLI
 
 ```powershell
-ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --frames 81
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3101.png --character mei --prompt "她轉頭看向鏡頭微笑" --frames 81
 ComfyUI\.venv\Scripts\python.exe training\cloud_video.py cancel --provider runpod --job-id <工作 ID>
 # 先出三個便宜的預覽（480×832、49 幀、12 步，約正式版的十分之一），一次送出
-ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3001.png --character mei --prompt "她轉頭看向鏡頭微笑" --preview --count 3
+ComfyUI\.venv\Scripts\python.exe training\cloud_video.py run --provider runpod --job wan-i2v --image training\reference_candidates\mei\anchor_seed3101.png --character mei --prompt "她轉頭看向鏡頭微笑" --preview --count 3
 ```
 
 - 結果存到 `training/reference_candidates/videos/`，檔名含雲端工作 ID（不會跟別的工作撞名）
@@ -1996,7 +1998,7 @@ endpoint ID）：
 - 環境變數：`GENERATION_BACKEND=runpod`（優先序：GUI 勾選 > `--backend` > 環境變數 > 預設本機）
 
 ```powershell
-ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod custom --prompt "portrait photo" --character mei --anchor training\reference_candidates\mei\anchor_seed3001.png --pose standing_straight
+ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod custom --prompt "portrait photo" --character mei --anchor training\reference_candidates\mei\anchor_seed3101.png --pose standing_straight
 ```
 
 **安全檢查在兩邊各做一次**（`training/workflow_safety.py`）：本機送出前先檢查，不合格的圖不會送出、
@@ -2403,8 +2405,9 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 步驟：
 
 1. **補資料集（若太少）**：目前 `wanling` 10 張、`xinyi` 9 張、`yuqing` 9 張、
-   `ruoxi` 4 張（`datasets/character` 另有 100 張，是 `mylora` 那次用的），
-   先在本地補到 40-60 張：
+   `ruoxi` 4 張（`datasets/character` 另有 100 張，是 `mylora` 那次用的）。
+   `wanling` 那 10 張是 2026-09-28 用新錨點 `anchor_seed3104.png` 重做的；舊臉的 10 張收在
+   `datasets/wanling_old_anchor/`，不要拿來訓練。先在本地補到 40-60 張：
    ```powershell
    python generate_character.py variations --character xinyi --anchor <anchor.png> --count 60
    ```
@@ -2448,10 +2451,27 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 之後沒再崩潰過，但還是會吃緊：跑 GUI 預設高清時完整版 checkpoint 就佔 15.5-15.8GB，系統
 只剩約 4GB 可用、開始用分頁檔，同一批的第三張因此從 167 秒變成 530 秒（量化版可以省下約
 3GB，見「3c. 量化版模型」）。
-`gen_variations`/`gen_suggestive_variations` 都是續傳邏輯（依已存在檔案數判斷
-從哪裡繼續），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
+`gen_variations`/`gen_suggestive_variations` 都是續傳邏輯（從已存在的最大編號
+往後接），崩潰後不會遺失進度，重啟 ComfyUI 後重新執行同一條指令即可從中斷點
 繼續，不會重跑已完成的部分。長時間批次生成前，建議先關閉不必要的背景程式騰出
 系統 RAM。
+
+### 批次生成卡在 VAE 解碼（VRAM 停在 7.8 GB、利用率 100%、溫度往下掉）
+
+ComfyUI 終端機的取樣進度條已經跑完（30/30），印出 `Model AutoencoderKL prepared for dynamic VRAM loading` 和
+`0 models unloaded.` 之後就停住好幾分鐘，這是 VAE 解碼落到了共享記憶體。現在的 ComfyUI 預設開 DynamicVRAM，它不會
+為了載入 VAE 而卸下 UNet；8 GB 的卡放不下 UNet 加上解碼要的記憶體，驅動就把多的部分放到系統記憶體，經過 PCIe x1
+存取，一張圖會多花 2 分鐘到 13 分鐘以上。不是每張都會發生：2026-09-28 宛伶的資料集前 3 張正常，第 4 張卡住。
+
+批次生成（`variations`、一次好幾個 seed 的 `anchor`）前，用這個旗標啟動 ComfyUI：
+
+```powershell
+D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py --listen 127.0.0.1 --port 8188 --disable-smart-memory
+```
+
+每次載入模型前，它會先把其他模型卸到系統 RAM，VAE 解碼就有足夠的顯存。代價是每張都要重新搬 UNet：那次加旗標後
+每張 50–67 秒，預設設定沒卡住時是 45–49 秒（ComfyUI 記錄的執行時間，都不含第一張的載入）。GUI 自動啟動的 ComfyUI 沒有加這個旗標；先用上面的
+指令手動啟動，GUI 會直接沿用。已經卡住的話，用 `training\stop_comfyui.ps1` 關掉 ComfyUI，加旗標重開後再接著跑。
 
 ### 影片生成：高清階段 VRAM 不足
 

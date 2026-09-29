@@ -27,6 +27,103 @@
 
 ## 2026-09-28
 
+### `variations` 續跑時接著原本的順序抽，挑圖刪掉的也不會被覆蓋
+
+- **為什麼**：`gen_variations`／`gen_suggestive_variations` 續跑時有兩個問題。
+  - 每次都重新從 `random.Random(base_seed)` 的第一次抽起，續跑的第一張拿到第 0 張的角度、姿勢、服裝和 caption，後面依序
+    重複。既有的資料集已經有這個痕跡：`datasets/character`（mylora 用的 100 張）在第 21、37 張各重來一次，37 個 caption
+    跟前面重複；`ruoxi_old_plusface` 從第 60 張、`xinyi_old_plusface` 從第 3 張重來。現在用的 wanling、xinyi、yuqing、
+    ruoxi 沒有。
+  - 從哪一張接是用「檔案數」算的。挑圖時刪掉一張，下次就會從編號範圍裡面開始，覆蓋掉最後一張。
+- **怎麼改**：
+  - 新的 `_resume_point()` 從已存在的最大編號往後接，一直補到資料夾裡有 `--count` 張；刪掉的空號不補，也不覆蓋。
+  - 生成前先用同一個 prompt 函式把前面的編號「抽過」一遍，第 i 張永遠是第 i 次抽到的組合。不能直接跳過固定次數：
+    `rng.choice` 每次用掉的亂數量不固定。
+  - 沒有空號的資料夾（目前 `datasets/` 底下全部都是）續跑的起點跟以前一樣；已經生成的檔案一律不動，CLI 參數也沒變。
+- **測試**：新增 `tests/test_variations_resume.py`（7 項，不需要 GPU）。
+  - 一次跑 6 張，跟先跑 3 張再續到 6 張，檔名、prompt、caption 完全一樣。
+  - 刪掉一張後續跑，只新增下一個編號，內容跟一次跑完的那張相同，其他檔案不變。
+  - 張數夠了就不生成；`var_` 和 `sugg_` 共用資料夾時各自續跑。
+  - 舊程式碼會在其中 4 項失敗。
+
+### 宛伶的 LoRA 資料集用新錨點重做
+
+- **為什麼**：`datasets/wanling` 的 10 張（2026-08-16）是用舊錨點生成的。錨點換成 `anchor_seed3104.png` 之後，拿這批
+  訓練的 LoRA 會把舊臉帶回來。
+- **怎麼做**：`main` 的 `variations` 流程（`--variant full`，juggernaut，FaceID Plus V2 權重 1.0、背面構圖自動降到 0.3，
+  `NEGATIVE_PROMPT` 含年齡安全負面詞），參數跟上次一樣：`--count 10 --seed 2000`。
+  - 同一個 seed 抽出同樣的角度、姿勢、服裝、光線和背景，10 個 caption 跟舊的逐字相同；差別只在臉（新錨點）和 prompt
+    裡的外觀描述（`e5b0e1c` 的寫法）。
+  - 舊的 10 張搬到 `datasets/wanling_old_anchor/`（照 `xinyi_old_plusface` 的命名），留著對照，不要拿來訓練。
+    `runpod_bundle.py pack` 只讀 `datasets/<角色>/`，不會打包到它。
+- **臉部比對**（`face_similarity` 的 InsightFace buffalo_l，CPU）：
+  - 新的 10 張對新錨點平均 0.77（0.69–0.82）；舊的 10 張對同一張新錨點平均 0.56，對兩張舊錨點也只有 0.44、0.55。
+  - 對照：新舊三張錨點兩兩之間（明顯是不同的臉）是 0.46–0.58，舊資料集落在這個範圍裡。
+  - 背面構圖的 4 張照樣畫成正臉或側臉，跟舊資料集一樣（見 `BACK_VIEW_PICK_RATE` 的註解）。
+- **第 4 張卡在 VAE 解碼**：
+  - 取樣 30 步正常（每步 1.12 秒），印出 `0 models unloaded.` 之後卡了 13 分鐘：VRAM 7.9／8 GB、利用率 100%，溫度
+    從 71°C 降到 60°C。
+  - 原因：現在的 ComfyUI 預設開 DynamicVRAM，載入 VAE 時不會卸下同樣是 dynamic 的 UNet（`comfy/model_management.py`
+    的 `free_memory`："don't actually unload dynamic models for the sake of other dynamic models"）。8 GB 放不下 UNet
+    加上解碼要的記憶體，驅動就把多的部分放到系統記憶體，經過 PCIe x1 存取。
+  - 下面那則重畫錨點時慢的兩張（307、176 秒）原本歸因於換角色。查 log 更正：那兩張取樣也正常（30 步約 19 秒），多出來
+    的時間都在 VAE 解碼，是同一件事，同一個角色的批次裡也會發生。
+  - 關掉 ComfyUI、加 `--disable-smart-memory` 重開（每次載入前先把其他模型卸到系統 RAM），剩下 7 張沒再卡住。
+    ComfyUI 記錄的執行時間：第一張 71 秒（含載入模型），之後 50–67 秒；預設設定下沒卡住的 3 張是 78、49、45 秒。
+    README「疑難排解」加了一節。
+  - 補跑用的是 scratch 腳本：先依序抽完 10 組 prompt，再只生成缺的。CLI 的續傳會從 `random.Random(2000)` 重新抽，
+    第 4 張會拿到第 1 張的組合（上面那則已修好）。
+- **實測（RTX 2070）**：ComfyUI 啟動 10–12 秒。峰值溫度 77°C；VRAM 7,948 MiB（卡住時）、加旗標後 7,351 MiB；ComfyUI RSS
+  12.8 GB、加旗標後 9.75 GB（nvidia-smi＋psutil 每 2 秒取樣）。跑完用 `stop_comfyui.ps1` 關掉，VRAM 回到 516 MiB。
+- **還沒處理**：README 建議訓練前補到 40–60 張，這次只照原本的 10 張重做。
+
+### 小美、宛伶用新描述重畫錨點圖
+
+- **為什麼**：描述改成成人寫法（`e5b0e1c`）之後，錨點圖還是舊描述畫的，FaceID 鎖住的仍是那張臉；ai-companion 的
+  形象照也是從錨點圖裁的。
+- **怎麼畫**：用 `main` 的 `anchor` 流程（`--variant full`，juggernaut，1024²，`NEGATIVE_PROMPT` 含年齡安全負面詞），
+  每人 seed 3101–3104 四張候選，由使用者挑選：小美 3101、宛伶 3104。
+  - 新錨點：`reference_candidates/mei/anchor_seed3101.png`、`reference_candidates/wanling/anchor_seed3104.png`，
+    `picker_anchor_path()` 現在拿到的就是這兩張。
+  - 舊的 3001、3002 搬到各自的 `retired_2026-09-28/`，沒選上的候選留在 `candidates_2026-09-28/`，都在 git 忽略的
+    資料夾裡。
+  - README 範例指令裡的 `mei\anchor_seed3001.png` 改成 `anchor_seed3101.png`。
+  - README「快速測試安裝是否成功」的 `anchor --character mei --seeds 3001` 加上 `--out ..\outputs\install_test`。以前
+    那張 3001 就在錨點資料夾裡，測試會直接跳過；搬走之後，照舊指令會畫出一張新的 3001，排序在 3101 前面，
+    `picker_anchor_path()` 就會悄悄改用它。
+- **實測（RTX 2070，ComfyUI 啟動 12 秒）**：
+  - 小美 4 張共 124 秒：第一張 40 秒（含載入模型），之後每張約 27 秒。
+  - 宛伶前兩張 308 秒、178 秒，後兩張各 26–27 秒。慢的兩張 VRAM 停在 7.8／8 GB、利用率 100%，溫度卻從 77°C 降到
+    60°C。當時以為是換角色造成的，後來查清楚是 VAE 解碼落到共享記憶體，跟換角色無關，見上面「宛伶的 LoRA 資料集
+    用新錨點重做」。
+  - 整批峰值：溫度 78°C、VRAM 7,858 MiB、ComfyUI RSS 9.67 GB（nvidia-smi＋psutil 每 2 秒取樣）。跑完用
+    `stop_comfyui.ps1` 關掉，VRAM 回到 326 MiB。
+- **還沒處理**：`datasets/wanling` 的 10 張 LoRA 訓練圖（2026-08-16）是用舊錨點生成的，臉是舊的樣子，要訓練宛伶的
+  LoRA 得用新錨點重做（當天晚上重做了，見上面那則）。小美沒有資料集。
+
+### 小美、宛伶的外觀描述改成成人的寫法
+
+- **為什麼**：兩人的年齡合格（19、18），外觀卻寫成 `soft round face`／`youthful round face`、`petite build`，
+  小美的穿著還是 `casual campus style ... pleated skirt`。年齡欄位過得了 `MINIMUM_AGE`，描述卻把模型往更年輕的
+  臉和身形拉；詞庫還會在 Pony 上把 `petite build` 轉成 booru 標籤 `petite`。ai-companion 投資報告的風險表把這點
+  列為「部分完成」。
+- **改了什麼**：
+  - `mei`：`bright dark eyes, oval face with defined cheekbones, slender build`，穿著改成
+    `artsy casual style, oversized cardigan over a fitted t-shirt, wide-leg jeans, canvas sneakers`（設計系學生，
+    不再用校園風和百褶裙）。髮型沒變，`test_prompt_adapter` 靠它推出 `straight hair`。
+  - `wanling`：`lively expressive eyes, sharp cheekbones, small beauty mark under one eye, slim build`，Y2K 穿著沒變。
+  - `booru_lexicon.json`：拿掉只為舊描述存在的 `bright round eyes`→`round eyes`、`big expressive eyes`→`big eyes`、
+    `petite build`→`petite`，以及 round face 的 soft／youthful 兩種說法；新增 `bright dark eyes`→`black eyes`、
+    `beauty mark under one eye`→`mole under eye`。
+  - `prompt_adapter.FORBIDDEN_TAG_TERMS` 加上 `youthful`、`petite`，詞庫不能再推出這兩個標籤。
+  - `test_safety_invariants.py` 新增一條：任何角色的 `appearance`／`style` 都不能有 petite、youthful、baby、child、
+    teen、school、girlish 這類字（整字比對）。
+  - [PROMPT_GUIDE.md](training/PROMPT_GUIDE.md) 4d 的角色表、展開後的前綴與範例 5b 跟著更新，5b 推出的 booru 標籤變成
+    `1girl, solo, long hair, straight hair, black eyes, slim, denim, pants`。README 角色表的小美改成「文青休閒風」。
+- **沒有改到圖**：`reference_candidates/mei`、`wanling` 的錨點圖是用舊描述生成的，FaceID 鎖住的仍是那張臉；
+  ai-companion 的形象照也是從錨點圖裁的。要讓圖跟上描述，得用 GPU 重新產生錨點再挑圖，這次沒有跑。
+  JV 劇集只用到 `taeoh`、`xinyi`，不受影響。
+
 ### JV EP1 店員改用 am_fenrir，每句配音先對齊音量
 
 - **為什麼**：試聽比較後，店員 taeoh 從 `am_michael` 改成 `am_fenrir`。但 am_fenrir 的原始輸出約 −21 LUFS，比同場

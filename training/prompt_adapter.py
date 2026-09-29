@@ -34,7 +34,8 @@ ENV_VAR = "PROMPT_ADAPTER"
 # prompt. Pinned by tests/test_prompt_adapter.py (both this tuple's content and that no lexicon tag
 # hits it), the same way test_safety_invariants pins AGE_SAFETY_NEGATIVE. Note "shirtless" is a
 # legitimate booru tag the project already uses (MALE_SUGGESTIVE_OUTFITS) and is deliberately absent
-# here; "topless"/"nude" etc. are not.
+# here; "topless"/"nude" etc. are not. "petite" and "youthful" read as age cues in booru tagging;
+# "petite build" mapped to "petite" until mei's and wanling's descriptions dropped it (2026-09-28).
 FORBIDDEN_TAG_TERMS = (
     "child",
     "children",
@@ -44,6 +45,8 @@ FORBIDDEN_TAG_TERMS = (
     "teenager",
     "underage",
     "young",
+    "youthful",
+    "petite",
     "loli",
     "shota",
     "nsfw",
