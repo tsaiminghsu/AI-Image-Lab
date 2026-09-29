@@ -48,7 +48,12 @@ DEFAULT_SETTINGS = {
     "gpu_vram_gb": 8.0,
     "system_ram_gb": 32.0,
     "throttle_temp_c": 84,       # the card's own hardware slowdown point
-    "max_start_temp_c": 78,      # don't START a job above this; wait for it to cool first
+    # Don't START a job above this; wait for it to cool first. 55, not a few degrees under the
+    # throttle point: one SDXL image takes this card from 68C past 80C (where hw_thermal_slowdown
+    # already goes Active) in about 40 s. Measured 2026-09-29, fp8 juggernaut + FaceID: starting
+    # each image at <= 68C still spent 36% of samples throttled, at <= 55C 2 of 963 (79C peak),
+    # for about 1-2.5 min of cooling per image.
+    "max_start_temp_c": 55,
     "cooldown_timeout_s": 600,   # ...but never wait longer than this - then run anyway
     "ram_margin_gb": 3.0,        # left for Windows + the browser + the GUI itself
     "max_local_wait_s": 1800,    # local backlog above this -> suggest the cloud (when a route exists)

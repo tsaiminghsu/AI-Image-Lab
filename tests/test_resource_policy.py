@@ -144,7 +144,16 @@ def test_hot_gpu_waits():
 
 
 def test_throttle_flag_waits_even_below_the_threshold():
-    assert rp.decide("txt2img", settings(), calm(gpu_temp_c=70.0, gpu_throttling=True), NOON).route == rp.WAIT
+    assert rp.decide("txt2img", settings(), calm(gpu_temp_c=50.0, gpu_throttling=True), NOON).route == rp.WAIT
+
+
+def test_default_start_threshold_is_55c():
+    """Measured on this card: an image started at 68C still throttles on the way; one started at
+    55C does not. The rule is temp >= threshold -> wait, so 60C and 55C wait and 54C starts."""
+    assert rp.DEFAULT_SETTINGS["max_start_temp_c"] == 55
+    assert rp.decide("txt2img", settings(), calm(gpu_temp_c=60.0), NOON).route == rp.WAIT
+    assert rp.decide("txt2img", settings(), calm(gpu_temp_c=55.0), NOON).route == rp.WAIT
+    assert rp.decide("txt2img", settings(), calm(gpu_temp_c=54.0), NOON).route == rp.LOCAL
 
 
 def test_force_local_does_not_skip_the_cool_down_but_skip_wait_does():
@@ -329,7 +338,7 @@ def test_track_reports_remaining_seconds_and_clears():
 
 
 def test_wait_until_ready_proceeds_when_the_card_cools():
-    temps = iter([80.0, 76.0])
+    temps = iter([70.0, 52.0])
     slept = []
     first = rp.decide("txt2img", settings(), calm(gpu_temp_c=82.0), NOON)
     final = rp.wait_until_ready(
