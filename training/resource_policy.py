@@ -115,7 +115,10 @@ JOB_COSTS = {
     "txt2img_hq_quant": JobCost("高清生圖（fp8 量化版）", "image", 130, 5.5, 13.2, cloud_target=CLOUD_WORKFLOW),
     "zimage": JobCost("Z-Image 生圖", "image", 120, 7.0, 13.0, cloud_target=CLOUD_WORKFLOW, measured=False),
     "gif": JobCost("批次 GIF", "image", 40, 4.5, 8.4, cloud_target=CLOUD_WORKFLOW),  # per frame; caller scales
-    "animatediff_fast": JobCost("AnimateDiff 快速（不高清）", "video", 69, 5.0, 8.0, cloud_target=CLOUD_ANIMATEDIFF),
+    # Measured 2026-09-29 by the live scheduler run (cold, 44C start, 1 s nvidia-smi/psutil sampling):
+    # 67 s including the first model load, VRAM peak 6.60 GB, ComfyUI RSS peak 7.05 GB. The 5.0 GB
+    # first written here was a guess and understated the card by a third.
+    "animatediff_fast": JobCost("AnimateDiff 快速（不高清）", "video", 69, 6.6, 7.1, cloud_target=CLOUD_ANIMATEDIFF),
     "animatediff": JobCost("AnimateDiff 預設高清", "video", 526, 6.5, 9.0, cloud_target=CLOUD_ANIMATEDIFF),
     "animatediff_rife": JobCost("AnimateDiff + RIFE 補幀", "video", 683, 6.8, 9.5, cloud_target=CLOUD_ANIMATEDIFF),
     "svd": JobCost("SVD 圖生影片", "video", 180, 7.5, 9.0, measured=False),

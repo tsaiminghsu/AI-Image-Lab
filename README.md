@@ -1244,7 +1244,7 @@ Z-Image、Wan 沒有用同一套方法量過，畫面上會標「未實測的估
 | 文字生圖 | 約 40 秒 | 4.5 GB | 8.4 GB | RunPod workflow |
 | 高清生圖（完整版） | 約 272 秒 | 6.5 GB | 15.8 GB | RunPod workflow |
 | 高清生圖（fp8 量化版） | 約 130 秒 | 5.5 GB | 13.2 GB | RunPod workflow |
-| AnimateDiff 快速 / 預設高清 / + RIFE | 69 / 526 / 683 秒 | 5.0 / 6.5 / 6.8 GB | 8-9.5 GB | RunPod AnimateDiff |
+| AnimateDiff 快速 / 預設高清 / + RIFE | 69 / 526 / 683 秒 | 6.6 / 6.5 / 6.8 GB | 7.1-9.5 GB | RunPod AnimateDiff |
 | Wan 2.2 圖生影片 | — | 約 18 GB | — | 只能雲端 |
 
 ### 在 GUI 裡
