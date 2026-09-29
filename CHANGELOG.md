@@ -3,6 +3,24 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-09-30
+
+### 旻俊用新錨點重畫：舊臉跟泰吾太像
+
+- **為什麼**：隨機挑角色測試時，順手把 5 位男性角色的錨點兩兩比對（InsightFace buffalo_l）：minjun 對 taeoh 0.64、
+  對 hyunjun 0.59，其他組合 0.38–0.56。同一個角色的測試圖對自己的錨點是 0.67–0.78，所以 minjun 和 taeoh 在
+  app 裡並排時幾乎是同一張臉。描述本身不像（髮型、眼神、臉型都不同），是舊錨點剛好畫得接近。taeoh 用在 JV 劇集，
+  所以改 minjun。
+- **怎麼畫**：`main` 的 `anchor` 流程（`--variant full`，juggernaut，1024²，`NEGATIVE_PROMPT` 含年齡安全負面詞），
+  描述沒改，seed 4101–4106 六張候選。每張對其他 4 位男性最像的一位是 0.36–0.50（舊的 0.64），使用者選了最好分辨
+  的 4105（最高 0.36，對 junho）；對 app 實際用的 jungi／junho 4002 錨點也只有 0.41、0.39。
+  - 新錨點 `reference_candidates/minjun/anchor_seed4105.png`，`picker_anchor_path("minjun")` 現在拿到的就是它。
+  - 舊的 4001、4002 搬到 `minjun/retired_2026-09-30/`，其他 5 張候選在 `candidates_2026-09-30/`，都在 git 忽略的
+    資料夾。minjun 沒有資料集，不用重做。
+  - ai-companion 的形象照與頭像跟著換（`feat/character-art-scenes` `18c400c`）。
+- **實測（RTX 2070）**：ComfyUI 加 `--disable-smart-memory`，每張開始前等到 55°C 以下：每張 31–41 秒、等冷卻
+  0–40 秒，峰值 77°C、VRAM 6,105 MiB，降頻 0/140 個取樣點。
+
 ## 2026-09-29
 
 ### 單張生圖和批次分開設開始門檻（70°C／55°C），降頻溫度改成實測的 80°C
