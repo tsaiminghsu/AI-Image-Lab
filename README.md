@@ -2404,10 +2404,11 @@ text encoder，用 SDXL base 訓的 LoRA 套到 Pony 上會弱或變形。要給
 
 步驟：
 
-1. **補資料集（若太少）**：目前 `wanling` 10 張、`xinyi` 9 張、`yuqing` 9 張、
+1. **補資料集（若太少）**：目前 `wanling` 60 張、`xinyi` 9 張、`yuqing` 9 張、
    `ruoxi` 4 張（`datasets/character` 另有 100 張，是 `mylora` 那次用的）。
-   `wanling` 那 10 張是 2026-09-28 用新錨點 `anchor_seed3104.png` 重做的；舊臉的 10 張收在
-   `datasets/wanling_old_anchor/`，不要拿來訓練。先在本地補到 40-60 張：
+   `wanling` 的 60 張是 2026-09-28／29 用新錨點 `anchor_seed3104.png` 生成的（第 0–19 張完整版、
+   第 20–59 張 fp8 量化版 juggernaut，還沒挑圖）；舊臉的 10 張收在 `datasets/wanling_old_anchor/`，
+   不要拿來訓練。其他角色先在本地補到 40-60 張：
    ```powershell
    python generate_character.py variations --character xinyi --anchor <anchor.png> --count 60
    ```
@@ -2472,6 +2473,17 @@ D:\AI-Image-Lab\ComfyUI\.venv\Scripts\python.exe D:\AI-Image-Lab\ComfyUI\main.py
 每次載入模型前，它會先把其他模型卸到系統 RAM，VAE 解碼就有足夠的顯存。代價是每張都要重新搬 UNet：那次加旗標後
 每張 50–67 秒，預設設定沒卡住時是 45–49 秒（ComfyUI 記錄的執行時間，都不含第一張的載入）。GUI 自動啟動的 ComfyUI 沒有加這個旗標；先用上面的
 指令手動啟動，GUI 會直接沿用。已經卡住的話，用 `training\stop_comfyui.ps1` 關掉 ComfyUI，加旗標重開後再接著跑。
+
+再加上 `--variant quant`（fp8 量化版）顯存更寬裕：主模型上 GPU 從 4896 MB 降到 2791 MB，整批顯存峰值約
+6.0 GB（完整版 7.4–7.9 GB），每張反而更快（取樣 30 步 25 秒對 34 秒）。同一個 seed 兩版的圖不會一模一樣。
+
+### 批次生成時溫度降頻（`hw_thermal_slowdown` Active）
+
+用 `nvidia-smi --query-gpu=temperature.gpu,clocks_throttle_reasons.hw_thermal_slowdown --format=csv` 看：這張卡
+約 80°C 就開始硬體降頻。2026-09-29 量化版連續生圖，7 張有 28% 的時間在降頻、10 張有 63%（最高 85°C）；
+每張之間先等溫度降到 68°C 仍有 36%，因為一張圖大約 40 秒就能從 68°C 衝過 80°C。改成**每張開始前等到
+55°C 以下**，15 張只有 2/963 個取樣點在降頻（最高 79°C），代價是每張多等 1–2.5 分鐘冷卻（一張約 2 分鐘）。
+降頻不影響畫質、只影響速度；要又快又不降頻，得從散熱或功率上限（例如 MSI Afterburner 調 Power Limit）下手。
 
 ### 影片生成：高清階段 VRAM 不足
 
