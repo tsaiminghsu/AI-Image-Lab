@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "title": "英文情境短劇 EP2：英檢中級口說不冷場（JV Tutor Corner）",
+  "commercial": true,
+  "checkpoint": "z_image_turbo",
+  "tier": "safe",
+  "seed": 9400,
+  "voices": {
+    "xinyi": {
+      "engine": "kokoro",
+      "voice": "af_heart"
+    },
+    "yuqing": {
+      "engine": "kokoro",
+      "voice": "af_bella"
+    }
+  },
+  "cast": {
+    "xinyi": {
+      "appearance": "shoulder-length wavy dark chestnut brown hair, almond eyes, heart-shaped face, slim build",
+      "style": "cream knit sweater, small silver earrings"
+    },
+    "yuqing": {
+      "style": "navy cardigan over a white blouse"
+    }
+  },
+  "bgm": null,
+  "shots": [
+    {
+      "id": "c00",
+      "type": "card",
+      "label": "英文情境短劇 EP2",
+      "phrase": "英檢口說一緊張就冷場？",
+      "translation": "3 個句型，先開口再組織",
+      "background": "s02",
+      "duration": 2.5
+    },
+    {
+      "id": "s02",
+      "type": "motion",
+      "character": "xinyi",
+      "scene": "minimalist_room",
+      "framing": "medium",
+      "prompt": "sitting at a desk facing an open laptop, wired earphones on, in an online English lesson, a notebook beside it, slightly nervous",
+      "motion": "she adjusts her earphones, looks at the laptop screen and takes a deep breath",
+      "duration": 3
+    },
+    {
+      "id": "s03",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "in a bright home office with a bookshelf behind her, wearing a slim headset, facing the camera as on a video call, warm encouraging smile",
+      "motion": "she smiles and asks a question, speaking to the camera",
+      "line": "Let's try a practice question. What do you usually do on weekends?",
+      "translation": "我們來練一題：你週末通常做什麼？",
+      "duration": 4
+    },
+    {
+      "id": "s04",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "minimalist_room",
+      "framing": "close",
+      "prompt": "sitting at a desk facing an open laptop, wired earphones on, in an online English lesson, frozen and unsure",
+      "motion": "she freezes, glances away and hesitates",
+      "line": "Um... weekends... I...",
+      "translation": "嗯……週末……我……",
+      "duration": 3
+    },
+    {
+      "id": "s05",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "in a bright home office with a bookshelf behind her, wearing a slim headset, facing the camera as on a video call, nodding kindly",
+      "motion": "she nods kindly and gives a tip",
+      "line": "It's okay. Try starting with: Well, let me think.",
+      "translation": "沒關係，試著先說：嗯，讓我想想。",
+      "duration": 3.5
+    },
+    {
+      "id": "c06",
+      "type": "card",
+      "label": "今日句型 1",
+      "phrase": "Well, let me think...",
+      "translation": "嗯，讓我想想……",
+      "note": "先開口爭取思考時間，不要沉默",
+      "line": "Well, let me think.",
+      "speed": 0.85,
+      "character": "yuqing",
+      "background": "s05",
+      "duration": 4
+    },
+    {
+      "id": "s07",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "minimalist_room",
+      "framing": "close",
+      "prompt": "sitting at a desk facing an open laptop, wired earphones on, in an online English lesson, more relaxed, speaking with a small smile",
+      "motion": "she relaxes and answers, gesturing slightly",
+      "line": "Well, let me think. I usually go hiking with my friends.",
+      "translation": "嗯，讓我想想。我通常跟朋友去爬山。",
+      "duration": 4.5
+    },
+    {
+      "id": "s08",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "in a bright home office with a bookshelf behind her, wearing a slim headset, facing the camera as on a video call, interested expression",
+      "motion": "she nods and asks a follow-up question",
+      "line": "Good! Why do you like it?",
+      "translation": "很好！為什麼喜歡？",
+      "duration": 3
+    },
+    {
+      "id": "s09",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "minimalist_room",
+      "framing": "close",
+      "prompt": "sitting at a desk facing an open laptop, wired earphones on, in an online English lesson, confident smile",
+      "motion": "she answers with growing confidence",
+      "line": "Because it helps me relax after a busy week.",
+      "translation": "因為忙了一週，爬山可以讓我放鬆。",
+      "duration": 4
+    },
+    {
+      "id": "c10",
+      "type": "card",
+      "label": "今日句型 2",
+      "phrase": "I ..., because ...",
+      "translation": "我……，因為……",
+      "note": "說出做法再加上理由，答案才有內容",
+      "line": "I usually go hiking, because it helps me relax.",
+      "speed": 0.85,
+      "character": "xinyi",
+      "background": "s09",
+      "duration": 5
+    },
+    {
+      "id": "s11",
+      "type": "dialogue",
+      "character": "xinyi",
+      "scene": "minimalist_room",
+      "framing": "close",
+      "prompt": "sitting at a desk facing an open laptop, wired earphones on, in an online English lesson, smiling, animated",
+      "motion": "she smiles and adds an example with her hands",
+      "line": "For example, last Saturday we climbed Elephant Mountain.",
+      "translation": "例如上週六，我們去爬了象山。",
+      "duration": 4
+    },
+    {
+      "id": "c12",
+      "type": "card",
+      "label": "今日句型 3",
+      "phrase": "For example, ...",
+      "translation": "例如……",
+      "note": "舉一個具體例子，讓回答更完整",
+      "line": "For example, last Saturday we climbed Elephant Mountain.",
+      "speed": 0.85,
+      "character": "xinyi",
+      "background": "s11",
+      "duration": 5
+    },
+    {
+      "id": "s13",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "in a bright home office with a bookshelf behind her, wearing a slim headset, facing the camera as on a video call, delighted, giving a thumbs up",
+      "motion": "she gives a thumbs up and praises the answer",
+      "line": "Great answer! That's how you keep talking.",
+      "translation": "很棒！這樣就能一直說下去。",
+      "duration": 3.5
+    },
+    {
+      "id": "c14",
+      "type": "card",
+      "label": "JV Tutor Corner",
+      "phrase": "英檢中級衝刺班",
+      "translation": "聽說讀寫＋歷屆試題演練",
+      "note": "線上課程．掌握得分關鍵",
+      "background": "s13",
+      "duration": 3.5
+    }
+  ]
+}

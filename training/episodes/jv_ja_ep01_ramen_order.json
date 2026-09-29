@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "title": "旅遊日文 EP1：拉麵店點餐（JV Tutor Corner）",
+  "commercial": true,
+  "checkpoint": "z_image_turbo",
+  "tier": "safe",
+  "seed": 9600,
+  "voices": {
+    "xinyi": "jv_ja_traveler",
+    "junho": "jv_ja_staff"
+  },
+  "cast": {
+    "xinyi": {
+      "appearance": "shoulder-length wavy dark chestnut brown hair, almond eyes, heart-shaped face, slim build",
+      "style": "beige trench coat over a navy striped top, small crossbody bag"
+    },
+    "junho": {
+      "style": "black t-shirt under a dark indigo apron, black bandana tied on his head"
+    }
+  },
+  "bgm": null,
+  "shots": [
+    {
+      "id": "c00",
+      "type": "card",
+      "label": "旅遊日文 EP1",
+      "phrase": "去日本只會說「すみません」？",
+      "translation": "3 句日文，拉麵店點餐不用比手畫腳",
+      "background": "s02",
+      "duration": 3
+    },
+    {
+      "id": "s02",
+      "type": "motion",
+      "character": "xinyi",
+      "framing": "medium",
+      "prompt": "stepping into a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, looking around curiously",
+      "motion": "she slides the door open, steps in and looks around the ramen shop",
+      "duration": 3
+    },
+    {
+      "id": "s03",
+      "type": "dialogue",
+      "character": "junho",
+      "framing": "close",
+      "prompt": "behind the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, energetic welcoming smile",
+      "motion": "he looks up and greets the customer cheerfully",
+      "line": "いらっしゃいませ！",
+      "translation": "歡迎光臨！",
+      "duration": 2.5
+    },
+    {
+      "id": "s04",
+      "type": "dialogue",
+      "character": "xinyi",
+      "framing": "close",
+      "prompt": "sitting at the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, curious and slightly unsure",
+      "motion": "she leans forward and asks politely",
+      "line": "すみません、おすすめは何ですか？",
+      "translation": "不好意思，推薦的是什麼？",
+      "duration": 3.5
+    },
+    {
+      "id": "c05",
+      "type": "card",
+      "label": "今日句型 1",
+      "phrase": "おすすめは何ですか？",
+      "translation": "推薦的是什麼？",
+      "note": "Osusume wa nan desu ka?｜不知道點什麼時最好用",
+      "line": "おすすめは何ですか？",
+      "speed": 0.8,
+      "character": "junho",
+      "background": "s04",
+      "duration": 4
+    },
+    {
+      "id": "s06",
+      "type": "dialogue",
+      "character": "junho",
+      "framing": "close",
+      "prompt": "behind the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, friendly, gesturing with an open hand",
+      "motion": "he gestures with an open hand and recommends",
+      "line": "醤油ラーメンがおすすめです。",
+      "translation": "推薦醬油拉麵。",
+      "duration": 3
+    },
+    {
+      "id": "s07",
+      "type": "dialogue",
+      "character": "xinyi",
+      "framing": "close",
+      "prompt": "sitting at the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, decided, happy smile",
+      "motion": "she nods and orders with a smile",
+      "line": "じゃあ、醤油ラーメンをひとつください。",
+      "translation": "那請給我一碗醬油拉麵。",
+      "duration": 3.5
+    },
+    {
+      "id": "c08",
+      "type": "card",
+      "label": "今日句型 2",
+      "phrase": "〜をひとつください",
+      "translation": "請給我一個……",
+      "note": "Hitotsu kudasai｜兩個是「ふたつ」",
+      "line": "醤油ラーメンをひとつください。",
+      "speed": 0.8,
+      "character": "junho",
+      "background": "s07",
+      "duration": 4
+    },
+    {
+      "id": "s09",
+      "type": "dialogue",
+      "character": "junho",
+      "framing": "close",
+      "prompt": "behind the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, bowing slightly",
+      "motion": "he bows slightly and answers",
+      "line": "かしこまりました！",
+      "translation": "好的，馬上來！",
+      "duration": 2.5
+    },
+    {
+      "id": "s10",
+      "type": "motion",
+      "character": "xinyi",
+      "framing": "medium",
+      "prompt": "sitting at the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, a steaming bowl of ramen in front of her, delighted",
+      "motion": "she puts her hands together in front of the steaming bowl and smiles",
+      "duration": 3
+    },
+    {
+      "id": "s11",
+      "type": "dialogue",
+      "character": "xinyi",
+      "framing": "close",
+      "prompt": "standing by the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, holding a small wallet, polite smile",
+      "motion": "she holds her wallet and asks politely",
+      "line": "すみません、お会計お願いします。",
+      "translation": "不好意思，麻煩結帳。",
+      "duration": 3.5
+    },
+    {
+      "id": "c12",
+      "type": "card",
+      "label": "今日句型 3",
+      "phrase": "お会計お願いします",
+      "translation": "麻煩結帳",
+      "note": "Okaikei onegaishimasu｜吃完要付錢時說",
+      "line": "お会計お願いします。",
+      "speed": 0.8,
+      "character": "junho",
+      "background": "s11",
+      "duration": 4
+    },
+    {
+      "id": "s13",
+      "type": "dialogue",
+      "character": "junho",
+      "framing": "close",
+      "prompt": "behind the wooden counter of a small cozy Japanese ramen shop, wooden counter, warm lights, steam rising, bowing with a big smile",
+      "motion": "he bows with a big smile",
+      "line": "ありがとうございました！",
+      "translation": "謝謝光臨！",
+      "duration": 3
+    },
+    {
+      "id": "c14",
+      "type": "card",
+      "label": "JV Tutor Corner",
+      "phrase": "旅遊日文：跟團自助都好用",
+      "translation": "交通、購物、用餐、問路，從零開始",
+      "note": "線上課程．入門也能上",
+      "background": "s13",
+      "duration": 3.5
+    }
+  ]
+}

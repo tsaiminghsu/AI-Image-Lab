@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "title": "英文情境短劇 EP3：英文會議不再插不上話（JV Tutor Corner）",
+  "commercial": true,
+  "checkpoint": "z_image_turbo",
+  "tier": "safe",
+  "seed": 9500,
+  "voices": {
+    "xinyi": {
+      "engine": "kokoro",
+      "voice": "af_heart"
+    },
+    "yuqing": {
+      "engine": "kokoro",
+      "voice": "af_bella"
+    },
+    "hyunjun": {
+      "engine": "kokoro",
+      "voice": "am_michael"
+    }
+  },
+  "cast": {
+    "xinyi": {
+      "appearance": "shoulder-length wavy dark chestnut brown hair, almond eyes, heart-shaped face, slim build",
+      "style": "light grey tailored blazer over a white blouse, grey trousers"
+    },
+    "yuqing": {
+      "style": "black tailored blazer over an ivory silk blouse, thin gold necklace"
+    },
+    "hyunjun": {
+      "style": "light blue oxford shirt with rolled sleeves, navy chinos"
+    }
+  },
+  "bgm": null,
+  "shots": [
+    {
+      "id": "c00",
+      "type": "card",
+      "label": "英文情境短劇 EP3",
+      "phrase": "英文會議想發言，卻插不上話？",
+      "translation": "3 個句型，禮貌又有份量",
+      "background": "s02",
+      "duration": 2.5
+    },
+    {
+      "id": "s02",
+      "type": "motion",
+      "character": "yuqing",
+      "framing": "medium",
+      "prompt": "standing at the head of the table in a bright glass-walled meeting room of a modern office, holding a tablet",
+      "motion": "she looks around the table and opens the meeting",
+      "duration": 3
+    },
+    {
+      "id": "s03",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "standing at the head of the table in a bright glass-walled meeting room of a modern office, confident and composed",
+      "motion": "she speaks to the team with a small nod",
+      "line": "Okay, let's get started. First, the product launch date.",
+      "translation": "好，我們開始吧。第一項：產品上市日期。",
+      "duration": 3.5
+    },
+    {
+      "id": "s04",
+      "type": "dialogue",
+      "character": "hyunjun",
+      "framing": "close",
+      "prompt": "sitting at the meeting table in a bright glass-walled meeting room of a modern office, laptop open, serious expression",
+      "motion": "he leans forward and explains his concern",
+      "line": "I think we need two more weeks for testing.",
+      "translation": "我覺得測試還需要兩週。",
+      "duration": 3
+    },
+    {
+      "id": "s05",
+      "type": "dialogue",
+      "character": "xinyi",
+      "framing": "close",
+      "prompt": "sitting at the meeting table in a bright glass-walled meeting room of a modern office, laptop open, raising her hand slightly, polite but determined",
+      "motion": "she raises her hand slightly and speaks up",
+      "line": "Sorry, can I jump in here?",
+      "translation": "不好意思，我可以插個話嗎？",
+      "duration": 3
+    },
+    {
+      "id": "c06",
+      "type": "card",
+      "label": "今日句型 1",
+      "phrase": "Can I jump in here?",
+      "translation": "我可以插個話嗎？",
+      "note": "想發言先打聲招呼，比直接打斷有禮貌",
+      "line": "Sorry, can I jump in here?",
+      "speed": 0.85,
+      "character": "xinyi",
+      "background": "s05",
+      "duration": 3.5
+    },
+    {
+      "id": "s07",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "standing at the head of the table in a bright glass-walled meeting room of a modern office, open inviting gesture",
+      "motion": "she gestures with an open hand, inviting her to speak",
+      "line": "Sure, go ahead.",
+      "translation": "當然，請說。",
+      "duration": 2.5
+    },
+    {
+      "id": "s08",
+      "type": "dialogue",
+      "character": "xinyi",
+      "framing": "close",
+      "prompt": "sitting at the meeting table in a bright glass-walled meeting room of a modern office, laptop open, calm and confident",
+      "motion": "she speaks calmly, looking at her colleague",
+      "line": "I see your point, but two weeks might be too long.",
+      "translation": "我懂你的意思，但兩週可能太久了。",
+      "duration": 4
+    },
+    {
+      "id": "c09",
+      "type": "card",
+      "label": "今日句型 2",
+      "phrase": "I see your point, but ...",
+      "translation": "我懂你的意思，但……",
+      "note": "先肯定對方，再提出不同意見",
+      "line": "I see your point, but two weeks might be too long.",
+      "speed": 0.85,
+      "character": "xinyi",
+      "background": "s08",
+      "duration": 4.5
+    },
+    {
+      "id": "s10",
+      "type": "dialogue",
+      "character": "hyunjun",
+      "framing": "close",
+      "prompt": "sitting at the meeting table in a bright glass-walled meeting room of a modern office, laptop open, thoughtful, then agreeable",
+      "motion": "he thinks for a moment, then nods",
+      "line": "Fair enough. Maybe we can test the key features first.",
+      "translation": "有道理。也許可以先測主要功能。",
+      "duration": 4
+    },
+    {
+      "id": "s11",
+      "type": "dialogue",
+      "character": "yuqing",
+      "framing": "close",
+      "prompt": "standing at the head of the table in a bright glass-walled meeting room of a modern office, decisive smile",
+      "motion": "she wraps up the discussion with a decisive nod",
+      "line": "So, to sum up: we test the key features first and launch on time.",
+      "translation": "所以總結一下：先測主要功能，照原訂時間上市。",
+      "duration": 5
+    },
+    {
+      "id": "c12",
+      "type": "card",
+      "label": "今日句型 3",
+      "phrase": "So, to sum up, ...",
+      "translation": "所以總結一下……",
+      "note": "會議尾聲收斂結論，大家就知道下一步",
+      "line": "So, to sum up: we test the key features first.",
+      "speed": 0.85,
+      "character": "yuqing",
+      "background": "s11",
+      "duration": 4.5
+    },
+    {
+      "id": "s13",
+      "type": "motion",
+      "character": "xinyi",
+      "framing": "medium",
+      "prompt": "sitting at the meeting table in a bright glass-walled meeting room of a modern office, laptop open, smiling with relief",
+      "motion": "she smiles, nods and closes her laptop as the meeting ends",
+      "duration": 3
+    },
+    {
+      "id": "c14",
+      "type": "card",
+      "label": "JV Tutor Corner",
+      "phrase": "商用英語會議表達技巧",
+      "translation": "開場、表達意見、反對與折衷、收斂結論",
+      "note": "線上課程．實際演練會議情境",
+      "background": "s13",
+      "duration": 3.5
+    }
+  ]
+}

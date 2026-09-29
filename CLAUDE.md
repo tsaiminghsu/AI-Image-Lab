@@ -127,8 +127,8 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   組成 39 秒有聲粗剪；雲端動態還沒實跑，也還沒有對嘴。`assemble` 先把每句配音對齊到 −23 LUFS，
   成片再整體調到 −14 LUFS。
   「一次送多支」只有 `cloud_video.run_cloud_batch` 一個實作。
-  語言學習短劇（JV Tutor Corner）用 `translation`／`speed` 欄位和 `card` 字卡鏡頭，範例
-  `jv_en_ep01_cafe_order.json`；英文台詞配中文參考錄音會走跨語言模式（帶口音）。
+  語言學習短劇（JV Tutor Corner）用 `translation`／`speed` 欄位和 `card` 字卡鏡頭，平台每門語言課一集：
+  `jv_en_ep01`～`ep03`、`jv_ja_ep01`（日文集的聲音還沒定）；英文台詞配中文參考錄音會走跨語言模式（帶口音）。
   低解析度優先：`keyframes --draft`、`motion --draft`、`export`（enhance/in → 外部工具 → enhance/out）、
   `assemble --fps 48`。
   `"commercial": true` 的集數只准用可營利元件（Z-Image 關鍵幀、Wan、RIFE、Kokoro 內建聲音或有 consent

@@ -7,10 +7,12 @@ and subtitle where the timing says.
 """
 
 import copy
+import glob
 import json
 import os
 import re
 import subprocess
+import unicodedata
 import wave
 
 import pytest
@@ -1438,3 +1440,67 @@ def test_assemble_levels_each_line_before_the_mix():
     assert "[1:a]volume=-2.00dB," in segments["s03.mkv"]
     assert "[1:a]volume=2.70dB," in segments["s04.mkv"]
     assert "volume=" not in segments["s02.mkv"]  # no line, nothing to level
+
+
+# --- the JV Tutor Corner series: one episode per course --------------------------------------
+
+JV_EPISODES = sorted(glob.glob(os.path.join(drama.EPISODES_DIR, "jv_*.json")))
+
+
+def test_the_series_covers_the_platforms_language_courses():
+    names = {os.path.basename(p)[: -len(".json")] for p in JV_EPISODES}
+    assert {
+        "jv_en_ep01_cafe_order",
+        "jv_en_ep02_gept_speaking",  # c1 英檢中級衝刺班
+        "jv_en_ep03_business_meeting",  # c3 商用英語會議表達技巧
+        "jv_ja_ep01_ramen_order",  # c4 旅遊日文
+    } <= names
+
+
+@pytest.mark.parametrize("path", JV_EPISODES, ids=os.path.basename)
+def test_every_jv_episode_is_a_valid_commercial_lesson(path):
+    ep = drama.load_episode(path)
+    errors, _ = drama.validate_episode(ep)
+    assert errors == []
+    assert ep.data["commercial"] is True and ep.checkpoint in drama.COMMERCIAL_CHECKPOINTS and ep.tier == "safe"
+    for shot in ep.shots:
+        if shot.get("character"):
+            assert gc.CHARACTERS[shot["character"]]["age"] >= gc.MINIMUM_AGE
+    assert ep.shots[0]["type"] == "card" and not ep.shots[0].get("line")  # the hook
+    assert ep.shots[-1]["type"] == "card" and ep.shots[-1]["label"] == "JV Tutor Corner"
+    phrases = [s for s in ep.shots if s["type"] == "card" and s["label"].startswith("今日句型")]
+    assert len(phrases) == 3 and all(card["line"] and card["speed"] < 1 for card in phrases)  # read slowly
+    japanese = os.path.basename(path).startswith("jv_ja_")
+    for shot in ep.shots:
+        if shot["type"] == "dialogue":
+            assert compose.is_cjk_text(shot["translation"])  # the Chinese subtitle under every line
+            has_kana = any("\u3040" <= ch <= "\u30ff" for ch in shot["line"])
+            assert has_kana if japanese else not compose.is_cjk_text(shot["line"])
+
+
+def test_jv_characters_keep_one_voice_per_language_and_episodes_have_their_own_seeds():
+    voices, seeds = {}, set()
+    for path in JV_EPISODES:
+        ep = drama.load_episode(path)
+        language = os.path.basename(path).split("_")[1]
+        for character, spec in ep.data["voices"].items():
+            assert voices.setdefault((language, character), spec) == spec, f"{character} changes voice in {path}"
+        assert ep.data["seed"] not in seeds
+        seeds.add(ep.data["seed"])
+
+
+@pytest.mark.parametrize("path", [p for p in JV_EPISODES if "jv_en_" in os.path.basename(p)], ids=os.path.basename)
+def test_english_jv_episodes_speak_with_kokoro(path):
+    ep = drama.load_episode(path)
+    for shot in ep.shots:
+        if (shot.get("line") or "").strip():
+            assert drama.is_kokoro(drama.voice_spec(ep, shot)), shot["id"]
+
+
+def test_kana_only_lines_wrap_by_character():
+    assert compose.is_cjk_text("いらっしゃいませ！") and compose.is_cjk_text("ラーメン")
+    assert not compose.is_cjk_text("Can I jump in here?")
+    line = "すみません、おすすめは何ですか？ありがとうございました！またきます！"
+    lines = compose.wrap_lines(line, cjk_width=12)
+    assert len(lines) > 1 and "".join(lines) == line
+    assert all(sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in part) <= 24 for part in lines)

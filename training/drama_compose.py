@@ -97,7 +97,11 @@ def filter_path(path):
 
 
 def is_cjk_text(text):
-    return any("㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿" for ch in text or "")
+    """Chinese characters or Japanese kana: text that wraps by character at double width. A kana-only
+    line such as 「いらっしゃいませ！」 has no kanji, and was being wrapped like English."""
+    return any("\u3400" <= ch <= "\u9fff" or "\uf900" <= ch <= "\ufaff"  # CJK ideographs
+               or "\u3040" <= ch <= "\u30ff" or "\uff66" <= ch <= "\uff9f"  # kana, half-width kana
+               for ch in text or "")
 
 
 def _units(ch):

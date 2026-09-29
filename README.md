@@ -2031,9 +2031,15 @@ ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod
 
 範例：
 - `training/episodes/example_cafe_reunion.json`：劇情短劇（8 個鏡頭約 25 秒，角色 xinyi、taeoh，一般級）
-- `training/episodes/jv_en_ep01_cafe_order.json`：給 JV Tutor Corner 的英文情境短劇「咖啡廳點餐」
-  （12 個鏡頭約 39 秒）。英文對白加中文翻譯的雙語字幕、3 張「今日句型」字卡用慢速朗讀，片尾是
-  導流字卡「找老師一對一練口說」
+- JV Tutor Corner 系列：一集對應平台上一門語言課，片尾字卡導向那門課。每集都是外語對白加中文翻譯的雙語
+  字幕、3 張「今日句型」字卡用慢速朗讀，全部標示 commercial
+
+| 分鏡表（`training/episodes/`） | 內容 | 片尾導向 |
+|---|---|---|
+| `jv_en_ep01_cafe_order.json` | 咖啡廳點餐（12 個鏡頭約 39 秒） | 找老師一對一練口說 |
+| `jv_en_ep02_gept_speaking.json` | 英檢中級口說回答題不冷場（14 個鏡頭約 53 秒） | 英檢中級衝刺班 |
+| `jv_en_ep03_business_meeting.json` | 英文會議插話、反對、總結（14 個鏡頭約 50 秒） | 商用英語會議表達技巧 |
+| `jv_ja_ep01_ramen_order.json` | 旅遊日文：拉麵店點餐（14 個鏡頭約 46 秒） | 旅遊日文：跟團自助都好用 |
 
 ### 流程
 
@@ -2091,8 +2097,8 @@ ComfyUI\.venv\Scripts\python.exe training\drama.py status training\episodes\exam
   覆蓋這集的外貌（`appearance`）或服裝（`style`），年齡和性別不能覆蓋。不覆蓋時，角色預設服裝會跟鏡頭要求的
   服裝打架（實測圍裙跑到背景的人身上）。沒有鎖臉，臉還是會在鏡頭之間有差異
 - 字型：微軟正黑體隨 Windows 授權；要更保險可以用 `DRAMA_FONT` 改指向 Noto Sans TC（OFL）
-- 範例 `jv_en_ep01_cafe_order.json` 已經是 commercial：用 Z-Image，聲音指定為 `jv_customer_en`、
-  `jv_barista_en`（需要兩位英文母語者本人同意的錄音）
+- JV 系列都是 commercial：關鍵幀用 Z-Image，英文集用 Kokoro 內建聲音。日文集的聲音還沒決定，
+  `jv_ja_traveler`、`jv_ja_staff` 是預留的 CosyVoice 聲音 id（要日文母語者本人同意的錄音）
 
 ### 先做低解析度，之後再交給外部工具加強
 
