@@ -2011,6 +2011,52 @@ _STAGE_LABELS = {
 _progress_local = threading.local()
 
 
+# --- job sink -----------------------------------------------------------------------------
+# A caller that is recording a job needs to know the exact moment a prompt is about to leave
+# this process, and the id it came back with. Both facts live inside _submit_and_wait_locked,
+# and neither is worth a signature change on a function twelve submit_* callers share - so the
+# sink rides a thread-local, the same mechanism _progress_local and _backend_local already use
+# for per-request context. A caller that sets no sink pays one attribute lookup and three
+# no-op calls.
+_sink_local = threading.local()
+
+
+class _NullSink:
+    """The default. Exists so the call sites never have to test for None."""
+
+    def on_submitting(self):
+        pass
+
+    def on_submitted(self, provider, provider_job_id):
+        pass
+
+    def on_submit_failed(self, exc):
+        pass
+
+
+_NULL_SINK = _NullSink()
+
+
+def job_sink():
+    return getattr(_sink_local, "sink", None) or _NULL_SINK
+
+
+@contextlib.contextmanager
+def job_sink_scope(sink):
+    """Record submission events for everything generated inside this block, on this thread.
+
+    Thread-local rather than global because the GUI serves several requests from a pool and each
+    one owns a different job; a module-level sink would file one tab's prompt_id under another
+    tab's job.
+    """
+    previous = getattr(_sink_local, "sink", None)
+    _sink_local.sink = sink
+    try:
+        yield sink
+    finally:
+        _sink_local.sink = previous
+
+
 # --- generation backend -------------------------------------------------------------------
 # "local" runs the workflow on the ComfyUI at COMFYUI_URL, as always. "runpod" sends the SAME
 # fully-built workflow to this repo's RunPod worker (worker/jobs.py, jobType "workflow") instead,
@@ -2197,12 +2243,27 @@ def _submit_and_wait_locked(wf: dict, output_node_id: str, timeout_seconds: int,
     payload = {"prompt": wf}
     if client_id:
         payload["client_id"] = client_id
-    r = _post_prompt_with_retry(payload)
-    r.raise_for_status()
+    sink = job_sink()
+    # Announced BEFORE the first POST, and the order is the whole value of the hook. If ComfyUI
+    # accepts the prompt and the HTTP response is then lost, there is a job occupying the 8 GB
+    # card whose prompt_id we never learned. Today nobody knows it exists; a caller that recorded
+    # "submitting" first can at least go looking for it in /queue.
+    sink.on_submitting()
+    try:
+        r = _post_prompt_with_retry(payload)
+        r.raise_for_status()
+    except BaseException as exc:
+        # The caller classifies: a refused connection never left this machine, anything else may
+        # have. _is_connection_refused is the same test _http_with_retry already uses.
+        sink.on_submit_failed(exc)
+        raise
     body = r.json()
     if body.get("node_errors"):
+        # Not on_submit_failed: the POST succeeded and ComfyUI answered by rejecting the graph, so
+        # nothing was queued. That is a clean failure, not an uncertain one.
         raise RuntimeError(f"workflow validation failed: {body['node_errors']}")
     prompt_id = body["prompt_id"]
+    sink.on_submitted("comfyui", prompt_id)
 
     def poll():
         r = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)

@@ -437,7 +437,14 @@ class RunPodBackend:
         path = _download(self.session, url, os.path.join(dest_dir, f"{stem}.{ext}"))
         queue = data.get("delayTime")
         execution = data.get("executionTime")
-        return path, (queue / 1000.0 if queue else None), (execution / 1000.0 if execution else None)
+        # `is not None`, not a truthiness test: a provider reporting 0 ms of queue wait is
+        # information, and folding that into None makes "the job started instantly" and "RunPod
+        # told us nothing" indistinguishable. The distinction only became load-bearing when
+        # job_contracts started treating these as a nullable tri-state whose consumers are
+        # forbidden from inferring an unknown value.
+        return (path,
+                (queue / 1000.0 if queue is not None else None),
+                (execution / 1000.0 if execution is not None else None))
 
 
 class ReplicateBackend:

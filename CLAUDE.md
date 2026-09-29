@@ -138,6 +138,11 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `gc.plan_picker()` 依 checkpoint 決定姿勢和臉是走 ControlNet/FaceID（SDXL、Pony）還是
   降級成文字（Z-Image、SD1.5），降級時 GUI 會明講。場景庫在 `training/scenes/`（縮圖已
   commit，`scene_library.py render-thumbs` 重生）。
+- 資源排程（2026-09-27）：GUI 本地分頁與 image_api `/generate` 送出前都經過 `resource_policy.decide()`
+  （成本表＋nvidia-smi／psutil 即時狀態＋時段），結果是本地／等降溫／排時段／**建議**上雲——雲端一律要人確認，
+  image_api 回 409。延後的工作是 job store 的 `queued`＋`not_before`，由 `job_scheduler` 執行（GUI 在
+  `__main__`、image_api 在 lifespan 啟動）。CLI 刻意不經過這層。設定在 `training/settings/hardware.json`。
+  測試裡 image_api 的 probe 固定成全 None 的 Snapshot，別讓真機器狀態漏進測試。
 - `web/amplify/` 有 **737 行實際的 TypeScript 後端**（DynamoDB + API Gateway + 3 個 Lambda +
   Replicate/RunPod provider + 兩個 webhook），不是骨架——但**從來沒有部署過、沒有整合測試過**
   （這個環境沒有 AWS 帳號），而且**完全沒有前端程式碼**。`web/README.md` 是最準確的說明，

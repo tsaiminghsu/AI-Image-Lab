@@ -5,6 +5,36 @@
 
 ## 2026-09-29
 
+### 單張生圖和批次分開設開始門檻（70°C／55°C），降頻溫度改成實測的 80°C
+
+- **為什麼**：開始門檻降到 55°C 之後，連續生圖不再降頻，但 GUI 裡按一次只生一張也要先等 1–2.5 分鐘冷卻。
+  單張從 70°C 開始，最多最後幾秒碰到降頻，少等比較划算。另外設定裡寫的降頻溫度 84°C 跟實測不符：
+  `hw_thermal_slowdown` 約 80°C 就 Active。
+- **改了什麼**：
+  - `DEFAULT_SETTINGS` 新增 `interactive_start_temp_c: 70`；`throttle_temp_c` 84 → 80。兩個開始門檻都不能高於
+    降頻溫度（`_clean_settings` 驗證，錯誤訊息說是哪一個）。
+  - `decide()`／`wait_until_ready()` 多一個 `interactive=False` 參數，只換掉降溫門檻（`start_temp_c()`），
+    「正在降頻」照樣要等。算不算單張由呼叫端決定：GUI 的 `_generate`（「自訂生圖」和走同一條路的
+    「🎯 圖片選擇生圖」）和它的預覽傳 `True`；GIF（多格）、AnimateDiff、SVD、SadTalker、`image_api`、排程器
+    維持 55°C。被排到時段後執行的自訂生圖由排程器跑，用 55°C。
+  - GUI「資源排程」分頁多一個「單張生圖的開始門檻」滑桿；兩個滑桿上限跟著降頻溫度。狀態面板顯示兩個門檻。
+- **測試**：新增 6 條（預設值、65／70°C 在單張和批次的分界、降頻旗標照樣擋單張、`start_temp_c`、兩個門檻都不能
+  高於降頻溫度、`wait_until_ready` 重新判斷時沿用單張門檻）；`test_gui_arity` 確認儲存按鈕 7 個輸入對 7 個參數。
+
+### 資源排程的開始門檻從 78°C 降到 55°C
+
+- **為什麼**：78°C 對這張 RTX 2070 太高。2026-09-29 補宛伶資料集時加記 `hw_thermal_slowdown`（約 80°C 就 Active），
+  fp8 juggernaut＋FaceID：連跑 7 張 28% 的取樣在降頻、10 張 63%（最高 85°C）；每張開始前等到 ≤ 68°C 仍有 36%，
+  因為一張圖約 40 秒就從 68°C 衝過 80°C；等到 ≤ 55°C 則是 2/963（最高 79°C）。詳細數字在 main 的 CHANGELOG
+  （`b45995a`）。
+- **改了什麼**：`DEFAULT_SETTINGS["max_start_temp_c"]` 78 → 55。規則是「溫度 ≥ 門檻就等」，所以 54°C 才開始。
+  `cooldown_timeout_s` 維持 600 秒：從 80 幾度降到 55°C 實測 1–2.5 分鐘，等不到就照舊開始。GUI「資源排程」分頁
+  可以調回來（`training/settings/hardware.json` 的設定優先於預設；這台機器目前沒有這個檔）。
+- **代價**：GUI／image_api 每個工作開始前多等約 1–2.5 分鐘（卡已經熱的時候）；畫質不受影響。只擋在「工作開始前」，
+  一個工作內的多張（例如 GIF 的影格）不會逐張等。
+- **測試**：`test_default_start_threshold_is_55c` 釘住預設值與 55／54°C 的邊界；降溫等待和「降頻旗標在門檻下也要等」
+  兩條測試的溫度改到新門檻兩側。
+
 ### 宛伶的資料集補到 60 張；fp8 量化版＋依溫度排程，不溢出也不降頻
 
 - **結果**：`datasets/wanling` 60 張，編號 0–59、seed 2000–2059 連續，60 個 caption 沒有重複（`3a04a68` 的續傳
@@ -344,6 +374,57 @@
   `test_cloud_video.py` 批次 10、`test_imports.py` 2）。
 - **還沒做的**：對嘴（第二階段）。關鍵幀、配音、雲端動態鏡頭都還沒實跑：前兩者要用顯卡（會先問），
   雲端要 RunPod 帳號。
+
+### 資源排程：依電腦配置決定本地生圖、本地影片、等降溫、排時段或建議上雲
+
+- **問題**：8 GB 卡、PCIe x1、84°C 降頻、32 GB RAM 被高清完整版吃到 15.8 GB——這些極限只寫在
+  README 和 CLAUDE.md，要操作者自己記。影片什麼時候跑、什麼時候該上雲，完全靠手動切換
+  （GUI 勾選、雲端影片分頁、CLI `--backend`），repo 裡連 `nvidia-smi` 都沒有被程式呼叫過。
+- **做法**：
+  - `training/resource_policy.py`：`JOB_COSTS`（本 README 與 CHANGELOG 的實測）、`probe()`（nvidia-smi
+    溫度／VRAM／降頻旗標、ComfyUI `/system_stats`＋`/queue`、psutil 可用 RAM 與 ComfyUI RSS、本 process
+    正在跑的工作）、`decide()` 八條有順序的規則。只用 requests＋stdlib，psutil 延後 import。
+  - 延後的工作**沒有另開佇列**：就是 job store 裡 `queued`＋新欄位 `not_before` 的紀錄（schema 2，
+    v1 紀錄照樣讀得進來）。`job_scheduler.py` 每 30 秒挑到期的工作重新判斷再跑；
+    `_begin_submitting` 本來就是 store 鎖內的 compare-and-swap，所以 GUI 和 image_api 同時跑排程器
+    也不會重複執行同一筆（有測試）。
+  - GUI：六個本地分頁都先判斷；新增「🖥️ 資源排程」分頁與 AnimateDiff 的「☁️ 改送雲端」按鈕
+    （用 `cloud` concurrency id，不佔本地 GPU 佇列）。判斷放在 `_ensure_comfyui` 之前，排程或建議上雲
+    都不會先把 ComfyUI 開起來。
+  - image_api：建議上雲回 409 不建工作，`force_local` 覆寫；時段外排程；新增 `GET /v2/route`；
+    `gen_custom` 參數只建一次並存進紀錄，執行緒和排程器跑的是同一個呼叫；重啟後殘留的 queued 工作
+    由排程器接手。
+- **雲端只建議不送出**：這個 repo 的雲端路徑從沒在真的帳號上跑過，也會花錢，所以沒有任何自動送雲端。
+- **測試**：`test_resource_policy.py`（每條規則與優先序、跨午夜時段、nvidia-smi 解析含 `[N/A]` 與舊驅動
+  退回、設定檔壞掉回預設、降溫等待與逾時）、`test_job_scheduler.py`（真的 FileJobStore＋假時鐘：到期才跑、
+  一輪最多一個、過熱等待逾時照跑、夜間建議上雲留在佇列、另一個 process 搶走的回 `taken`）、
+  `test_image_api.py` 新增 409／force_local／defer／wait／`/v2/route`；`test_gui_arity.py` 認得
+  `_run_or_defer(gc.X, plan, **kw)` 轉發，並多檢查 `rp.*` 呼叫。
+- **實機驗證（沒有用 GPU 生成）**：用 ComfyUI\.venv 的 Gradio 6.24 import `gui.py` 並直接呼叫 handler
+  （暫存的 store 與設定檔）：讀數和 nvidia-smi 一致（52°C、0.4/8.0 GB、可用 RAM 20.9 GB）；時段外按
+  AnimateDiff 排到 20:00、沒有啟動 ComfyUI、上傳的臉已複製進 store；排程器沒有提早執行；取消有效；
+  SadTalker 在時段外顯示「不能排程」。另外實際啟動 GUI 在瀏覽器看過新分頁與兩個預覽，console 沒有錯誤。
+  雲端確認按鈕沒有測過（沒有雲端帳號）。
+- **排程器實機跑一次（冷機，RTX 2070，ComfyUI 原本沒開）**：影片時段設成 19:07-19:37，19:04:42 排一支
+  AnimateDiff 快速模式（`hyunjun`、seed 6001、512²、16 幀、不高清不精修不放大）。決策是 defer、`not_before`
+  19:07:00；之前每一輪都是「nothing due」。19:07:06 排程器發現到期、自己啟動 ComfyUI（10 秒），19:07:16 送出，
+  19:08:19 完成——**63 秒含冷啟動的第一次模型載入**（README 表格的快速模式是 69 秒）。紀錄走完
+  queued → submitting → running → checking → completed，output check 通過（mp4 512×512），上傳的臉已
+  複製進 store，產物以 content-addressed 路徑硬連結。GPU 44°C 起、送出前 VRAM 1.0 GB，跑完 ComfyUI RSS
+  7.2 GB（`stop_comfyui.ps1` 關閉時的讀數）。**溫度和 VRAM 峰值沒有記到**：取樣結果被量測腳本自己的
+  log 管線吃掉（ComfyUI 輸出含控制字元，grep 把串流當成二進位），不是排程器的問題。
+  那次測試用 10 秒一輪；實際排程器是 30 秒一輪，所以時段開始到執行最多晚 30 秒。
+- **第二次實機（2026-09-29 23:14，冷機 44°C，這次量到峰值）**：修好量測腳本（取樣直接寫 CSV、不經過
+  grep；開跑前卡被佔用就中止；只關掉自己啟動的 ComfyUI）後同一支影片再跑一次。時段 23:17 開始，排程器
+  23:17:11 啟動 ComfyUI（12 秒）、23:17:23 送出，**67 秒完成**（含第一次模型載入），output check 通過，
+  產物跟第一次同 seed 一模一樣（260,850 bytes）。每秒取樣：**GPU 44 → 峰值 74°C**（結束 63°C），
+  **全程沒有降頻**；**VRAM 峰值 6.60 GB**（送出後約 20 秒）；**ComfyUI RSS 峰值 7.05 GB**（用監聽 8188 埠的
+  程序量，見下一條）。`JOB_COSTS` 的快速模式原本寫 VRAM 5.0 GB，是猜的，低估了三分之一，已改成實測
+  6.6 GB / RSS 7.1 GB。一支 67 秒的短片就從 44°C 升到 74°C，也佐證批次開始門檻降到 55°C 的判斷。
+- **ComfyUI RSS 原本量錯程序**：`ComfyUI\.venv\Scripts\python.exe` 是約 4 MB 的 uv 轉接殼，真正的伺服器是它的
+  子程序，命令列裡沒有 "comfyui"。舊寫法照命令列找，會抓到轉接殼，RAM 規則因此失準。改成跟
+  `stop_comfyui.ps1` 一樣找監聽 ComfyUI 埠的程序（`c9d9080`）。
+- **預估不是量測**：SVD、SadTalker、Z-Image、Wan 的成本是估計值，畫面上會標明；之後量到再更新 `JOB_COSTS`。
 
 ## 2026-09-18
 

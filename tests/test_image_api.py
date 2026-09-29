@@ -6,18 +6,26 @@ in _run_job the one place a failure can be lost: anything it does not catch kill
 thread silently and leaves the job "pending" forever.
 """
 
+import os
 import sys
 
 import pytest
+from test_output_check import make_png
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient", reason="fastapi not installed")
 
 
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch, tmp_path):
     """A TestClient over a freshly imported image_api, with its executor made synchronous so a
-    POST has already run the job by the time it returns."""
+    POST has already run the job by the time it returns.
+
+    The job store directory is redirected into tmp_path and set before the import, because
+    image_api builds its store at module scope - without that every test would share, and slowly
+    fill, the repo's own outputs/_jobs.
+    """
     sys.modules.pop("image_api", None)
+    monkeypatch.setenv("IMAGE_API_JOB_STORE_DIR", str(tmp_path / "jobs"))
     import image_api
 
     class _Inline:
@@ -25,8 +33,29 @@ def api(monkeypatch):
             fn(*args, **kwargs)
 
     monkeypatch.setattr(image_api, "_executor", _Inline())
-    image_api._jobs.clear()
+    monkeypatch.setattr(image_api, "OUTPUT_DIR", str(tmp_path / "out"))
+    # Never the real machine or the operator's real settings: an unknown snapshot decides "local"
+    # for every image kind, which is what these boundary tests assume. Routing has its own tests.
+    monkeypatch.setattr(image_api.rp, "probe", lambda: image_api.rp.Snapshot())
+    monkeypatch.setattr(image_api.rp, "SETTINGS_FILE", str(tmp_path / "hardware.json"))
+    os.makedirs(str(tmp_path / "out"), exist_ok=True)
     return fastapi_testclient.TestClient(image_api.app), image_api
+
+
+def writes_a_real_png(image_api, monkeypatch, width=64, height=64):
+    """Replace gen_custom with something that actually produces a decodable file.
+
+    A no-op mock is no longer enough: the job only reaches "done" if the output check can read the
+    bytes back, which is the point of having the check. What the mock has to do is what the real
+    generator does - leave a file at OUTPUT_DIR/<filename>.png.
+    """
+
+    def fake_gen_custom(*args, **kwargs):
+        path = os.path.join(image_api.OUTPUT_DIR, f"{kwargs['filename']}.png")
+        with open(path, "wb") as handle:
+            handle.write(make_png(width, height))
+
+    monkeypatch.setattr(image_api.gc, "gen_custom", fake_gen_custom)
 
 
 def test_unknown_character_is_reported_as_an_error_not_left_pending(api, monkeypatch):
@@ -69,14 +98,29 @@ def test_ordinary_exception_is_still_reported(api, monkeypatch):
 
 
 def test_successful_job_reports_done_with_a_path(api, monkeypatch):
+    """image_path stays the OUTPUT_DIR/<job_id>.png the ai-companion backend has always opened,
+    even though the job record now also carries a content-addressed artifact key."""
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
 
     job_id = client.post("/generate", json={"prompt": "x"}).json()["job_id"]
     body = client.get(f"/generate/{job_id}").json()
     assert body["status"] == "done"
     assert body["image_path"].endswith(f"{job_id}.png")
     assert body["error"] is None
+
+
+def test_a_generator_that_produces_no_file_is_an_error_not_a_success(api, monkeypatch):
+    """This used to report "done" with a path to a file that did not exist, because nothing
+    checked. The output check is what turns that into a failure the caller can see."""
+    client, image_api = api
+    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+
+    job_id = client.post("/generate", json={"prompt": "x"}).json()["job_id"]
+    body = client.get(f"/generate/{job_id}").json()
+    assert body["status"] == "error"
+    assert body["image_path"] is None
+    assert "does not exist" in body["error"]
 
 
 def test_unknown_job_id_is_404(api):
@@ -106,14 +150,14 @@ def test_whitespace_only_prompt_is_422(api):
 
 def test_prompt_over_cap_is_422(api, monkeypatch):
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
     prompt = "a" * (image_api.gc.MAX_PROMPT_CHARS + 1)
     assert client.post("/generate", json={"prompt": prompt}).status_code == 422
 
 
 def test_prompt_exactly_at_cap_is_accepted(api, monkeypatch):
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
     prompt = "a" * image_api.gc.MAX_PROMPT_CHARS
     resp = client.post("/generate", json={"prompt": prompt})
     assert resp.status_code == 200
@@ -132,7 +176,7 @@ def test_unknown_trigger_is_400(api):
 
 def test_valid_trigger_is_accepted(api, monkeypatch):
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
     known_trigger = next(iter(image_api.gc.CHARACTERS))
     resp = client.post("/generate", json={"prompt": "x", "trigger": known_trigger})
     assert resp.status_code == 200
@@ -171,7 +215,7 @@ def test_anchor_path_traversal_outside_allowlist_is_400(api, monkeypatch, tmp_pa
 
 def test_anchor_path_inside_allowlist_is_accepted(api, monkeypatch, tmp_path):
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
     monkeypatch.setattr(image_api.gc, "REFERENCE_CANDIDATES_DIR", str(tmp_path))
 
     anchor = tmp_path / "anchor.png"
@@ -196,7 +240,7 @@ def test_anchor_path_non_image_extension_inside_allowlist_is_400(api, monkeypatc
 
 def test_anchor_dirs_env_var_extends_allowlist(api, monkeypatch, tmp_path):
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
 
     extra_dir = tmp_path / "extra_anchors"
     extra_dir.mkdir()
@@ -213,51 +257,160 @@ def test_anchor_dirs_env_var_extends_allowlist(api, monkeypatch, tmp_path):
 # --- bounded job store -------------------------------------------------------------------
 
 
+def seed_record(image_api, job_id, status, created_at):
+    """Put a record straight into the store, bypassing generation."""
+    import job_contracts as jc
+
+    record = jc.new_record(
+        job_id=job_id,
+        owner_id="local",
+        mode="txt2img_hq",
+        media_kind="image",
+        catalog_id="c",
+        backend="local",
+        params={"prompt": "x"},
+        now=created_at,
+    )
+    record["status"] = status
+    if status == jc.COMPLETED:
+        record["artifacts"] = [
+            {
+                "bucket": "local-outputs",
+                "key": f"generated/{job_id}/{'a' * 64}.png",
+                "sha256": "a" * 64,
+                "media_kind": "image",
+                "content_type": "image/png",
+                "byte_length": 1,
+            }
+        ]
+    image_api._store.create("local", record)
+
+
 def test_eviction_never_drops_pending_or_running_jobs(api, monkeypatch):
-    """Over MAX_JOBS, only finished ("done"/"error") jobs may be evicted - a pending or
-    running job must survive no matter how far over the cap the store is."""
+    """Over MAX_JOBS, only finished records may be evicted - a job still in flight must survive
+    no matter how far over the cap the store is, or a polling client loses its answer.
+
+    The rules now live in job_store.FileJobStore.purge (moved verbatim from the OrderedDict
+    eviction this module used to do), so this asserts image_api still delegates with the right
+    arguments; the policy itself is pinned record-for-record in test_job_store_contract.py.
+    """
+    import job_contracts as jc
+
     client, image_api = api
     monkeypatch.setattr(image_api, "MAX_JOBS", 2)
     now = 1_000_000.0
-    image_api._jobs["done1"] = {"status": "done", "image_path": "x", "error": None, "created_at": now}
-    image_api._jobs["pending1"] = {"status": "pending", "image_path": None, "error": None, "created_at": now}
-    image_api._jobs["done2"] = {"status": "done", "image_path": "x", "error": None, "created_at": now}
-    image_api._jobs["running1"] = {"status": "pending", "image_path": None, "error": None, "created_at": now}
+    seed_record(image_api, "done1", jc.FAILED, now)
+    seed_record(image_api, "pending1", jc.QUEUED, now)
+    seed_record(image_api, "done2", jc.FAILED, now)
+    seed_record(image_api, "running1", jc.RUNNING, now)
 
-    with image_api._jobs_lock:
-        image_api._evict_jobs_locked(now)
+    image_api._evict_jobs(now)
 
-    assert set(image_api._jobs) == {"pending1", "running1"}
+    survivors = {r["job_id"] for r in image_api._store.list_by_owner("local")}
+    assert survivors == {"pending1", "running1"}
 
 
 def test_ttl_evicts_old_finished_jobs_but_keeps_recent_and_pending(api, monkeypatch):
+    import job_contracts as jc
+
     client, image_api = api
     monkeypatch.setattr(image_api, "JOB_TTL_SECONDS", 100)
-    image_api._jobs["old_done"] = {"status": "done", "image_path": "x", "error": None, "created_at": 0.0}
-    image_api._jobs["recent_done"] = {"status": "done", "image_path": "x", "error": None, "created_at": 200.0}
-    image_api._jobs["old_pending"] = {"status": "pending", "image_path": None, "error": None, "created_at": 0.0}
+    seed_record(image_api, "old_done", jc.FAILED, 0.0)
+    seed_record(image_api, "recent_done", jc.FAILED, 200.0)
+    seed_record(image_api, "old_pending", jc.QUEUED, 0.0)
 
-    with image_api._jobs_lock:
-        image_api._evict_jobs_locked(250.0)  # old_done is 250s old (>100 TTL); recent_done is 50s old
+    image_api._evict_jobs(250.0)  # old_done is 250s old (>100 TTL); recent_done is 50s old
 
-    assert set(image_api._jobs) == {"recent_done", "old_pending"}
+    survivors = {r["job_id"] for r in image_api._store.list_by_owner("local")}
+    assert survivors == {"recent_done", "old_pending"}
 
 
 def test_generate_evicts_before_inserting_new_job(api, monkeypatch):
     """The eviction pass runs on every POST /generate, not just as a background sweep."""
+    import job_contracts as jc
+
     client, image_api = api
-    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: None)
+    writes_a_real_png(image_api, monkeypatch)
     monkeypatch.setattr(image_api, "MAX_JOBS", 1)
-    image_api._jobs["stale_done"] = {
-        "status": "done",
-        "image_path": "x",
-        "error": None,
-        "created_at": 0.0,
-    }
+    seed_record(image_api, "stale_done", jc.FAILED, 0.0)
 
     resp = client.post("/generate", json={"prompt": "x"})
     assert resp.status_code == 200
-    assert "stale_done" not in image_api._jobs
+    assert image_api._store.get("local", "stale_done") is None
+
+
+# --- the record survives a restart ---------------------------------------------------------
+
+
+def test_a_job_is_still_answerable_after_the_process_restarts(api, monkeypatch, tmp_path):
+    """The actual win of moving off the in-memory dict. Before, a restart turned every
+    outstanding job id into a 404 that a client could not tell apart from "never existed"."""
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch)
+    job_id = client.post("/generate", json={"prompt": "x"}).json()["job_id"]
+
+    sys.modules.pop("image_api", None)
+    import image_api as reimported
+
+    assert reimported is not image_api, "a genuinely fresh module object"
+    assert reimported._store.get("local", job_id)["status"] == "completed"
+
+
+# --- the owner boundary --------------------------------------------------------------------
+
+
+def test_another_owner_cannot_read_the_job(api, monkeypatch):
+    """owner_id comes from a header, never from the body, so a caller cannot reach another
+    owner's job by editing a payload."""
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch)
+    job_id = client.post("/generate", json={"prompt": "x"}).json()["job_id"]
+    assert client.get(f"/generate/{job_id}", headers={"X-Owner-Id": "someone-else"}).status_code == 404
+    assert client.get(f"/generate/{job_id}").status_code == 200
+
+
+# --- the v2 surface ------------------------------------------------------------------------
+
+
+def test_v2_returns_the_whole_record_including_the_artifact(api, monkeypatch):
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch)
+    job_id = client.post("/generate", json={"prompt": "x"}).json()["job_id"]
+    record = client.get(f"/v2/jobs/{job_id}").json()
+    assert record["status"] == "completed"
+    assert record["output_check"]["state"] == "passed"
+    assert record["artifacts"][0]["key"].startswith(f"generated/{job_id}/")
+    assert record["params"]["seed"] >= 0, "the seed is recorded, so a result is reproducible"
+
+
+def test_v2_cancel_of_a_queued_job_concludes_it(api, monkeypatch):
+    client, image_api = api
+    import job_contracts as jc
+
+    seed_record(image_api, "queued1", jc.QUEUED, 1.0)
+    body = client.post("/v2/jobs/queued1/cancel").json()
+    assert body["status"] == "cancelled"
+    assert body["cancel_requested_at"] is not None
+
+
+def test_v2_cancel_of_an_unknown_job_is_404(api):
+    client, _ = api
+    assert client.post("/v2/jobs/nope/cancel").status_code == 404
+
+
+def test_v2_catalog_includes_disabled_rows_with_their_reasons(api):
+    """A caller that only ever sees what works cannot tell "this build has no ControlNet" from
+    "not with this checkpoint, and here is why"."""
+    client, _ = api
+    rows = client.get("/v2/catalog", params={"checkpoint": "z_image_turbo"}).json()
+    disabled = [r for r in rows if not r["enabled"]]
+    assert disabled, "Z-Image disables most of the feature rows"
+    assert all(r["reason"] for r in disabled)
+
+
+def test_v2_catalog_rejects_an_unknown_checkpoint(api):
+    client, _ = api
+    assert client.get("/v2/catalog", params={"checkpoint": "nope"}).status_code == 400
 
 
 # --- optional auth -------------------------------------------------------------------------
@@ -281,3 +434,92 @@ def test_token_configured_accepts_correct_key(api, monkeypatch):
     monkeypatch.setenv("IMAGE_API_TOKEN", "s3cret")
     resp = client.get("/characters", headers={"X-API-Key": "s3cret"})
     assert resp.status_code == 200
+
+
+# --- resource routing ----------------------------------------------------------------------
+
+
+def _machine(image_api, monkeypatch, **snap):
+    monkeypatch.setattr(image_api.rp, "probe", lambda: image_api.rp.Snapshot(**snap))
+
+
+def test_a_cloud_suggestion_is_409_with_reasons_and_creates_nothing(api, monkeypatch):
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch)
+    _machine(image_api, monkeypatch, ram_available_gb=6.0, comfy_running=True, comfy_rss_gb=0.0)
+    response = client.post("/generate", json={"prompt": "x"})
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["error"] == "cloud_suggested"
+    assert detail["kind"] == "txt2img_hq_full"
+    assert detail["reasons"]
+    assert image_api._store.list_by_owner("local") == []
+
+
+def test_force_local_runs_it_here_anyway(api, monkeypatch):
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch)
+    _machine(image_api, monkeypatch, ram_available_gb=6.0, comfy_running=True, comfy_rss_gb=0.0)
+    body = client.post("/generate", json={"prompt": "x", "force_local": True}).json()
+    assert body["route"] == "local"
+    assert client.get(f"/generate/{body['job_id']}").json()["status"] == "done"
+
+
+def test_outside_the_image_window_the_job_is_deferred_not_run(api, monkeypatch, tmp_path):
+    client, image_api = api
+    ran = []
+    monkeypatch.setattr(image_api.gc, "gen_custom", lambda **kwargs: ran.append(kwargs))
+    now = image_api.rp.datetime.datetime.now()
+    closed = f"{(now.hour + 2) % 24:02d}:00-{(now.hour + 3) % 24:02d}:00"
+    image_api.rp.save_settings({"image_windows": [closed]}, str(tmp_path / "hardware.json"))
+    body = client.post("/generate", json={"prompt": "x"}).json()
+    assert body["route"] == "defer"
+    assert body["not_before"] > now.timestamp()
+    assert ran == []
+    record = client.get(f"/v2/jobs/{body['job_id']}").json()
+    assert record["status"] == "queued"
+    assert record["request"]["call"] == "gen_custom"
+    assert record["request"]["kwargs"]["filename"] == body["job_id"]
+    assert client.get(f"/generate/{body['job_id']}").json()["status"] == "pending"
+
+
+def test_a_hot_card_waits_before_running(api, monkeypatch):
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch)
+    _machine(image_api, monkeypatch, gpu_temp_c=82.0)
+    waited = []
+
+    def fake_wait(kind, decision, **kwargs):
+        waited.append(kind)
+        return image_api.rp.Decision(image_api.rp.LOCAL, kind, [])
+
+    monkeypatch.setattr(image_api.rp, "wait_until_ready", fake_wait)
+    body = client.post("/generate", json={"prompt": "x", "hq": False}).json()
+    assert body["route"] == "wait"
+    assert waited == ["txt2img"]
+    assert client.get(f"/generate/{body['job_id']}").json()["status"] == "done"
+
+
+def test_the_stored_call_is_the_one_the_executor_ran(api, monkeypatch):
+    """One gen_custom call, built once: what the scheduler would replay after a restart is exactly
+    what ran, not a second hand-maintained copy of the argument list."""
+    client, image_api = api
+    seen = []
+
+    def fake_gen_custom(**kwargs):
+        seen.append(kwargs)
+        with open(os.path.join(image_api.OUTPUT_DIR, f"{kwargs['filename']}.png"), "wb") as handle:
+            handle.write(make_png(8, 8))
+
+    monkeypatch.setattr(image_api.gc, "gen_custom", fake_gen_custom)
+    job_id = client.post("/generate", json={"prompt": "x", "tier": "suggestive"}).json()["job_id"]
+    assert seen == [client.get(f"/v2/jobs/{job_id}").json()["request"]["kwargs"]]
+    assert seen[0]["tier"] == "suggestive"
+
+
+def test_v2_route_previews_without_creating_a_job(api, monkeypatch):
+    client, image_api = api
+    body = client.get("/v2/route", params={"hq": "false"}).json()
+    assert body["route"] == "local"
+    assert body["kind"] == "txt2img"
+    assert image_api._store.list_by_owner("local") == []

@@ -220,3 +220,46 @@ def upstream(wf, nid, seen=None):
             if src in wf:
                 upstream(wf, src, seen)
     return seen
+
+
+class RecordingJobStore:
+    """Wraps a JobStore and logs every write, with a witness value captured at the same moment.
+
+    The witness is what makes ordering assertions possible. "submitting was committed before the
+    first POST" is not visible in the final record - both facts are true afterwards either way -
+    so the test passes `lambda: len(fc.posted)` and asserts the submitting write saw zero posts.
+    """
+
+    def __init__(self, inner, witness=None):
+        self.inner = inner
+        self.witness = witness or (lambda: None)
+        self.writes = []
+
+    def _log(self, op, record):
+        self.writes.append(
+            {
+                "op": op,
+                "status": record["status"] if record else None,
+                "submit_attempt": record["submit_attempt"] if record else None,
+                "witness": self.witness(),
+            }
+        )
+        return record
+
+    def create(self, owner_id, record):
+        return self._log("create", self.inner.create(owner_id, record))
+
+    def update(self, owner_id, job_id, mutate, **kwargs):
+        return self._log("update", self.inner.update(owner_id, job_id, mutate, **kwargs))
+
+    def bind_provider_job_id(self, owner_id, job_id, provider, provider_job_id, **kwargs):
+        return self._log("bind", self.inner.bind_provider_job_id(owner_id, job_id, provider, provider_job_id, **kwargs))
+
+    def request_cancel(self, owner_id, job_id, **kwargs):
+        return self._log("cancel", self.inner.request_cancel(owner_id, job_id, **kwargs))
+
+    def statuses(self):
+        return [write["status"] for write in self.writes]
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)

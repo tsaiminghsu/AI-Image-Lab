@@ -26,6 +26,7 @@ import shutil
 import sys
 from types import SimpleNamespace
 
+import capability_catalog as catalog
 import comfyui_client as client
 import pose_skeletons
 import prompt_adapter
@@ -727,6 +728,56 @@ def _run_hq(full_prompt, negative_prompt, seed, stem, trigger, anchor_path, pose
     )
 
 
+def list_capabilities(checkpoint=None, *, as_json=False):
+    """Render the capability catalog. Returns a string rather than printing, so the GUI and the
+    tests can use the same rendering the CLI shows.
+
+    A disabled row is printed with its reason, never omitted: a capability that simply is not
+    listed reads as "this tool cannot do that at all" rather than "not with this checkpoint, and
+    here is why".
+    """
+    if checkpoint is not None and checkpoint not in catalog.checkpoints():
+        raise UsageError(f"unknown checkpoint {checkpoint!r} - choices: {list(catalog.checkpoints())}")
+    targets = [checkpoint] if checkpoint else list(catalog.checkpoints())
+    if as_json:
+        import json
+
+        return json.dumps(
+            [{"catalog_id": row.catalog_id, "checkpoint": row.checkpoint, "family": row.family,
+              "kind": row.kind, "name": row.name, "label": row.label, "enabled": row.enabled,
+              "reason": row.reason, "params": row.params}
+             for name in targets for row in catalog.rows_for(name)],
+            ensure_ascii=False, indent=2,
+        )
+    lines = []
+    for name in targets:
+        lines.append(f"{name}  ({catalog.family_of(name)})")
+        for row in catalog.rows_for(name):
+            mark = "v" if row.enabled else "x"
+            lines.append(f"  [{mark}] {row.name:<16} {row.label}")
+            if not row.enabled:
+                lines.append(f"        {row.reason}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _requested_capability(anchor_path, pose_reference_path, pose_name, use_facedetailer):
+    """Which catalog row the caller tripped over, so a refusal names the thing they asked for.
+
+    Order matters only for the message: a caller who passed several unavailable options hears
+    about the first one, which is enough to explain why the checkpoint cannot do this.
+    """
+    if anchor_path:
+        return catalog.FEATURE_FACEID_ANCHOR
+    if pose_reference_path:
+        return catalog.FEATURE_POSE_CONTROLNET
+    if pose_name:
+        return catalog.FEATURE_POSE_SKELETON
+    if use_facedetailer:
+        return catalog.FEATURE_FACEDETAILER
+    raise AssertionError("_requested_capability called with nothing requested")
+
+
 def _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facedetailer,
                  checkpoint, hq, width, height, lora_strength):
     """Resolve gen_custom's flag combinations into one settled plan, or raise UsageError.
@@ -747,10 +798,13 @@ def _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facede
                          f"{sorted(client.CHECKPOINTS) + sorted(client.ZIMAGE_MODELS)}")
     is_sd15 = checkpoint in client.SD15_CHECKPOINTS
     is_zimage = checkpoint in client.ZIMAGE_MODELS
+    # The messages below come from capability_catalog rather than being written here, so the GUI's
+    # Chinese explanation and this English one can never describe different capabilities. The
+    # control flow is unchanged - only the strings moved house. _requested_capability names which
+    # row the caller actually tripped over, so the error is about the thing they asked for.
     if is_zimage and (anchor_path or pose_reference_path or pose_name or use_facedetailer):
-        raise UsageError(f"checkpoint {checkpoint!r} is Z-Image - only plain txt2img is wired up (anchor/FaceID, "
-                         "pose reference / skeleton ControlNet and FaceDetailer all need SDXL- or SD1.5-specific "
-                         "adapter files; --character still works as a text description)")
+        raise UsageError(catalog.reason_en_for(
+            checkpoint, _requested_capability(anchor_path, pose_reference_path, pose_name, use_facedetailer)))
 
     # pose_name selects a pre-built skeleton from the training/poses/ library
     # (fed to ControlNet directly, no preprocessor) - distinct from
@@ -778,8 +832,9 @@ def _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facede
     use_hq = hq and not is_sd15 and not is_zimage
 
     if pose_is_skeleton and not use_hq:
-        raise UsageError("pose_name (library skeleton) needs the HQ path - it feeds ControlNet "
-                         "directly, which only the HQ template wires up (drop --no-hq)")
+        # A combination rule, not a capability: the SDXL family does have an HQ path, the caller
+        # just turned it off. capability_catalog keeps the sentence but gives it no row.
+        raise UsageError(catalog.SKELETON_NEEDS_HQ_EN)
 
     if use_facedetailer is None:
         use_facedetailer = use_hq  # HQ defaults FaceDetailer on; legacy defaults off
@@ -792,9 +847,8 @@ def _plan_custom(prompt, anchor_path, pose_reference_path, pose_name, use_facede
         if use_facedetailer and not anchor_path:
             raise UsageError("use_facedetailer requires anchor_path (the FaceDetailer workflow still needs a face anchor for IP-Adapter)")
     if is_sd15 and (anchor_path or pose_reference_path):
-        raise UsageError(f"checkpoint {checkpoint!r} is SD1.5 - only plain txt2img is wired up "
-                          "(anchor/IP-Adapter and pose_reference/ControlNet need the SDXL-family "
-                          "adapter files, which don't match SD1.5's UNet/CLIP shape)")
+        raise UsageError(catalog.reason_en_for(
+            checkpoint, _requested_capability(anchor_path, pose_reference_path, None, None)))
 
     # HQ custom generation defaults to the Pony-family photoreal checkpoint when
     # the caller didn't pick one (matches the GUI default). Dataset stages
@@ -873,8 +927,13 @@ def plan_picker(character=None, pose_slug=None, scene_slug=None, checkpoint=None
     Callers pass the returned prompt_body/anchor_path/pose_name straight on to the generator.
     """
     trigger = character or None
-    is_text_only = checkpoint in client.ZIMAGE_MODELS or checkpoint in client.SD15_CHECKPOINTS
     label = checkpoint or DEFAULT_CUSTOM_CHECKPOINT
+    # Asked of the catalog rather than re-tested against client.ZIMAGE_MODELS /
+    # client.SD15_CHECKPOINTS here. Those two membership tests were a third copy of what
+    # _plan_custom already enforces, and a checkpoint added to one set but not this line would
+    # have made the picker promise face locking that _plan_custom then refuses.
+    is_text_only = not (catalog.is_enabled(label, catalog.FEATURE_FACEID_ANCHOR)
+                        or catalog.is_enabled(label, catalog.FEATURE_POSE_CONTROLNET))
     notices = []
     parts = []
 
@@ -1517,6 +1576,11 @@ def build_parser():
 
     sub.add_parser("list-characters")
 
+    p_caps = sub.add_parser("list-capabilities",
+                            help="what each checkpoint can be asked for, and the reason for anything it can't")
+    p_caps.add_argument("--checkpoint", help="only this checkpoint (default: all of them)")
+    p_caps.add_argument("--json", action="store_true", help="machine-readable, for a caller that renders its own UI")
+
     p_anchor = sub.add_parser("anchor")
     p_anchor.add_argument("--character", required=True, choices=sorted(CHARACTERS))
     p_anchor.add_argument("--out", default=None)
@@ -1659,6 +1723,8 @@ def main(argv=None):
     if args.mode == "list-characters":
         for name, profile in sorted(CHARACTERS.items()):
             print(f"{name}: age {profile['age']}, {profile['appearance']}, {profile['style']}")
+    elif args.mode == "list-capabilities":
+        print(list_capabilities(args.checkpoint, as_json=args.json))
     elif args.mode == "anchor":
         out = args.out or os.path.join(REFERENCE_CANDIDATES_DIR, args.character)
         gen_anchors(args.character, out, args.seeds)

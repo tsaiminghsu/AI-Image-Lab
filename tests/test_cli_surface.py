@@ -30,6 +30,9 @@ GENERATE_CHARACTER_PATH = os.path.join(
 FROZEN_CLI = {
     "__top__": {"--variant", "--backend"},
     "list-characters": set(),
+    # Added 2026-09-18 with capability_catalog: the CLI's way to see what a checkpoint can be
+    # asked for, and the reason for anything it can't, without triggering a refusal to find out.
+    "list-capabilities": {"--checkpoint", "--json"},
     "anchor": {"--character", "--out", "--seeds"},
     "variations": {"--character", "--anchor", "--out", "--count", "--ip-adapter-weight", "--seed"},
     "test-suggestive": {"--character", "--anchor", "--out", "--seed", "--ip-adapter-weight"},

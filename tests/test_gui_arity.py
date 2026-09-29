@@ -42,6 +42,7 @@ GENERATION_HANDLERS = {
     "generate_gif",
     "generate_from_picker",
     "generate_cloud_video",
+    "send_animatediff_to_cloud",
 }
 
 
@@ -244,13 +245,31 @@ import cloud_video as cloud_module  # noqa: E402
 import comfyui_client as client_module  # noqa: E402
 import generate_character as gc_module  # noqa: E402
 import pony_tags as pony_tags_module  # noqa: E402
+import resource_policy as rp_module  # noqa: E402
 
 _ALIAS_MODULES = {
     "gc": gc_module,
     "client": client_module,
     "cloud_video": cloud_module,
     "pony_tags": pony_tags_module,
+    "rp": rp_module,
 }
+
+# gui.py helpers that take a generator as their first positional argument and forward every
+# keyword to it (`_run_or_defer(gc.gen_custom, plan, prompt=..., ...)`). The keywords belong to the
+# forwarded function, so they are checked against it exactly as a direct `gc.gen_custom(...)` would be.
+_FORWARDERS = {"_run_or_defer"}
+
+
+def _call_target(node):
+    """(alias, attr) of the function a call's keywords are checked against, or None."""
+    if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+        return node.func.value.id, node.func.attr
+    if isinstance(node.func, ast.Name) and node.func.id in _FORWARDERS and node.args:
+        target = node.args[0]
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+            return target.value.id, target.attr
+    return None
 
 
 def _collect_kwarg_calls():
@@ -261,27 +280,24 @@ def _collect_kwarg_calls():
     tree = _load_tree()
     calls = []
     for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id in _ALIAS_MODULES
-        ):
+        target = _call_target(node) if isinstance(node, ast.Call) else None
+        if target is None or target[0] not in _ALIAS_MODULES:
             continue
+        alias, attr = target
         if any(kw.arg is None for kw in node.keywords):
             continue  # **kwargs splat - names not visible statically
         kwarg_names = [kw.arg for kw in node.keywords]
         if not kwarg_names:
             continue
-        module = _ALIAS_MODULES[node.func.value.id]
-        fn = getattr(module, node.func.attr, None)
+        module = _ALIAS_MODULES[alias]
+        fn = getattr(module, attr, None)
         if fn is None or not inspect.isfunction(fn):
             continue
         sig = inspect.signature(fn)
         if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
             continue  # target itself accepts **kwargs - any keyword is legal
-        test_id = f"gui.py:{node.lineno}:{node.func.value.id}.{node.func.attr}"
-        calls.append((test_id, node.func.attr, tuple(sorted(kwarg_names)), module))
+        test_id = f"gui.py:{node.lineno}:{alias}.{attr}"
+        calls.append((test_id, attr, tuple(sorted(kwarg_names)), module))
     return calls
 
 
@@ -305,3 +321,10 @@ def test_kwarg_contract_actually_checked_something():
     `gc.<fn>(...)`/`client.<fn>(...)` shape this scan looks for, the parametrized test above
     would silently collect zero cases and always "pass"."""
     assert len(_KWARG_CALLS) >= 5
+
+
+def test_forwarded_generator_calls_are_checked():
+    """_run_or_defer carries the two biggest keyword lists in gui.py (gen_custom, AnimateDiff). If
+    the forwarder is renamed and _FORWARDERS is not, those calls silently drop out of the contract."""
+    forwarded = {name for _, name, _, _ in _KWARG_CALLS if name in ("gen_custom", "gen_video_animatediff")}
+    assert forwarded == {"gen_custom", "gen_video_animatediff"}
