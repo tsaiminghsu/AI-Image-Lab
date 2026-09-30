@@ -48,3 +48,15 @@ training/settings/
 # Voice-clone reference recordings for training/drama.py (training/voices/<id>/voice.json +
 # prompt.wav). Real people's voices, recorded with their consent - never committed.
 /training/voices/
+
+# MiniMax H3 Colab skill (.claude/skills/minimax-h3-colab): generated clips, job records and logs, the
+# user's input images, and the machine-local config. Credentials never belong in any of them - the
+# google-colab-cli OAuth token lives in its Docker volume (h3-colab-config) - but ignore the usual
+# credential file names anyway so a stray copy can't be committed.
+/output/
+/input/
+.claude/skills/minimax-h3-colab/config/config.json
+.env
+.env.*
+token.json
+client_secret*.json

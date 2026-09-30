@@ -67,6 +67,11 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `AGE_SAFETY_NEGATIVE` 一定要留在負面詞裡。**cfg 1.0 時 ComfyUI 會跳過負面詞**，所以有
   `comfyui_client.SAFETY_MIN_CFG = 1.5` 這個下限（`ZIMAGE_MIN_CFG` / `LCM_MIN_CFG` 都是它的
   別名），並由 `enforce_min_cfg()` 在 `_submit_and_wait` 統一套用，不要為了省時間降到 1.0。
+  **唯一的例外是 MiniMax H3**（`.claude/skills/minimax-h3-colab/`，跑在 Colab）：它的 turbo 節點圖是
+  BasicGuider，沒有負面詞也沒有 cfg，照 `cloud_video.replicate_safety_gate` 的規則本來應該拒用。使用者
+  同意改用兩道補償控管：首幀只能是本專案生成的虛構成人角色或沒有人物的圖（不能用真人照片），以及
+  `h3_colab.screen_prompt` 對完整 prompt 做正向詞過濾、沒有繞過的參數（測試釘住詞表，而且要涵蓋
+  `AGE_SAFETY_NEGATIVE` 的每個詞）。其他模型不要比照這個例外。
 - **錯誤型別**：library 層用 `generate_character.UsageError` 表示呼叫端參數錯誤，**不要用
   `SystemExit`**（它是 `BaseException`，`except Exception` 接不到，這正是 image_api 和 GUI
   兩個邊界 bug 的成因）。只有 CLI 的 `__main__` 把它轉回 `SystemExit`。
@@ -148,3 +153,7 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   Replicate/RunPod provider + 兩個 webhook），不是骨架——但**從來沒有部署過、沒有整合測試過**
   （這個環境沒有 AWS 帳號），而且**完全沒有前端程式碼**。`web/README.md` 是最準確的說明，
   `WEB_DEPLOYMENT.md` 是更早的規劃文件。
+- MiniMax H3（2026-09-30）：Claude Code skill `.claude/skills/minimax-h3-colab/`，一張圖 → Colab A100 上的
+  H3 首幀模式（影片＋音訊）→ `output/*.mp4`，ffprobe 驗證，成本記在 `output/h3_jobs.jsonl`。google-colab-cli
+  不支援 Windows，所以跑在 Docker 映像檔 `h3-colab-cli:0.7.4` 裡，OAuth token 放在 volume `h3-colab-config`。
+  每個 job 都開新 session，要重新下載約 40 GB 模型；同一個 session 連跑多支還沒做。實測數字見 CHANGELOG。

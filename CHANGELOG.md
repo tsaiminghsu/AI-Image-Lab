@@ -5,6 +5,56 @@
 
 ## 2026-09-30
 
+### MiniMax H3 × Colab：Claude Code skill，一張圖 → A100 上的 H3 → 驗證過的 MP4
+
+- **做了什麼**：新增 `.claude/skills/minimax-h3-colab/`（SKILL.md、`scripts/run.py`／`check.py`／`upload.py`／
+  `download.py`、Colab 端 `remote/h3_colab_job.py`、Dockerfile、prompt 指南、README）。在 Claude Code 說「用這張圖生成
+  8 秒 H3 影片」，就會組 prompt → 在 Colab 開 A100 → 用 ComfyUI 跑 H3 首幀模式（I2VA，影片＋音訊）→ 下載 → ffprobe
+  驗證 → 記錄 CU。流程參考 kocpc 教學與 killkli/minimax-h3-colab-skill，但那個 repo 沒有授權條款，所以只沿用可以查證
+  的事實（CLI 指令、HF 檔名、節點圖），程式全部重寫。
+- **為什麼用 Docker**：google-colab-cli 0.7.4 官方只支援 Linux／macOS，`execution.py` 一 import 就連帶
+  `import termios`，Windows 上連 `colab version` 都起不來。映像檔 `h3-colab-cli:0.7.4` 只裝 CLI；OAuth token 放在
+  volume `h3-colab-config`，不在 repo 裡。這台機器從 PyPI 裝套件很慢，pip 那一步花了 1,182 秒。
+- **實測確認的設計前提**：
+  - CPU runtime 整合測試（`tests/test_minimax_h3_live.py`，21 秒）證實 **`colab exec` 在遠端程式丟例外時仍然回傳
+    exit 0**，所以成敗一律看遠端印出的 `H3_*` marker，沒有 `H3_OUTPUT` 就算失敗。
+  - `--env` 在 `.py` 上有效。marker 能邊跑邊回傳，前提是容器裡設了 `PYTHONUNBUFFERED=1`，否則要等整個 exec 結束才看得到。
+- **實測（兩支都是 Colab 分配的 NVIDIA A100-SXM4-80GB、高 RAM、CUDA 12.8、torch 2.11；fp8_scaled 首幀模型＋turbo v4
+  LoRA、8 步、沒有 `--lowvram`）**：
+
+  | | 5 秒（124 幀） | 8 秒（192 幀） |
+  | --- | ---: | ---: |
+  | 解析度（依 9:16 圖自動選） | 768×1376 | 768×1376 |
+  | ffprobe | h264／yuv420p／24 fps／5.167 秒／aac 32 kHz 立體聲 | h264／yuv420p／24 fps／8.000 秒／aac 32 kHz 立體聲 |
+  | 裝 ComfyUI | 29.3 秒 | 27.9 秒 |
+  | 從 HF 下載約 40 GB 模型 | 367.1 秒 | 360.7 秒 |
+  | 啟動 ComfyUI | 26.0 秒 | 24.0 秒 |
+  | 推論 | **195.1 秒** | **365.1 秒** |
+  | VRAM 峰值 | 43,214 MiB | 45,598 MiB |
+  | session 開啟時間／整個 job | 657 秒／663 秒 | 812 秒／818 秒 |
+  | CU：實測（餘額差）／估算（6.77/hr × session） | **0.85**／1.24 | **1.49**／1.53 |
+
+  - 兩支加上 CPU 測試共用 2.34 CU（79.76 → 77.42）。文章說「一支約 1 CU」只對了一半：每個新 session 都有約 7 分鐘
+    的固定開銷（安裝＋下載，約 0.8 CU）。用同一個 session 連跑的話，照 6.77/hr 估算，推論本身 5 秒約 0.37 CU、
+    8 秒約 0.69 CU（估算，還沒實測）。
+  - 5 秒那支實測比估算低 0.4 CU，原因不明（可能是 Colab 的計費粒度或餘額更新延遲），不要只拿單次數字當單價。
+- **畫面品質（逐幀拼圖）**：8 秒「人物走向鏡頭」完全照指令，一鏡到底，人物、服裝、菜單板、吊燈都維持得住。
+  5 秒「轉頭看窗外＋小幅推近」前 2 秒正確，第 3 秒後模型自己切到窗邊的側臉構圖，推近的幅度遠超過「small amplitude」。
+  所以第 2 支的 prompt 加了「in one continuous shot」。ffprobe 看不出這種問題，一定要看拼圖。
+- **遇到的問題**：
+  - 第 2 支第一次 `colab new` 被 assign 端點回 503 Service Unavailable（上一台 A100 釋放後約 1 分鐘，A100＋高 RAM
+    暫時沒有容量）。沒有建立 session，花了 0 CU，1 分鐘後重試就成功。這個 503 原本被歸類成 `COLAB_CONNECTION_FAILED`，
+    已改成 `GPU_UNAVAILABLE`，並補了一條測試。
+  - Colab 上的 `huggingface_hub` 會去 Colab secret store 找 `HF_TOKEN`，那只在 Colab 網頁版才會回應，所以每次白等
+    10 秒。改成 `token=False` 之後第 2 支就沒有這段等待（模型都是公開的）。
+- **安全例外**：H3 的 turbo 節點圖沒有負面詞也沒有 cfg，照 `replicate_safety_gate` 的規則本來應該拒用。使用者同意改用
+  補償控管：首幀只能是本專案生成的虛構成人角色或沒有人物的圖，加上 `screen_prompt` 對完整 prompt 做不可繞過的正向詞
+  過濾（測試釘住詞表，而且要涵蓋 `AGE_SAFETY_NEGATIVE`）。寫進 CLAUDE.md「年齡安全」。
+- **授權**：MiniMax H3 Community License 不涵蓋美國、歐盟、英國、韓國；年營收超過 2,000 萬美元要另外授權；商用介面要標示
+  「MiniMax H3」；**H3 的輸出不能用來改進其他模型**（例如拿來訓練 SDXL 角色 LoRA）。詳見 skill README。
+- **測試**：新增 156 條離線測試（`tests/test_minimax_h3_*.py`），外加 2 條 live 測試（`H3_LIVE_COLAB=1`）。
+  `check.ps1` 和 CI 的 ruff 範圍加上 `.claude/skills`。
+
 ### 旻俊用新錨點重畫：舊臉跟泰宇太像
 
 - **為什麼**：隨機挑角色測試時，順手把 5 位男性角色的錨點兩兩比對（InsightFace buffalo_l）：minjun 對 taeoh 0.64、

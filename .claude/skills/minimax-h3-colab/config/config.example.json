@@ -1,0 +1,24 @@
+{
+  "colab": {
+    "transport": "auto",
+    "docker_image": "h3-colab-cli:0.7.4",
+    "config_volume": "h3-colab-config",
+    "auth": "oauth2",
+    "gpu": "A100",
+    "high_mem": true,
+    "timeout_seconds": 3600,
+    "session_create_timeout_seconds": 900,
+    "transfer_timeout_seconds": 900
+  },
+  "output": {
+    "directory": "./output"
+  },
+  "video": {
+    "default_duration": 8,
+    "short_side": 768,
+    "max_megapixels": 1.2
+  },
+  "tools": {
+    "ffprobe": ""
+  }
+}

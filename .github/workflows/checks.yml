@@ -42,10 +42,10 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
 
       - name: Lint
-        run: python -m ruff check training tests worker
+        run: python -m ruff check training tests worker .claude/skills
 
-      - name: Format (tests only)
-        run: python -m ruff format --check tests
+      - name: Format (tests and the Claude skills)
+        run: python -m ruff format --check tests .claude/skills
 
       - name: Tests
         run: python -m pytest

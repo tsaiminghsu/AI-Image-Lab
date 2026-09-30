@@ -20,7 +20,7 @@ norecursedirs = [
 ]
 addopts = "-ra -q --strict-markers -m 'not live'"
 markers = [
-    "live: needs a running ComfyUI at COMFYUI_URL (deselected by default; run with -m live)",
+    "live: needs an external service - a running ComfyUI at COMFYUI_URL, or Colab when H3_LIVE_COLAB=1 (deselected by default; run with -m live)",
 ]
 
 [tool.ruff]
