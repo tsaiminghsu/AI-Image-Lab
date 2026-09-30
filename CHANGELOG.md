@@ -5,6 +5,33 @@
 
 ## 2026-09-30
 
+### 教師短片用 H3 重做，臉部相似度從 0.26 提高到 0.65；Colab 的 CU 餘額會延遲扣款
+
+- **為什麼**：AnimateDiff 版的線上教學教師短片（`outputs/animatediff/AI_teacher_online_preview.mp4`）臉跟 yuqing 不像。
+  用 InsightFace buffalo_l 對 `reference_candidates/yuqing/anchor_seed3001.png` 比對，平均只有 0.26（範圍 0.17–0.31）；
+  SadTalker 版是 0.54。9/28 測過把 AnimateDiff 的 FaceID 權重拉到 2.0，身分也沒有改善，所以改走別的路線。
+- **怎麼做**：
+  1. **首幀**：`generate_character.py custom --character yuqing --anchor .../anchor_seed3001.png --checkpoint juggernaut
+     --width 1344 --height 768 --seed 9101`，走 HQ 路徑（FaceID＋FaceDetailer）。RTX 2070 花 131 秒，峰值 73°C、5.7 GB。
+     ComfyUI 用 `--disable-smart-memory` 啟動，跑完就關。首幀對錨點的相似度是 0.748。
+  2. **H3**（Colab A100-SXM4-80GB）：兩段各 9 秒（226 幀），加 `--constraint locked-camera`。第 2 段的首幀是第 1 段的最後一格。
+  3. **合併**：丟掉第 2 段的第一格（和第 1 段最後一格重複），拿掉 H3 的音訊，疊回原本 18.12 秒的 edge-tts 曉臻語音。
+     裁到 18.3 秒，輸出 H.264 crf 18＋AAC 48 kHz。
+- **結果**：`outputs/teacher_h3/AI教師_yuqing_online_h3.mp4`，1344×768、24 fps、18.3 秒、4.6 MB。
+  - 440 格都偵測得到臉，對錨點平均 0.646、最低 0.527。
+  - 接點前後兩格的 SSIM 是 0.985，比全片相鄰格的中位數 0.958 還高，看不出接縫。
+  - 嘴型沒有對上台詞，因為使用者選擇保留原本的語音。畫面從舊版的正方形改成 16:9。
+- **成本**：本機 GPU 131 秒。Colab 兩段共 1.44＋1.35 = 2.79 CU（77.42 → 74.63）。推論分別花 440.5 秒和 445.5 秒，
+  VRAM 峰值 46,670 MiB。
+- **Colab 的餘額會延遲扣款**：
+  - 第 1 段結束時 `colab usage` 只少了 0.87 CU。約 1.5 分鐘後、第 2 段開始前，又少了 0.57。
+    實際是 1.44，和估算（6.77/hr × session 時間）的 1.46 一致。
+  - 反過來，5 秒那支（實測 0.85，估算 1.24）和第 2 段（實測 1.35，估算 1.85）在之後 10 分鐘到 1 小時內都沒有再扣，
+    所以估算也可能高估。第 2 段有 94 秒在等 A100 分配，這段可能不計費。
+  - 最可靠的是看整批的餘額差：4 支共 5.13 CU，session 共 3,231 秒，約 5.7 CU/hr（面板顯示 6.77/hr）。
+    平均每支 1.28 CU，每秒影片 0.16 CU。
+  - `h3_jobs.jsonl` 裡的 `cu_used_measured` 是 job 結束當下的讀數，可能偏低。要報單支成本，就隔幾分鐘再讀一次餘額。
+
 ### MiniMax H3 × Colab：Claude Code skill，一張圖 → A100 上的 H3 → 驗證過的 MP4
 
 - **做了什麼**：新增 `.claude/skills/minimax-h3-colab/`（SKILL.md、`scripts/run.py`／`check.py`／`upload.py`／
