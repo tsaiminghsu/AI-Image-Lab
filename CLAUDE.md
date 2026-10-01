@@ -156,4 +156,6 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
 - MiniMax H3（2026-09-30）：Claude Code skill `.claude/skills/minimax-h3-colab/`，一張圖 → Colab A100 上的
   H3 首幀模式（影片＋音訊）→ `output/*.mp4`，ffprobe 驗證，成本記在 `output/h3_jobs.jsonl`。google-colab-cli
   不支援 Windows，所以跑在 Docker 映像檔 `h3-colab-cli:0.7.4` 裡，OAuth token 放在 volume `h3-colab-config`。
-  每個 job 都開新 session，要重新下載約 40 GB 模型；同一個 session 連跑多支還沒做。實測數字見 CHANGELOG。
+  多支影片用 `--manifest`／`--segments` 共用一個 session（約 40 GB 模型只下載一次，實測三支 5 秒 1.51 CU，分開跑約
+  2.55 CU）。Colab 帳號是幾個 Claude 工作階段共用的：開跑前會檢查帳號上有沒有別的 runtime（`COLAB_BUSY`），成本只看
+  整批 settle 後的餘額差。實測數字見 CHANGELOG。

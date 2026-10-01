@@ -100,3 +100,21 @@ def test_relative_config_paths_resolve_against_the_repo_root():
 def test_missing_configured_ffprobe_is_reported_as_missing(tmp_path):
     config = make_config(tmp_path, H3_FFPROBE=str(tmp_path / "nope" / "ffprobe.exe"))
     assert h3.find_ffprobe(config) is None
+
+
+def test_settle_wait_defaults_to_two_minutes_and_is_validated(tmp_path):
+    assert h3.load_config(tmp_path / "none.json", env={})["colab"]["cu_settle_seconds"] == 120
+    assert make_config(tmp_path, H3_CU_SETTLE_SECONDS="45")["colab"]["cu_settle_seconds"] == 45
+    local = tmp_path / "config.json"
+    local.write_text(json.dumps({"colab": {"cu_settle_seconds": -1}}), encoding="utf-8")
+    with pytest.raises(h3.InputError) as err:
+        h3.load_config(local, env={})
+    assert err.value.code == "INVALID_CONFIG"
+
+
+def test_exec_idle_limit_defaults_to_fifteen_minutes_and_is_validated(tmp_path):
+    assert h3.load_config(tmp_path / "none.json", env={})["colab"]["exec_idle_timeout_seconds"] == 900
+    local = tmp_path / "config.json"
+    local.write_text(json.dumps({"colab": {"exec_idle_timeout_seconds": 60}}), encoding="utf-8")
+    with pytest.raises(h3.InputError):
+        h3.load_config(local, env={})

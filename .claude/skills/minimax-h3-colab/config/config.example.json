@@ -8,7 +8,9 @@
     "high_mem": true,
     "timeout_seconds": 3600,
     "session_create_timeout_seconds": 900,
-    "transfer_timeout_seconds": 900
+    "transfer_timeout_seconds": 900,
+    "cu_settle_seconds": 120,
+    "exec_idle_timeout_seconds": 900
   },
   "output": {
     "directory": "./output"

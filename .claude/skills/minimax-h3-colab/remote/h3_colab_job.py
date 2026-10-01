@@ -74,8 +74,16 @@ class StageError(RuntimeError):
         self.code = code
 
 
+_MARKER_LOCK = threading.Lock()
+
+
 def marker(kind, **fields):
-    print("H3_%s %s" % (kind, json.dumps(fields, ensure_ascii=True, sort_keys=True)), flush=True)
+    # One write per line under a lock: the model downloads print from several threads at once, and
+    # print() writes the text and the newline separately, so two markers could share a line.
+    line = "H3_%s %s" % (kind, json.dumps(fields, ensure_ascii=True, sort_keys=True))
+    with _MARKER_LOCK:
+        sys.stdout.write(line + chr(10))
+        sys.stdout.flush()
 
 
 def frames_for(duration):
@@ -236,22 +244,63 @@ def setup_comfyui():
 
 
 def download_models(diffusion):
+    """Fetch the missing model files in parallel. Already-present files (a reused session) are skipped and
+    reported as cached; any failure surfaces as MODEL_DOWNLOAD_FAILED through main()."""
+    # Official huggingface_hub switch for faster Xet transfers; it must be set before the import.
+    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+    from concurrent.futures import ThreadPoolExecutor
+
     from huggingface_hub import hf_hub_download
 
-    sizes = {}
-    for repo, remote_name, folder in model_files(diffusion):
+    def fetch(item):
+        repo, remote_name, folder = item
         target = COMFY / "models" / folder / Path(remote_name).name
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.is_file() or target.stat().st_size == 0:
+        t = time.monotonic()
+        cached = target.is_file() and target.stat().st_size > 0
+        if not cached:
             local_dir = COMFY / "models" if repo == BASE_REPO else COMFY / "models" / "loras"
             # token=False: the repos are public, and without it huggingface_hub asks the Colab secret
             # store for HF_TOKEN, which only answers inside the Colab UI (a 10 s timeout, measured).
             got = Path(hf_hub_download(repo_id=repo, filename=remote_name, local_dir=str(local_dir), token=False))
             if got.resolve() != target.resolve():
                 raise StageError("MODEL_DOWNLOAD_FAILED", "downloaded to %s, expected %s" % (got, target))
-        sizes[target.name] = round(target.stat().st_size / 2**30, 2)
-        print("model %s %.2f GiB" % (target.name, sizes[target.name]), flush=True)
-    return sizes
+        gib = round(target.stat().st_size / 2**30, 2)
+        marker("MODEL", name=target.name, gib=gib, seconds=round(time.monotonic() - t, 1), cached=cached)
+        return target.name, gib
+
+    files = model_files(diffusion)
+    with ThreadPoolExecutor(max_workers=len(files)) as pool:
+        return dict(pool.map(fetch, files))
+
+
+def save_last_frame(video, target):
+    """The last frame as a PNG, so a chained job in the same session can start from it without a round
+    trip through the local machine. Best effort: a failure only blocks a chained follow-up."""
+    out = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-sseof",
+            "-0.1",
+            "-i",
+            str(video),
+            "-frames:v",
+            "1",
+            "-update",
+            "1",
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0 or not Path(target).is_file():
+        print("could not save the last frame: %s" % out.stderr[-300:], flush=True)
+        return False
+    return True
 
 
 def http_json(path, body=None, timeout=30):
@@ -432,6 +481,8 @@ def main():
         out = Path(job["remote_output"])
         shutil.copy2(video, out)
         marker("OUTPUT", path=str(out), bytes=out.stat().st_size, streams=streams)
+        if job.get("remote_last_frame") and save_last_frame(out, job["remote_last_frame"]):
+            marker("LAST_FRAME", path=job["remote_last_frame"])
         marker("TIMING", stage="total", seconds=round(time.monotonic() - started, 1))
     except StageError as exc:
         marker("ERROR", code=exc.code, message=str(exc)[-2000:])

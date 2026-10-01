@@ -24,7 +24,7 @@ from minimax_h3_fakes import (
     raising,
 )
 
-HAPPY_CALLS = ["version", "usage", "new", "usage", "upload", "upload", "exec", "download", "stop", "usage"]
+HAPPY_CALLS = ["version", "usage", "new", "usage", "upload", "upload", "exec", "download", "download", "stop", "usage"]
 
 
 def run(tmp_path, transport=None, prober=None, config=None, **spec_kw):
@@ -377,3 +377,24 @@ def test_transport_choice_follows_the_config(tmp_path):
 def test_usage_output_is_parsed():
     text = "[colab] notice\nCurrent balance: 1,234.50 compute units\nUsage rate: 11.77/hr\nActive assignments: 1"
     assert h3.parse_usage(text) == {"balance": 1234.5, "rate_per_hour": 11.77, "active_assignments": 1.0}
+
+
+def test_run_streaming_gives_up_on_a_silent_process():
+    """`colab exec` can lose its connection and hang without exiting (2026-10-01: an hour of A100 billed
+    after "Connection was lost"). Silence longer than idle_timeout ends the call like a timeout."""
+    started = time.monotonic()
+    with pytest.raises(h3.ColabTimeout, match="printed nothing"):
+        h3.run_streaming(
+            [sys.executable, "-c", "import time; print('working', flush=True); time.sleep(30)"],
+            label="silent",
+            timeout=60,
+            idle_timeout=1,
+        )
+    assert time.monotonic() - started < 10
+
+
+def test_exec_gets_the_idle_limit_and_nothing_else_does(tmp_path):
+    record, transport = run(tmp_path)
+    limits = dict(zip(transport.subcommands, transport.idle_timeouts))
+    assert limits["exec"] == 900
+    assert limits["upload"] is None and limits["new"] is None

@@ -23,15 +23,19 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
 3. **User intent > prompt optimization.** Never add motion, camera moves or content the user did not ask
    for. 「人物不要移動」→ `--constraint static-subject`; 「鏡頭固定」/"camera locked" → `--constraint locked-camera`.
 4. **Each run spends Colab compute units.** Run the job the user asked for; ask before re-running after a
-   failure or starting extra jobs. Never run two jobs at once. Never retry a `TIMEOUT` automatically.
-5. You cannot complete Google sign-in. On `AUTH_REQUIRED`, give the user the login command from the
+   failure or starting extra jobs. Never retry a `TIMEOUT` automatically.
+5. **One H3 run at a time on the account — across Claude sessions too.** Other sessions on this machine use
+   the same Colab account. `run.py` refuses with `COLAB_BUSY` when a runtime is already active; message
+   the session that owns it (ListAgents / SendMessage) and wait, rather than passing `--ignore-busy`. Tell
+   them when you start and when you finish.
+6. You cannot complete Google sign-in. On `AUTH_REQUIRED`, give the user the login command from the
    `hint` and wait for them.
 
 ## Workflow
 
 1. **Image**: the path the user gave; if none, the newest image in `input/` — confirm which one if unsure.
    Look at the image (Read tool) so the description matches what is actually in the frame.
-2. **Parameters** from the request: `duration` 4–15 s (default 8; below 5 s is outside the trained range),
+2. **Parameters** from the request: `duration` 4–15 s per clip (default 8; below 5 s is outside the trained range),
    `resolution` (default `auto` = the image's aspect ratio at 768p — only pass WxH if the user asks),
    `output` (default `output/<image>_h3_<job_id>.mp4`), constraints (rule 3).
 3. **Prompt**: write the English shot description following `prompts/video_prompt.md` — first what is
@@ -53,10 +57,24 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
 
    Progress goes to stderr and `output/logs/<job_id>.log` (`[STATE]` on every line). Add `--dry-run` to
    validate and print the exact commands without touching Colab.
-6. **Result**: the last stdout line is the job record (JSON). Report `status`, the output path, and from
-   `ffprobe`: resolution, duration, fps, codecs; plus `gpu`, `elapsed_seconds`, `stage_seconds` and
-   `cu_used_measured`. After a success, it is worth extracting a few frames with ffmpeg to look at them
-   (motion quality is not something ffprobe can judge).
+
+   **More than one clip → one batch, one session** (the ComfyUI install and the ~40 GB model download,
+   6–7 min and ~0.75 CU, are paid once instead of per clip; measured: three 5 s clips 1.51 CU in one
+   session vs ~2.55 CU separately, each clip after the first ~205 s of session time):
+   - a longer shot than 15 s, or "continue this clip": `--segments N` with the same `--image`/`--prompt`;
+     part 2..N start from the previous part's last frame, which stays on the Colab VM.
+   - several different images: a manifest, `--manifest batch.json` =
+     `{"batch_id": "...", "jobs": [<job spec>, ...]}` (job spec = the nested form of `JobSpec`, add
+     `"chain": true` to continue the previous job).
+   - a clip that fails is skipped and the batch carries on; a clip after a failed one that chains from it
+     ends `CHAIN_SOURCE_FAILED`.
+6. **Result**: the last stdout line is JSON — the job record for one clip, the batch summary (records under
+   `records`) for a batch. Report `status`, the output path(s), and from `ffprobe`: resolution, duration,
+   fps, codecs; plus `gpu`, `elapsed_seconds`, `stage_seconds` (in a batch, `QUEUED` is the wait for
+   earlier clips). For cost, quote `cu_used_settled` (read again `cu_settle_seconds`, default 120 s, after
+   the session is stopped — Colab deducts late). Do not quote a batch clip's own `cu_used_measured`: late
+   deductions land on the next clip (measured 0.95 / 0.00 / 0.56). After a success, it is worth extracting
+   a few frames with ffmpeg to look at them (motion quality is not something ffprobe can judge).
 
 ## States and error codes
 
@@ -71,9 +89,11 @@ and `failed_stage` in the record.
 | `DOCKER_UNAVAILABLE` | Start Docker Desktop, or build the image (`hint`). |
 | `AUTH_REQUIRED` | "Google Colab authentication is required." — user runs the `hint` command once. |
 | `GPU_UNAVAILABLE` | "No compatible GPU is currently available." Suggest waiting, or `--gpu L4`/`H100` if they agree. |
+| `COLAB_BUSY` | Another runtime is active on the account (often another Claude session). Wait for it (rule 5). |
+| `CHAIN_SOURCE_FAILED` | The clip it continues failed or produced no last frame; nothing was spent on this one. |
 | `COLAB_CONNECTION_FAILED` | Network / Colab problem; nothing was generated. |
 | `MODEL_DOWNLOAD_FAILED`, `COMFYUI_SETUP_FAILED`, `INFERENCE_FAILED` | Report the message and the log path. |
-| `TIMEOUT` | Session was stopped; do not retry without asking (longer `--timeout` or shorter clip). |
+| `TIMEOUT` | Session was stopped; do not retry without asking. Also raised when `colab exec` prints nothing for `exec_idle_timeout_seconds` (default 15 min) — a lost connection. In a batch, the next clip gets a fresh session. |
 | `OUTPUT_NOT_FOUND` | Inference ended without a usable MP4; report the log. |
 | `FAILED_VALIDATION` | MP4 kept but failed ffprobe checks; report the listed problems. Never call it a success. |
 

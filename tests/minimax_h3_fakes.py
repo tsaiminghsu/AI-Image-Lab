@@ -38,7 +38,7 @@ h3 = import_skill("h3_colab")
 
 def make_config(tmp_path, **env):
     """Defaults from config.example.json, output under tmp_path, and no local config.json."""
-    env = {"H3_OUTPUT_DIR": str(tmp_path / "out"), **env}
+    env = {"H3_OUTPUT_DIR": str(tmp_path / "out"), "H3_CU_SETTLE_SECONDS": "0", **env}
     return h3.load_config(tmp_path / "no-config.json", env=env)
 
 
@@ -112,6 +112,7 @@ HAPPY_EXEC_LINES = [
     marker("TIMING", stage="inference", seconds=420.0),
     marker("VRAM_PEAK", mib=38000),
     marker("OUTPUT", path="/content/h3_job_output.mp4", bytes=4194304, streams=["audio", "video"]),
+    marker("LAST_FRAME", path="/content/h3_job_last_frame.png"),
 ]
 
 
@@ -123,6 +124,7 @@ class FakeTransport(h3.Transport):
     def __init__(self, **handlers):
         super().__init__("oauth2")
         self.calls = []
+        self.idle_timeouts = []
         self._usage = iter(
             [
                 "Current balance: 100.00 compute units\nUsage rate: 0.00/hr\nActive assignments: 0",
@@ -163,8 +165,9 @@ class FakeTransport(h3.Transport):
     def login_command(self):
         return "colab --auth=oauth2 usage"
 
-    def call(self, args, *, label, timeout, mount_dir=None, on_line=None):
+    def call(self, args, *, label, timeout, mount_dir=None, on_line=None, idle_timeout=None):
         self.calls.append(list(args))
+        self.idle_timeouts.append(idle_timeout)
         return self.handlers[args[0]](list(args), on_line or (lambda line: None))
 
     @property

@@ -79,6 +79,7 @@ TIMEOUT = "TIMEOUT"
 CANCELLED = "CANCELLED"
 FAILED_VALIDATION = "FAILED_VALIDATION"
 DRY_RUN = "DRY_RUN"
+QUEUED = "QUEUED"  # stage_seconds key only: a batch job waiting for the jobs before it; never a status
 LIFECYCLE = (PENDING, PREPARING, CONNECTING_COLAB, UPLOADING, LOADING_MODEL, INFERENCE, DOWNLOADING, VALIDATING)
 TERMINAL = (COMPLETED, FAILED, TIMEOUT, CANCELLED, FAILED_VALIDATION)
 
@@ -104,6 +105,11 @@ class InputError(H3Error):
 
     def __init__(self, message: str, *, code: str = "INVALID_INPUT", hint: str = ""):
         super().__init__(code, message, status=FAILED, hint=hint)
+
+
+class SessionLost(H3Error):
+    """`colab exec` failed without a remote marker, so the Colab session is in an unknown state. The job
+    fails like any other; a batch also stops that session and gives the next job a fresh one."""
 
 
 class ColabCommandError(RuntimeError):
@@ -147,6 +153,8 @@ ENV_OVERRIDES: dict[str, tuple[str, str, Callable[[str], Any]]] = {
     "H3_TIMEOUT_SECONDS": ("colab", "timeout_seconds", int),
     "H3_OUTPUT_DIR": ("output", "directory", str),
     "H3_FFPROBE": ("tools", "ffprobe", str),
+    "H3_CU_SETTLE_SECONDS": ("colab", "cu_settle_seconds", int),
+    "H3_EXEC_IDLE_TIMEOUT_SECONDS": ("colab", "exec_idle_timeout_seconds", int),
 }
 
 
@@ -187,6 +195,10 @@ def validate_config(config: dict) -> dict:
     _check(isinstance(c.get("high_mem"), bool), "colab.high_mem must be true or false")
     for key in ("timeout_seconds", "session_create_timeout_seconds", "transfer_timeout_seconds"):
         _check(_is_int(c.get(key)) and 60 <= c[key] <= 6 * 3600, f"colab.{key} must be an integer 60-21600")
+    settle = c.get("cu_settle_seconds")
+    _check(_is_int(settle) and 0 <= settle <= 3600, "colab.cu_settle_seconds must be an integer 0-3600")
+    idle = c.get("exec_idle_timeout_seconds")
+    _check(_is_int(idle) and 300 <= idle <= 3600, "colab.exec_idle_timeout_seconds must be an integer 300-3600")
     for key in ("docker_image", "config_volume"):
         _check(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/:]*", str(c.get(key, "")))), f"colab.{key} is invalid")
     v = config["video"]
@@ -288,8 +300,13 @@ def run_streaming(
     on_line: Callable[[str], None] | None = None,
     on_abort: Callable[[], None] | None = None,
     env: dict | None = None,
+    idle_timeout: float | None = None,
 ) -> list[str]:
-    """Run cmd, feed each output line to on_line as it arrives, enforce a wall-clock timeout.
+    """Run cmd, feed each output line to on_line as it arrives, enforce a wall-clock timeout, and with
+    idle_timeout also a limit on silence. The silence limit exists because `colab exec` can lose its
+    connection and then hang without exiting (measured 2026-10-01: "RuntimeError: Connection was lost"
+    and nothing for an hour while the A100 kept billing); the remote script prints at least every 30 s
+    while it renders, so long silence means the call is dead.
 
     stdin is /dev/null on purpose: if the CLI falls into its interactive OAuth prompt it hits EOF
     and fails fast (-> AUTH_REQUIRED) instead of hanging the job. On timeout, Ctrl+C or a failing
@@ -323,11 +340,15 @@ def run_streaming(
     reader.start()
     output: list[str] = []
     deadline = time.monotonic() + timeout
+    last_output = time.monotonic()
     try:
         eof = False
         while not eof:
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 raise ColabTimeout(f"{label} exceeded {timeout:g} seconds")
+            if idle_timeout is not None and now - last_output > idle_timeout:
+                raise ColabTimeout(f"{label} printed nothing for {idle_timeout:g} seconds (connection lost?)")
             try:
                 item = lines.get(timeout=0.25)
             except queue.Empty:
@@ -335,6 +356,7 @@ def run_streaming(
             if item is None:
                 eof = True
                 continue
+            last_output = time.monotonic()
             line = clean_line(item)
             output.append(line)
             if on_line:
@@ -394,12 +416,19 @@ class Transport:
         timeout: float,
         mount_dir: Path | None = None,
         on_line: Callable[[str], None] | None = None,
+        idle_timeout: float | None = None,
     ) -> str:
         name = f"h3-{uuid.uuid4().hex[:12]}"
         cmd = self.command(list(args), mount_dir=mount_dir, name=name)
         env = dict(os.environ, PYTHONUNBUFFERED="1")
         lines = run_streaming(
-            cmd, label=label, timeout=timeout, on_line=on_line, on_abort=lambda: self.abort(name), env=env
+            cmd,
+            label=label,
+            timeout=timeout,
+            on_line=on_line,
+            on_abort=lambda: self.abort(name),
+            env=env,
+            idle_timeout=idle_timeout,
         )
         return "\n".join(line for line in lines if line)
 
@@ -965,13 +994,19 @@ def build_prompt(spec: JobSpec) -> str:
 
 # --- job spec ----------------------------------------------------------------------------------------
 
+MAX_BATCH_JOBS = 20
+
 
 @dataclasses.dataclass
 class JobSpec:
-    """One clip. The nested dict form (to_dict/from_dict) is the unit a future storyboard runner will
-    queue per scene: job_id, scene_id, input, prompt, settings, output."""
+    """One clip. The nested dict form (to_dict/from_dict) is the unit a batch manifest (or a future
+    storyboard runner) queues per scene: job_id, scene_id, input, prompt, settings, output.
 
-    image: Path | str
+    chain=True starts the clip from the previous job's last frame. That frame never leaves the Colab
+    VM, so the job must run in the same batch (and session) as the one before it, and `image` stays
+    empty."""
+
+    image: Path | str | None = None
     description: str = ""
     soundscape: str = ""
     music: str = ""
@@ -988,6 +1023,7 @@ class JobSpec:
     job_id: str | None = None
     scene_id: str | None = None
     mode: str = "first_frame"
+    chain: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> JobSpec:
@@ -995,11 +1031,12 @@ class JobSpec:
         settings = data.get("settings") or {}
         if isinstance(prompt, str):
             prompt = {"description": prompt}
+        chain = bool(data.get("chain", False))
         image = (data.get("input") or {}).get("image")
-        if not image:
-            raise InputError("job spec needs input.image")
+        if not image and not chain:
+            raise InputError('job spec needs input.image (or "chain": true to continue the previous clip)')
         return cls(
-            image=image,
+            image=image or None,
             description=prompt.get("description", ""),
             soundscape=prompt.get("soundscape", ""),
             music=prompt.get("music", ""),
@@ -1016,13 +1053,15 @@ class JobSpec:
             job_id=data.get("job_id"),
             scene_id=data.get("scene_id"),
             mode=settings.get("mode") or "first_frame",
+            chain=chain,
         )
 
     def to_dict(self) -> dict:
         return {
             "job_id": self.job_id,
             "scene_id": self.scene_id,
-            "input": {"image": str(self.image)},
+            "chain": self.chain,
+            "input": {"image": str(self.image) if self.image else None},
             "prompt": {
                 "description": self.description,
                 "soundscape": self.soundscape,
@@ -1048,7 +1087,7 @@ class JobSpec:
 class Prepared:
     job_id: str
     session: str
-    image: Path
+    image: Path | None
     image_size: tuple[int, int]
     width: int
     height: int
@@ -1063,6 +1102,8 @@ class Prepared:
     high_mem: bool
     timeout: int
     warnings: list[str]
+    chained_from: str | None = None
+    remote_image_override: str | None = None
 
     @property
     def actual_seconds(self) -> float:
@@ -1074,10 +1115,12 @@ class Prepared:
         return f"/content/h3_{self.job_id}"
 
     def remote_job(self) -> dict:
+        suffix = self.image.suffix.lower() if self.image is not None else ".png"
         return {
             "job_id": self.job_id,
-            "remote_image": f"{self.remote_prefix}_first_frame{self.image.suffix.lower()}",
+            "remote_image": self.remote_image_override or f"{self.remote_prefix}_first_frame{suffix}",
             "remote_output": f"{self.remote_prefix}_output.mp4",
+            "remote_last_frame": f"{self.remote_prefix}_last_frame.png",
             "comfy_image_name": f"h3_{self.job_id}_first_frame.png",
             "prompt": self.prompt,
             "width": self.width,
@@ -1118,18 +1161,26 @@ def check_image_file(path: Path | str) -> Path:
     return image
 
 
-def prepare(spec: JobSpec, config: dict, prober: Any, *, job_id: str) -> Prepared:
-    """Validate everything that can be validated without Colab. Raises InputError."""
+def prepare(spec: JobSpec, config: dict, prober: Any, *, job_id: str, chain_source: Prepared | None = None) -> Prepared:
+    """Validate everything that can be validated without Colab. Raises InputError.
+
+    A chained job takes its frame size from chain_source (the previous job) instead of reading an image."""
     warnings = []
     if spec.mode != "first_frame":
         raise InputError(f"mode {spec.mode!r} is not implemented; this phase does first_frame (I2VA) only")
-    image = check_image_file(spec.image)
-    try:
-        img_w, img_h, codec = prober.image_info(image)
-    except ProbeError as exc:
-        raise InputError(f"not a readable image: {image} ({exc})") from exc
-    if codec not in IMAGE_CODECS:
-        raise InputError(f"{image.name} decodes as {codec!r}, not a still image")
+    image: Path | None = None
+    if spec.chain:
+        if chain_source is None:
+            raise InputError("a chained job needs the previous job of the same batch as its first frame")
+        img_w, img_h = chain_source.width, chain_source.height
+    else:
+        image = check_image_file(spec.image)
+        try:
+            img_w, img_h, codec = prober.image_info(image)
+        except ProbeError as exc:
+            raise InputError(f"not a readable image: {image} ({exc})") from exc
+        if codec not in IMAGE_CODECS:
+            raise InputError(f"{image.name} decodes as {codec!r}, not a still image")
 
     duration = config["video"]["default_duration"] if spec.duration is None else spec.duration
     try:
@@ -1142,7 +1193,13 @@ def prepare(spec: JobSpec, config: dict, prober: Any, *, job_id: str) -> Prepare
         warnings.append(f"{duration:g} s is below H3's ~5 s trained range; motion and audio may be unstable")
     frames = frames_for(duration)
 
-    width, height = resolve_resolution(spec.resolution, img_w, img_h, config["video"])
+    if spec.chain:
+        requested = (spec.resolution or "auto").strip().lower()
+        if requested != "auto" and parse_resolution(requested) != (img_w, img_h):
+            raise InputError(f"a chained job keeps the previous clip's {img_w}x{img_h}; leave --resolution as auto")
+        width, height = img_w, img_h
+    else:
+        width, height = resolve_resolution(spec.resolution, img_w, img_h, config["video"])
     prompt = build_prompt(spec)
 
     if spec.seed is None:
@@ -1167,7 +1224,8 @@ def prepare(spec: JobSpec, config: dict, prober: Any, *, job_id: str) -> Prepare
     if spec.output:
         output = Path(spec.output).expanduser().resolve()
     else:
-        output = out_dir / f"{_safe_stem(image.stem)}_h3_{job_id}.mp4"
+        stem = _safe_stem(image.stem) if image is not None else "chain"
+        output = out_dir / f"{stem}_h3_{job_id}.mp4"
     if output.suffix.lower() != ".mp4":
         raise InputError(f"output must be an .mp4 path: {output}")
     if output.exists() and not spec.overwrite:
@@ -1191,14 +1249,18 @@ def prepare(spec: JobSpec, config: dict, prober: Any, *, job_id: str) -> Prepare
         high_mem=high_mem,
         timeout=timeout,
         warnings=warnings,
+        chained_from=chain_source.job_id if spec.chain and chain_source is not None else None,
+        remote_image_override=chain_source.remote_job()["remote_last_frame"] if spec.chain and chain_source else None,
     )
 
 
-def stage_work_dir(p: Prepared) -> dict[str, Path]:
+def stage_work_dir(p: Prepared) -> dict[str, Path | None]:
     """Everything a Colab call reads or writes sits in one directory: Docker mounts only that."""
     p.work_dir.mkdir(parents=True, exist_ok=True)
-    image = p.work_dir / f"first_frame{p.image.suffix.lower()}"
-    shutil.copy2(p.image, image)
+    image = None
+    if p.image is not None:
+        image = p.work_dir / f"first_frame{p.image.suffix.lower()}"
+        shutil.copy2(p.image, image)
     job = p.work_dir / "job.json"
     job.write_text(json.dumps(p.remote_job(), ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     script = p.work_dir / REMOTE_SCRIPT.name
@@ -1222,6 +1284,7 @@ class JobRun:
         self.stream = stream
         self._started = time.monotonic()
         self._entered = self._started
+        self._held = False
         self.record: dict[str, Any] = {
             "job_id": job_id,
             "scene_id": scene_id,
@@ -1253,8 +1316,14 @@ class JobRun:
     def _close_stage(self) -> None:
         now = time.monotonic()
         stages = self.record["stage_seconds"]
-        stages[self.state] = round(stages.get(self.state, 0.0) + now - self._entered, 1)
-        self._entered = now
+        key = QUEUED if self._held else self.state
+        stages[key] = round(stages.get(key, 0.0) + now - self._entered, 1)
+        self._entered, self._held = now, False
+
+    def hold(self) -> None:
+        """Wait for earlier jobs of the batch: the wait goes to QUEUED, not to the current stage or elapsed."""
+        self._close_stage()
+        self._held = True
 
     def advance(self, state: str) -> None:
         self._close_stage()
@@ -1269,9 +1338,12 @@ class JobRun:
         self.log(f"{status} ({code}) at {self.state}: {message}" + (f"\nhint: {hint}" if hint else ""))
 
     def finish(self) -> None:
+        if self.record["finished_at"] is not None:
+            return
         self._close_stage()
+        queued = self.record["stage_seconds"].get(QUEUED, 0.0)
         self.record["finished_at"] = now_iso()
-        self.record["elapsed_seconds"] = round(time.monotonic() - self._started, 1)
+        self.record["elapsed_seconds"] = round(time.monotonic() - self._started - queued, 1)
         self.log(f"finished: {self.record['status']} in {self.record['elapsed_seconds']} s")
 
 
@@ -1282,6 +1354,7 @@ class RemoteProgress:
         self.run = run
         self.error: tuple[str, str] | None = None
         self.output: dict | None = None
+        self.last_frame: str | None = None
 
     def on_line(self, line: str) -> None:
         self.run.log_remote(line)
@@ -1301,12 +1374,16 @@ class RemoteProgress:
             rec["remote_config"] = data
         elif kind == "TIMING":
             rec.setdefault("remote_seconds", {})[data.get("stage")] = data.get("seconds")
+        elif kind == "MODEL":
+            rec.setdefault("remote_models", []).append(data)
         elif kind == "VRAM_PEAK":
             rec["vram_peak_mib"] = data.get("mib")
         elif kind == "ERROR":
             self.error = (str(data.get("code") or "INFERENCE_FAILED"), str(data.get("message") or ""))
         elif kind == "OUTPUT":
             self.output = data
+        elif kind == "LAST_FRAME":
+            self.last_frame = data.get("path")
 
     def raise_if_error(self) -> None:
         if not self.error:
@@ -1319,17 +1396,538 @@ class RemoteProgress:
         raise H3Error(code, message or code)
 
 
+class ColabSession:
+    """One `colab new` ... `colab stop`, kept for as many jobs of a batch as it can serve: the remote
+    script reuses the ComfyUI install, the downloaded models and the running ComfyUI it finds there."""
+
+    def __init__(self, transport: Transport, config: dict, name: str, *, gpu: str, high_mem: bool, ignore_busy: bool):
+        self.transport = transport
+        self.config = config
+        self.name = name
+        self.gpu = gpu
+        self.high_mem = high_mem
+        self.ignore_busy = ignore_busy
+        self.attempted = False  # `colab new` was called, so `colab stop` must be too
+        self.open_ok = False
+        self.closed = False
+        self.t0: float | None = None
+        self.seconds: float | None = None
+        self.balance_before: float | None = None
+        self.rate_per_hour: float | None = None
+        self.cli_version: str | None = None
+        self.status: str | None = None
+        self.warning: str | None = None
+
+    @property
+    def alive(self) -> bool:
+        return self.open_ok and not self.closed
+
+    def open(self, run: JobRun) -> None:
+        t = self.transport
+        t.preflight()
+        try:
+            self.cli_version = t.call(["version"], label="colab version", timeout=90).splitlines()[-1]
+        except (ColabCommandError, ColabTimeout, IndexError):
+            self.cli_version = None
+        before = colab_usage(t)
+        self.balance_before = before.get("balance")
+        rate_before = before.get("rate_per_hour")
+        active = int(before.get("active_assignments") or 0)
+        run.log(f"compute units before: {before.get('balance')} (rate {rate_before}/hr, active runtimes {active})")
+        if active and not self.ignore_busy:
+            raise H3Error(
+                "COLAB_BUSY",
+                f"{active} Colab runtime(s) already running on this account, e.g. another Claude session's job. "
+                "Starting another would compete for the A100 and mix the compute-unit readings.",
+                hint="Wait until `colab sessions` shows none, or pass --ignore-busy.",
+            )
+        self.attempted = True
+        self.t0 = time.monotonic()
+        colab_new(
+            t,
+            self.name,
+            gpu=self.gpu,
+            high_mem=self.high_mem,
+            timeout=self.config["colab"]["session_create_timeout_seconds"],
+            on_line=run.log_remote,
+        )
+        self.open_ok = True
+        try:
+            during = colab_usage(t)
+            if during.get("rate_per_hour") is not None:
+                self.rate_per_hour = round(during["rate_per_hour"] - (rate_before or 0.0), 3)
+                run.log(f"session compute-unit rate: {self.rate_per_hour}/hr")
+        except H3Error as exc:
+            run.log(f"could not read the usage rate after `colab new`: {exc}")
+
+    def close(self, run: JobRun) -> None:
+        if self.closed or not self.attempted:
+            return
+        self.closed = True
+        try:
+            stop_session(self.transport, self.name, on_line=run.log_remote)
+            self.status = "stopped"
+        except (ColabCommandError, ColabTimeout, KeyboardInterrupt) as exc:
+            text = exc.text if isinstance(exc, ColabCommandError) else str(exc)
+            if "not found" in text.lower():
+                self.status = "not_created"
+            else:
+                self.status = "stop_failed"
+                manual = self.transport.display(["stop", "--session", self.name])
+                self.warning = f"Colab session {self.name} may still be running and spending compute units: {manual}"
+                run.log(f"WARNING: could not stop session {self.name}; stop it by hand: {manual}")
+        if self.t0 is not None:
+            self.seconds = round(time.monotonic() - self.t0, 1)
+
+
 LEDGER_FIELDS = (
-    "job_id", "scene_id", "started_at", "finished_at", "status", "error_code", "failed_stage", "duration",
-    "frames", "actual_seconds", "resolution", "seed", "gpu", "vram_peak_mib", "session", "output", "bytes",
-    "elapsed_seconds", "session_seconds", "stage_seconds", "remote_seconds", "cu_balance_before",
-    "cu_balance_after", "cu_used_measured", "cu_rate_per_hour", "cu_estimated", "comfyui_commit",
-    "cli_version", "transport",
+    "job_id", "scene_id", "batch_id", "started_at", "finished_at", "status", "error_code", "failed_stage",
+    "duration", "frames", "actual_seconds", "resolution", "seed", "gpu", "vram_peak_mib", "session",
+    "session_reused", "output", "bytes", "elapsed_seconds", "session_seconds", "stage_seconds", "remote_seconds",
+    "cu_balance_before", "cu_balance_after", "cu_used_measured", "cu_rate_per_hour", "cu_estimated",
+    "comfyui_commit", "cli_version", "transport",
 )  # fmt: skip
 
 
 def _json_default(value: Any) -> Any:
     return str(value)
+
+
+def _default_prober(config: dict) -> FFprobe:
+    path = find_ffprobe(config)
+    if not path:
+        raise H3Error(
+            "FFPROBE_MISSING",
+            "ffprobe was not found; every clip is validated with it, so the job does not start without it.",
+            hint="Set tools.ffprobe in config/config.json, or install it: winget install --id Gyan.FFmpeg",
+        )
+    return FFprobe(path)
+
+
+def _record_prepared(run: JobRun, p: Prepared, spec: JobSpec) -> None:
+    run.record.update(
+        {
+            "image": str(p.image) if p.image is not None else None,
+            "chained_from": p.chained_from,
+            "image_size": list(p.image_size),
+            "duration": p.duration,
+            "frames": p.frames,
+            "actual_seconds": p.actual_seconds,
+            "resolution": f"{p.width}x{p.height}",
+            "seed": p.seed,
+            "gpu_requested": p.gpu,
+            "high_mem": p.high_mem,
+            "timeout_seconds": p.timeout,
+            "output": str(p.output),
+            "prompt": p.prompt,
+            "spec": spec.to_dict(),
+        }
+    )
+    for warning in p.warnings:
+        run.record["warnings"].append(warning)
+        run.log("warning: " + warning)
+
+
+def _read_balance(transport: Transport, run: JobRun) -> float | None:
+    try:
+        return colab_usage(transport).get("balance")
+    except (H3Error, KeyboardInterrupt) as exc:
+        run.log(f"could not read the compute-unit balance: {exc}")
+        return None
+
+
+def _account(rec: dict, before: float | None, after: float | None, t0: float | None, rate: float | None) -> None:
+    """A job's share: the balance difference over its own window of the session (the first job of a
+    session also carries the install and model download)."""
+    rec["cu_balance_after"] = after
+    if before is not None and after is not None:
+        rec["cu_used_measured"] = round(before - after, 3)
+    if t0 is not None:
+        rec["session_seconds"] = round(time.monotonic() - t0, 1)
+        if rate:
+            # An estimate from the hourly rate; the balance difference is the real figure.
+            rec["cu_estimated"] = round(rate * rec["session_seconds"] / 3600, 3)
+
+
+def _run_in_session(
+    run: JobRun, p: Prepared, f: dict, transport: Transport, session: ColabSession, config: dict, prober: Any
+) -> None:
+    rec = run.record
+    transfer = config["colab"]["transfer_timeout_seconds"]
+    remote = p.remote_job()
+
+    run.advance(UPLOADING)
+    if f["image"] is not None:
+        upload_file(
+            transport, session.name, f["image"], remote["remote_image"], timeout=transfer, on_line=run.log_remote
+        )
+    else:
+        run.log(f"first frame: the last frame of {p.chained_from}, already on the VM at {remote['remote_image']}")
+    remote_job_path = f"{p.remote_prefix}_job.json"
+    upload_file(transport, session.name, f["job"], remote_job_path, timeout=transfer, on_line=run.log_remote)
+
+    run.advance(LOADING_MODEL)
+    progress = RemoteProgress(run)
+    try:
+        transport.call(
+            ["exec", "--session", session.name, "--timeout", str(p.timeout)]
+            + ["--env", f"H3_JOB_FILE={remote_job_path}"]
+            + ["--file", transport.cli_path(f["script"], p.work_dir)],
+            label="colab exec",
+            timeout=p.timeout + 120,
+            mount_dir=p.work_dir,
+            on_line=progress.on_line,
+            idle_timeout=config["colab"]["exec_idle_timeout_seconds"],
+        )
+    except ColabCommandError as exc:
+        progress.raise_if_error()
+        raise SessionLost("INFERENCE_FAILED", f"`colab exec` failed: {exc}") from exc
+    progress.raise_if_error()
+    if not progress.output:
+        raise H3Error("OUTPUT_NOT_FOUND", "Inference ended but the remote script reported no MP4 (no H3_OUTPUT).")
+    rec["remote_last_frame"] = progress.last_frame
+
+    run.advance(DOWNLOADING)
+    local = f["output"]
+    try:
+        download_file(
+            transport,
+            session.name,
+            progress.output.get("path") or remote["remote_output"],
+            local,
+            timeout=transfer,
+            on_line=run.log_remote,
+        )
+    except ColabCommandError as exc:
+        raise H3Error("OUTPUT_NOT_FOUND", f"Could not download the MP4: {exc}") from exc
+    if not local.is_file() or local.stat().st_size == 0:
+        raise H3Error("OUTPUT_NOT_FOUND", f"The downloaded MP4 is missing or empty: {local}")
+    p.output.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(local, p.output)
+    rec["bytes"] = p.output.stat().st_size
+    if progress.last_frame:
+        # Kept next to the clip for hand-made follow-ups; a failed download only costs that convenience.
+        target = p.output.with_name(p.output.stem + ".last_frame.png")
+        try:
+            download_file(
+                transport, session.name, progress.last_frame, target, timeout=transfer, on_line=run.log_remote
+            )
+            rec["last_frame"] = str(target)
+        except (ColabCommandError, ColabTimeout) as exc:
+            rec["warnings"].append(f"could not download the last frame: {exc}")
+            run.log(f"could not download the last frame: {exc}")
+
+    run.advance(VALIDATING)
+    try:
+        probe = prober.video(p.output)
+    except ProbeError as exc:
+        raise H3Error("FAILED_VALIDATION", f"ffprobe cannot read the MP4: {exc}", status=FAILED_VALIDATION) from exc
+    rec["ffprobe"] = summarize_probe(probe)
+    problems = check_probe(probe, width=p.width, height=p.height, frames=p.frames)
+    if problems:
+        raise H3Error("FAILED_VALIDATION", "; ".join(problems), status=FAILED_VALIDATION)
+
+
+def _dry_run_commands(transport: Transport, session_name: str, p: Prepared) -> list[str]:
+    return [
+        transport.display(["usage"]),
+        transport.display(["new", "--session", session_name, "--gpu", p.gpu] + (["--high-mem"] if p.high_mem else [])),
+        transport.display(
+            ["exec", "--session", session_name, "--timeout", str(p.timeout), "--env"]
+            + [f"H3_JOB_FILE={p.remote_prefix}_job.json", "--file", "/work/" + REMOTE_SCRIPT.name],
+            p.work_dir,
+        ),
+    ]
+
+
+def run_batch(
+    specs: list[JobSpec],
+    config: dict,
+    *,
+    transport: Transport | None = None,
+    prober: Any = None,
+    dry_run: bool = False,
+    settle_seconds: int | None = None,
+    ignore_busy: bool = False,
+    batch_id: str | None = None,
+    stream: Any = "stderr",
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict:
+    """Run several clips through ONE Colab session and return the batch summary (also written to disk).
+
+    Every job is validated before any Colab call. A job that fails is recorded and the batch moves on
+    (the user's rule); a job that leaves the session in an unknown state (exec timeout, exec failure
+    with no marker) is not retried, and the next job gets a fresh session. A session that cannot be
+    opened at all ends every job left with the same error."""
+    stream = sys.stderr if stream == "stderr" else stream
+    specs = list(specs)
+    if not specs:
+        raise InputError("a batch needs at least one job")
+    if len(specs) > MAX_BATCH_JOBS:
+        raise InputError(f"a batch may hold at most {MAX_BATCH_JOBS} jobs (got {len(specs)})")
+    if batch_id is None:
+        batch_id = specs[0].job_id if len(specs) == 1 and specs[0].job_id else new_job_id()
+    if not JOB_ID_RE.fullmatch(batch_id):
+        raise InputError(f"batch_id {batch_id!r} may only use letters, digits, _ and - (max 40)")
+    job_ids: list[str] = []
+    for i, spec in enumerate(specs):
+        jid = spec.job_id or (batch_id if len(specs) == 1 else f"{batch_id}-{i + 1}")
+        if not JOB_ID_RE.fullmatch(jid):
+            raise InputError(f"job_id {jid!r} may only use letters, digits, _ and - (max 40)")
+        if jid in job_ids:
+            raise InputError(f"job_id {jid!r} appears twice in the batch")
+        job_ids.append(jid)
+    out_dir = output_dir(config)
+    settle = config["colab"]["cu_settle_seconds"] if settle_seconds is None else int(settle_seconds)
+    started, started_at = time.monotonic(), now_iso()
+    runs = [JobRun(jid, spec.scene_id, out_dir / "logs" / f"{jid}.log", stream) for jid, spec in zip(job_ids, specs)]
+    for run in runs:
+        run.record["batch_id"] = batch_id
+    prepared: list[Prepared | None] = [None] * len(specs)
+    files: list[dict | None] = [None] * len(specs)
+
+    # PREPARING: every job, before any Colab call, so a bad input never costs compute units.
+    for i, (spec, run) in enumerate(zip(specs, runs)):
+        run.advance(PREPARING)
+        try:
+            if spec.chain:
+                if i == 0:
+                    raise InputError("the first job of a batch cannot chain: there is no previous clip")
+                if prepared[i - 1] is None:
+                    raise H3Error(
+                        "CHAIN_SOURCE_FAILED",
+                        f"it continues {job_ids[i - 1]}, which did not pass its own checks",
+                        status=CANCELLED,
+                    )
+            else:
+                check_image_file(spec.image)
+            if prober is None:
+                prober = _default_prober(config)
+            p = prepare(spec, config, prober, job_id=job_ids[i], chain_source=prepared[i - 1] if spec.chain else None)
+            first = next((q for q in prepared if q is not None), None)
+            if first is not None and (p.gpu, p.high_mem) != (first.gpu, first.high_mem):
+                raise InputError(
+                    "all jobs of a batch share one Colab runtime: gpu and high_mem must match the first job"
+                )
+            prepared[i] = p
+            files[i] = stage_work_dir(p)
+            _record_prepared(run, p, spec)
+        except H3Error as exc:
+            run.fail(exc.status, exc.code, str(exc), exc.hint)
+    pending = [i for i in range(len(specs)) if prepared[i] is not None]
+    session_base = f"h3-{batch_id}"
+
+    if dry_run:
+        transport = transport or make_transport(config)
+        checks = preflight_checks(config, transport=transport, prober=prober)
+        for i in pending:
+            p, rec = prepared[i], runs[i].record
+            rec["transport"] = transport.kind
+            rec["dry_run"] = {
+                "prompt": p.prompt,
+                "remote_job": p.remote_job(),
+                "commands": _dry_run_commands(transport, session_base, p),
+                "preflight": checks,
+            }
+            rec["status"] = DRY_RUN
+            shutil.rmtree(p.work_dir, ignore_errors=True)
+        return {"batch_id": batch_id, "status": DRY_RUN, "records": [r.record for r in runs]}
+
+    for i, run in enumerate(runs):
+        if prepared[i] is None:
+            run.finish()  # failed its own checks: done now, not when the batch ends
+        elif pending and i != pending[0]:
+            run.hold()
+    if pending:
+        transport = transport or make_transport(config)
+    sessions: list[ColabSession] = []
+    session: ColabSession | None = None
+    balance: float | None = None  # balance at the start of the current accounting window
+    window_t0: float | None = None
+    window: list[dict] = []
+    fatal: H3Error | None = None
+    cancelled = False
+    try:
+        for n, i in enumerate(pending):
+            run, p, f = runs[i], prepared[i], files[i]
+            rec = run.record
+            if fatal is not None:
+                run.fail(fatal.status, fatal.code, str(fatal), fatal.hint)
+                continue
+            if cancelled:
+                run.fail(CANCELLED, "CANCELLED", "Not started: the batch was cancelled.")
+                continue
+            if p.chained_from is not None:
+                src = runs[i - 1].record
+                if src.get("status") != COMPLETED or not src.get("remote_last_frame"):
+                    run.fail(CANCELLED, "CHAIN_SOURCE_FAILED", f"{p.chained_from} produced no last frame to continue")
+                    continue
+                if session is None or not session.alive or src.get("session") != session.name:
+                    run.fail(CANCELLED, "CHAIN_SOURCE_FAILED", "the session holding the previous clip's frame is gone")
+                    continue
+            rec["transport"] = transport.kind
+            try:
+                run.advance(CONNECTING_COLAB)
+                if session is None or not session.alive:
+                    name = session_base if not sessions else f"{session_base}-{len(sessions) + 1}"
+                    session = ColabSession(
+                        transport, config, name, gpu=p.gpu, high_mem=p.high_mem, ignore_busy=ignore_busy
+                    )
+                    sessions.append(session)
+                    rec["session"] = session.name
+                    try:
+                        session.open(run)
+                    except (H3Error, ColabTimeout) as exc:
+                        if not session.open_ok and isinstance(exc, H3Error):
+                            fatal = exc
+                        raise
+                    balance, window_t0 = session.balance_before, session.t0
+                    rec["session_reused"] = False
+                else:
+                    run.log(f"reusing Colab session {session.name}: ComfyUI and the models are already there")
+                    rec["session_reused"] = True
+                rec.update(
+                    {
+                        "session": session.name,
+                        "cli_version": session.cli_version,
+                        "cu_rate_per_hour": session.rate_per_hour,
+                        "cu_balance_before": balance,
+                    }
+                )
+                _run_in_session(run, p, f, transport, session, config, prober)
+                run.advance(COMPLETED)
+            except SessionLost as exc:
+                run.fail(exc.status, exc.code, str(exc), exc.hint)
+                session.close(run)
+            except H3Error as exc:
+                run.fail(exc.status, exc.code, str(exc), exc.hint)
+            except ColabTimeout as exc:
+                run.fail(
+                    TIMEOUT,
+                    "TIMEOUT",
+                    f"{exc}. The remote kernel may still be busy, so this session is stopped instead of retrying.",
+                )
+                if session is not None:
+                    session.close(run)
+            except ColabCommandError as exc:
+                if run.state == UPLOADING:
+                    run.fail(FAILED, "UPLOAD_FAILED", str(exc))
+                else:
+                    run.fail(FAILED, "COLAB_COMMAND_FAILED", str(exc))
+                    if session is not None:
+                        session.close(run)
+            except KeyboardInterrupt:
+                run.fail(CANCELLED, "CANCELLED", "Cancelled by the user.")
+                cancelled = True
+            except Exception as exc:
+                # Still stop the session and write the record; the traceback goes to the log.
+                run.fail(FAILED, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}")
+                run.log(traceback.format_exc())
+            finally:
+                if session is not None and session.attempted and rec.get("session") == session.name:
+                    window.append(rec)
+                    more = n < len(pending) - 1 and not cancelled and fatal is None
+                    if session.closed or (session.alive and more):
+                        after = _read_balance(transport, run)
+                        for r in window:
+                            _account(r, balance, after, window_t0, session.rate_per_hour)
+                        window, balance, window_t0 = [], after, time.monotonic()
+                if n < len(pending) - 1:
+                    run.finish()  # the last job also counts the session stop, as a single run always has
+    except KeyboardInterrupt:
+        cancelled = True
+    finally:
+        last_run = runs[pending[-1]] if pending else runs[-1]
+        for s in sessions:
+            if s.attempted and not s.closed:
+                s.close(last_run)
+        after = settled = None
+        if any(s.attempted for s in sessions):
+            after = _read_balance(transport, last_run)
+            for r in window:
+                _account(r, balance, after, window_t0, sessions[-1].rate_per_hour)
+        if last_run.record["status"] in TERMINAL:
+            last_run.finish()
+        if any(s.attempted for s in sessions):
+            if settle > 0:
+                last_run.log(f"waiting {settle} s, then reading the balance again (Colab can deduct late)")
+                try:
+                    sleep(settle)
+                    settled = _read_balance(transport, last_run)
+                except KeyboardInterrupt:
+                    last_run.log("settle wait skipped")
+        for run in runs:
+            rec = run.record
+            s = next((x for x in sessions if x.name == rec.get("session")), None)
+            if s is not None:
+                rec["session_status"] = s.status
+                if s.warning:
+                    rec["warnings"].append(s.warning)
+            if rec["status"] not in TERMINAL:
+                run.fail(CANCELLED, "CANCELLED", "Not started: the batch stopped early.")
+        summary = _batch_summary(batch_id, runs, sessions, started, started_at, after, settled, settle)
+        if len(runs) == 1 and summary.get("cu_used_settled") is not None:
+            runs[0].record["cu_balance_settled"] = summary["cu_balance_settled"]
+            runs[0].record["cu_used_settled"] = summary["cu_used_settled"]
+        for i, run in enumerate(runs):
+            run.finish()
+            _write_records(run, prepared[i], out_dir)
+            if run.record["status"] == COMPLETED and prepared[i] is not None:
+                shutil.rmtree(prepared[i].work_dir, ignore_errors=True)
+            elif prepared[i] is not None:
+                run.log(f"work files kept for debugging: {prepared[i].work_dir}")
+        if any(s.attempted for s in sessions) or len(runs) > 1:
+            _write_batch(summary, out_dir)
+    summary["records"] = [r.record for r in runs]
+    return summary
+
+
+def _batch_summary(batch_id, runs, sessions, started, started_at, after, settled, settle) -> dict:
+    statuses = [r.record["status"] for r in runs]
+    completed = statuses.count(COMPLETED)
+    before = next((s.balance_before for s in sessions if s.balance_before is not None), None)
+    summary = {
+        "batch_id": batch_id,
+        "status": COMPLETED if completed == len(runs) else FAILED if completed == 0 else "PARTIAL",
+        "started_at": started_at,
+        "finished_at": now_iso(),
+        "elapsed_seconds": round(time.monotonic() - started, 1),
+        "completed": completed,
+        "failed": len(runs) - completed,
+        "jobs": [
+            {
+                "job_id": r.record["job_id"],
+                "status": r.record["status"],
+                "error_code": r.record["error_code"],
+                "output": r.record.get("output"),
+                "session": r.record.get("session"),
+                "session_reused": r.record.get("session_reused"),
+                "cu_used_measured": r.record.get("cu_used_measured"),
+            }
+            for r in runs
+        ],
+        "sessions": [
+            {"name": s.name, "status": s.status, "seconds": s.seconds, "rate_per_hour": s.rate_per_hour}
+            for s in sessions
+            if s.attempted
+        ],
+        "session_seconds": round(sum(s.seconds or 0 for s in sessions), 1),
+        "cu_balance_before": before,
+        "cu_balance_after": after,
+        "cu_used_measured": round(before - after, 3) if before is not None and after is not None else None,
+        "cu_settle_seconds": settle,
+        "cu_balance_settled": settled,
+        "cu_used_settled": round(before - settled, 3) if before is not None and settled is not None else None,
+    }
+    return summary
+
+
+def _write_batch(summary: dict, out_dir: Path) -> None:
+    path = out_dir / "batches" / f"{summary['batch_id']}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=_json_default) + "\n", encoding="utf-8")
+    with open(out_dir / "h3_batches.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(summary, ensure_ascii=False, default=_json_default) + "\n")
 
 
 def run_job(
@@ -1339,231 +1937,24 @@ def run_job(
     transport: Transport | None = None,
     prober: Any = None,
     dry_run: bool = False,
+    settle_seconds: int | None = None,
+    ignore_busy: bool = False,
     stream: Any = "stderr",
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict:
-    """Run one clip through the whole lifecycle and return its record (also written to disk)."""
-    stream = sys.stderr if stream == "stderr" else stream
-    job_id = spec.job_id or new_job_id()
-    if not JOB_ID_RE.fullmatch(job_id):
-        raise InputError(f"job_id {job_id!r} may only use letters, digits, _ and - (max 40)")
-    out_dir = output_dir(config)
-    run = JobRun(job_id, spec.scene_id, out_dir / "logs" / f"{job_id}.log", stream)
-    rec = run.record
-    prepared: Prepared | None = None
-    session_attempted = False
-    session_t0 = None
-    rate_before = None
-    try:
-        run.advance(PREPARING)
-        check_image_file(spec.image)
-        if prober is None:
-            path = find_ffprobe(config)
-            if not path:
-                raise H3Error(
-                    "FFPROBE_MISSING",
-                    "ffprobe was not found; every clip is validated with it, so the job does not start without it.",
-                    hint="Set tools.ffprobe in config/config.json, or install it: winget install --id Gyan.FFmpeg",
-                )
-            prober = FFprobe(path)
-        prepared = prepare(spec, config, prober, job_id=job_id)
-        rec.update(
-            {
-                "image": str(prepared.image),
-                "image_size": list(prepared.image_size),
-                "duration": prepared.duration,
-                "frames": prepared.frames,
-                "actual_seconds": prepared.actual_seconds,
-                "resolution": f"{prepared.width}x{prepared.height}",
-                "seed": prepared.seed,
-                "gpu_requested": prepared.gpu,
-                "high_mem": prepared.high_mem,
-                "timeout_seconds": prepared.timeout,
-                "session": prepared.session,
-                "output": str(prepared.output),
-                "prompt": prepared.prompt,
-                "spec": spec.to_dict(),
-            }
-        )
-        for warning in prepared.warnings:
-            rec["warnings"].append(warning)
-            run.log("warning: " + warning)
-        files = stage_work_dir(prepared)
-        remote = prepared.remote_job()
-        transport = transport or make_transport(config)
-        rec["transport"] = transport.kind
-        cfg = config["colab"]
-
-        if dry_run:
-            rec["dry_run"] = {
-                "prompt": prepared.prompt,
-                "remote_job": remote,
-                "commands": [
-                    transport.display(["usage"]),
-                    transport.display(
-                        ["new", "--session", prepared.session, "--gpu", prepared.gpu]
-                        + (["--high-mem"] if prepared.high_mem else [])
-                    ),
-                    transport.display(
-                        ["exec", "--session", prepared.session, "--timeout", str(prepared.timeout), "--env"]
-                        + [f"H3_JOB_FILE={prepared.remote_prefix}_job.json", "--file", "/work/" + REMOTE_SCRIPT.name],
-                        prepared.work_dir,
-                    ),
-                ],
-                "preflight": preflight_checks(config, transport=transport, prober=prober),
-            }
-            rec["status"] = DRY_RUN
-            return rec
-
-        run.advance(CONNECTING_COLAB)
-        transport.preflight()
-        try:
-            rec["cli_version"] = transport.call(["version"], label="colab version", timeout=90).splitlines()[-1]
-        except (ColabCommandError, ColabTimeout, IndexError):
-            rec["cli_version"] = None
-        before = colab_usage(transport)
-        rec["cu_balance_before"] = before.get("balance")
-        rate_before = before.get("rate_per_hour")
-        run.log(f"compute units before: {before.get('balance')} (rate {rate_before}/hr)")
-        session_attempted = True
-        session_t0 = time.monotonic()
-        colab_new(
-            transport,
-            prepared.session,
-            gpu=prepared.gpu,
-            high_mem=prepared.high_mem,
-            timeout=cfg["session_create_timeout_seconds"],
-            on_line=run.log_remote,
-        )
-        try:
-            during = colab_usage(transport)
-            if during.get("rate_per_hour") is not None:
-                rec["cu_rate_per_hour"] = round(during["rate_per_hour"] - (rate_before or 0.0), 3)
-                run.log(f"session compute-unit rate: {rec['cu_rate_per_hour']}/hr")
-        except H3Error as exc:
-            run.log(f"could not read the usage rate after `colab new`: {exc}")
-
-        run.advance(UPLOADING)
-        transfer = cfg["transfer_timeout_seconds"]
-        upload_file(
-            transport,
-            prepared.session,
-            files["image"],
-            remote["remote_image"],
-            timeout=transfer,
-            on_line=run.log_remote,
-        )
-        remote_job_path = f"{prepared.remote_prefix}_job.json"
-        upload_file(
-            transport, prepared.session, files["job"], remote_job_path, timeout=transfer, on_line=run.log_remote
-        )
-
-        run.advance(LOADING_MODEL)
-        progress = RemoteProgress(run)
-        try:
-            transport.call(
-                ["exec", "--session", prepared.session, "--timeout", str(prepared.timeout)]
-                + ["--env", f"H3_JOB_FILE={remote_job_path}"]
-                + ["--file", transport.cli_path(files["script"], prepared.work_dir)],
-                label="colab exec",
-                timeout=prepared.timeout + 120,
-                mount_dir=prepared.work_dir,
-                on_line=progress.on_line,
-            )
-        except ColabCommandError as exc:
-            progress.raise_if_error()
-            raise H3Error("INFERENCE_FAILED", f"`colab exec` failed: {exc}") from exc
-        progress.raise_if_error()
-        if not progress.output:
-            raise H3Error("OUTPUT_NOT_FOUND", "Inference ended but the remote script reported no MP4 (no H3_OUTPUT).")
-
-        run.advance(DOWNLOADING)
-        local = files["output"]
-        try:
-            download_file(
-                transport,
-                prepared.session,
-                progress.output.get("path") or remote["remote_output"],
-                local,
-                timeout=transfer,
-                on_line=run.log_remote,
-            )
-        except ColabCommandError as exc:
-            raise H3Error("OUTPUT_NOT_FOUND", f"Could not download the MP4: {exc}") from exc
-        if not local.is_file() or local.stat().st_size == 0:
-            raise H3Error("OUTPUT_NOT_FOUND", f"The downloaded MP4 is missing or empty: {local}")
-        prepared.output.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(local, prepared.output)
-        rec["bytes"] = prepared.output.stat().st_size
-
-        run.advance(VALIDATING)
-        try:
-            probe = prober.video(prepared.output)
-        except ProbeError as exc:
-            raise H3Error("FAILED_VALIDATION", f"ffprobe cannot read the MP4: {exc}", status=FAILED_VALIDATION) from exc
-        rec["ffprobe"] = summarize_probe(probe)
-        problems = check_probe(probe, width=prepared.width, height=prepared.height, frames=prepared.frames)
-        if problems:
-            raise H3Error("FAILED_VALIDATION", "; ".join(problems), status=FAILED_VALIDATION)
-        run.advance(COMPLETED)
-    except H3Error as exc:
-        run.fail(exc.status, exc.code, str(exc), exc.hint)
-    except ColabTimeout as exc:
-        run.fail(
-            TIMEOUT,
-            "TIMEOUT",
-            f"{exc}. The remote kernel may still be busy; the session is stopped instead of retrying.",
-        )
-    except ColabCommandError as exc:
-        code = "UPLOAD_FAILED" if run.state == UPLOADING else "COLAB_COMMAND_FAILED"
-        run.fail(FAILED, code, str(exc))
-    except KeyboardInterrupt:
-        run.fail(CANCELLED, "CANCELLED", "Cancelled by the user.")
-    except Exception as exc:
-        # Still stop the session and write the record; the traceback goes to the log.
-        run.fail(FAILED, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}")
-        run.log(traceback.format_exc())
-    finally:
-        if session_attempted and transport is not None and prepared is not None:
-            _stop_and_account(run, transport, prepared.session, session_t0)
-        if rec["status"] == DRY_RUN and prepared is not None:
-            shutil.rmtree(prepared.work_dir, ignore_errors=True)
-        if rec["status"] != DRY_RUN:
-            run.finish()
-            _write_records(run, prepared, out_dir)
-            if rec["status"] == COMPLETED and prepared is not None:
-                shutil.rmtree(prepared.work_dir, ignore_errors=True)
-            elif prepared is not None:
-                run.log(f"work files kept for debugging: {prepared.work_dir}")
-    return rec
-
-
-def _stop_and_account(run: JobRun, transport: Transport, session: str, session_t0: float | None) -> None:
-    rec = run.record
-    try:
-        stop_session(transport, session, on_line=run.log_remote)
-        rec["session_status"] = "stopped"
-    except (ColabCommandError, ColabTimeout, KeyboardInterrupt) as exc:
-        text = exc.text if isinstance(exc, ColabCommandError) else str(exc)
-        if "not found" in text.lower():
-            rec["session_status"] = "not_created"
-        else:
-            rec["session_status"] = "stop_failed"
-            manual = transport.display(["stop", "--session", session])
-            rec["warnings"].append(f"Colab session {session} may still be running and spending compute units: {manual}")
-            run.log(f"WARNING: could not stop session {session}; stop it by hand: {manual}")
-    if session_t0 is not None:
-        rec["session_seconds"] = round(time.monotonic() - session_t0, 1)
-        rate = rec.get("cu_rate_per_hour")
-        if rate:
-            # An estimate from the hourly rate; cu_used_measured (balance difference) is the real figure.
-            rec["cu_estimated"] = round(rate * rec["session_seconds"] / 3600, 3)
-    try:
-        after = colab_usage(transport)
-        rec["cu_balance_after"] = after.get("balance")
-        if rec.get("cu_balance_before") is not None and after.get("balance") is not None:
-            rec["cu_used_measured"] = round(rec["cu_balance_before"] - after["balance"], 3)
-    except (H3Error, KeyboardInterrupt) as exc:
-        run.log(f"could not read the compute-unit balance after the job: {exc}")
+    """Run one clip (a batch of one) and return its record (also written to disk)."""
+    summary = run_batch(
+        [spec],
+        config,
+        transport=transport,
+        prober=prober,
+        dry_run=dry_run,
+        settle_seconds=settle_seconds,
+        ignore_busy=ignore_busy,
+        stream=stream,
+        sleep=sleep,
+    )
+    return summary["records"][0]
 
 
 def _write_records(run: JobRun, prepared: Prepared | None, out_dir: Path) -> None:
@@ -1618,7 +2009,12 @@ def preflight_checks(config: dict, *, transport: Transport | None = None, prober
 
             def auth() -> str:
                 u = colab_usage(transport)
-                return f"signed in; balance {u['balance']} compute units, rate {u['rate_per_hour']}/hr"
+                active = int(u.get("active_assignments") or 0)
+                note = " - another job is running on this account" if active else ""
+                return (
+                    f"signed in; balance {u['balance']} compute units, rate {u['rate_per_hour']}/hr, "
+                    f"active runtimes {active}{note}"
+                )
 
             add("colab_auth", auth)
     return checks

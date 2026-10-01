@@ -4,6 +4,10 @@ job file, and print markers the runner can parse."""
 
 import ast
 import json
+import os
+import sys
+import types
+from pathlib import Path
 
 import pytest
 
@@ -128,3 +132,70 @@ def test_markers_round_trip(capsys):
     assert h3.parse_marker(lines[1])[1]["message"] == 'quote " and newline\n'
     assert h3.parse_marker("[colab] Session READY.") is None
     assert h3.parse_marker("H3_GPU {not json}") is None
+
+
+def fake_hub(calls, fail=False):
+    def hf_hub_download(repo_id, filename, local_dir, token):
+        calls.append({"repo": repo_id, "file": filename, "token": token})
+        if fail:
+            raise RuntimeError("HfHubHTTPError: 503 Service Unavailable")
+        target = Path(local_dir) / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\0" * 1024)
+        return str(target)
+
+    return types.SimpleNamespace(hf_hub_download=hf_hub_download)
+
+
+def test_models_download_in_parallel_with_xet_high_performance(tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(remote, "COMFY", tmp_path / "ComfyUI")
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub(calls))
+    monkeypatch.delenv("HF_XET_HIGH_PERFORMANCE", raising=False)
+    sizes = remote.download_models(remote.DIFFUSION_FP8)
+    assert os.environ["HF_XET_HIGH_PERFORMANCE"] == "1"
+    assert sorted(c["file"] for c in calls) == sorted(f for _, f, _ in remote.model_files(remote.DIFFUSION_FP8))
+    assert {c["token"] for c in calls} == {False}
+    assert len(sizes) == 5
+    models = [h3.parse_marker(line) for line in capsys.readouterr().out.splitlines()]
+    assert [m[0] for m in models] == ["MODEL"] * 5 and not any(m[1]["cached"] for m in models)
+
+
+def test_models_already_on_the_vm_are_not_downloaded_again(tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(remote, "COMFY", tmp_path / "ComfyUI")
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub(calls))
+    monkeypatch.delenv("HF_XET_HIGH_PERFORMANCE", raising=False)
+    for repo, name, folder in remote.model_files(remote.DIFFUSION_FP8):
+        target = tmp_path / "ComfyUI" / "models" / folder / Path(name).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\0" * 10)
+    remote.download_models(remote.DIFFUSION_FP8)
+    assert calls == []
+    models = [h3.parse_marker(line) for line in capsys.readouterr().out.splitlines()]
+    assert all(m[1]["cached"] for m in models) and len(models) == 5
+
+
+def test_a_failed_model_download_propagates(tmp_path, monkeypatch):
+    monkeypatch.setattr(remote, "COMFY", tmp_path / "ComfyUI")
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub([], fail=True))
+    monkeypatch.delenv("HF_XET_HIGH_PERFORMANCE", raising=False)
+    with pytest.raises(RuntimeError, match="503"):
+        remote.download_models(remote.DIFFUSION_FP8)
+
+
+def test_job_file_names_where_the_last_frame_goes(tmp_path):
+    job = remote_job(tmp_path)
+    assert job["remote_last_frame"] == "/content/h3_j1_last_frame.png"
+
+
+def test_markers_from_many_threads_stay_one_per_line(capsys):
+    import threading
+
+    threads = [threading.Thread(target=lambda n=n: remote.marker("MODEL", name="m%d" % n, gib=1.0)) for n in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 20 and all(h3.parse_marker(line) for line in lines)
