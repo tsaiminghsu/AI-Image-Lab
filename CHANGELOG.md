@@ -3,6 +3,46 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-10-02
+
+### Z-Image 在 Colab 上的常駐 worker：一個 session 跑完整個佇列（離線完成，尚未實機驗證）
+
+- **為什麼**：本機 RTX 2070 跑 Z-Image 要用量化版而且慢；在 Colab 上「一張圖開一個 session」又每次都要裝
+  ComfyUI、下載 20.7 GB 模型。要的是：job 排進佇列，一個 GPU session 把它們全部跑完，閒置一段時間自己關，
+  而且下一個 session 不重裝、不重抓。
+- **做了什麼**（`.claude/skills/z-image-colab/`，說明見該資料夾的 README）：
+  - `scripts/submit.py`：把需求變成 job 寫進本機佇列（`output/zimage/jobs/`），不花 CU。`--count`／`--manifest`
+    一次排多張。
+  - `scripts/worker.py up`：controller。開一個 L4 session、掛 Drive、把 `remote/zimage_worker.py` 送上去跑，之後
+    只用 `colab upload/download` 推 job、收 PNG、讀狀態；結束（或失聯、逾時、出錯）一定 `colab stop`。
+  - `remote/zimage_worker.py`（在 VM 上）：GPU 檢查 → 讀 `environment.json` → ComfyUI 原始碼／pip 套件／模型各自
+    判斷「已在本機碟／從 Drive 解壓或複製／第一次安裝」→ 起 ComfyUI → 用 `/object_info` 核對節點與模型檔 →
+    job 迴圈（`POST /prompt`、`GET /history`、`GET /view`）→ 閒置逾時 → flush Drive。
+  - 每個 job 驗證兩次（VM 上、下載回本機後）：PNG 簽章、IHDR、每個 chunk 的 CRC、IEND、寬高；有 Pillow 再解碼。
+  - 記錄：`zimage_jobs.jsonl`（每張的 GPU、VRAM 峰值、秒數、seed）、`zimage_sessions.jsonl`（各階段秒數、
+    安裝動作、CU 前後餘額）。
+- **沿用而不是重寫的部分**：節點圖是 `training/workflow_template_txt2img_zimage.json`，從
+  `submit_txt2img_generation_zimage` 抽出 `build_zimage_txt2img_workflow()` 給兩邊共用；負面詞走
+  `_build_prompt_and_negative`，新增的 `solo`／`allow_text` 只調畫質段（產品圖、多人、畫面要有字時用），預設值
+  組出來的字串跟原本逐位元組相同，年齡與露骨詞那一半任何組合都拿不掉（測試釘住）。Docker 映像檔與 OAuth
+  volume 跟 H3 skill 共用。
+- **已核對的版本釘選**：ComfyUI `v0.38.0`（2026-09-29 發布，`6b747c04`）；`Comfy-Org/z_image_turbo@6fc90a3b` 的
+  `z_image_turbo_bf16.safetensors` 12,309,866,400 bytes、`qwen_3_4b.safetensors` 8,044,982,048 bytes、
+  `ae.safetensors` 335,304,388 bytes，sha256 與 Hugging Face 的 LFS oid 一致。
+- **已知限制**：Colab 每台新 VM 都要重新按一次 Google Drive 同意（10-01 實測，`drive.mount` 只等 120 秒），所以
+  不是完全無人值守。沒按的話該 session 改成全部重新下載、結束後不留東西，log 會寫明。
+- **離線測試**：`tests/test_zimage_colab_*.py` 210 個、約 22 秒（整套 `check.ps1` 的 pytest 從約 22 秒變成約 44 秒）。
+  寫測試時抓到三個問題：
+  - Windows 上 `state.json` 的改名跟讀取撞在一起會丟 `PermissionError`，測試裡的 worker thread 因此無聲死掉，
+    controller 接著等滿 300 秒 heartbeat 逾時，看起來就是測試卡死。VM 是 Linux 不會發生，但改名加了重試，
+    兩個用 thread 的測試檔也加了 120 秒的 `faulthandler` 看門狗（卡住會印出所有 thread 的堆疊後結束）。
+  - controller 下載圖片後固定把狀態寫成 `VALIDATING`，但 worker 自己的 `VALID` 可能已經先同步過來，於是
+    `BAD_TRANSITION`、整個 session 提早結束。改成只往前推進。
+  - 一個併發寫入測試在檔案第一次寫入前就去讀。
+- **還沒做**：實機驗收四項（首次安裝、重啟不重裝、同一個 session 連續 3 張、閒置關機）。10-02 的 preflight 通過
+  （已登入、餘額 60.25 CU、帳號上沒有別的 runtime），使用者決定晚點再跑。在那之前每張耗時、VRAM、每個 session
+  的 CU 都沒有數字。
+
 ## 2026-10-01
 
 ### H3 一批多支共用一個 Colab session：三支 5 秒影片 1.51 CU，分開跑約 2.55 CU

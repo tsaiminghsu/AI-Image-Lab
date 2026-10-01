@@ -103,7 +103,7 @@ fails with `SESSION_LOST` the second time.
 | up | `GPU_UNAVAILABLE` | No such GPU right now; nothing was spent. Retry later, or `ZIMG_GPU=A100` if they agree. |
 | up | `CONTROLLER_RUNNING` | A controller already runs; submit to it instead. |
 | up | `COLAB_CONNECTION_FAILED` | Network or Colab problem. Check `status.py` for a leftover session. |
-| session | `worker_boot_failed:GPU_NOT_SUPPORTED` | The VM's GPU is below `gpu.min_vram_gib` or has no bf16 (a T4). No job ran. |
+| session | `worker_boot_failed:GPU_NOT_SUPPORTED` | The VM's GPU is below `gpu.min_vram_gib` or has no bf16. No job ran; the session was stopped. |
 | session | `worker_boot_failed:DISK_FULL` / `MODEL_CHECKSUM` / `DEPS_INSTALL_FAILED` / `COMFYUI_START_FAILED` / `NODE_CHECK_FAILED` | Setup failed before any job; report the message and the worker log. |
 | session | `heartbeat_stale`, `state_unreadable`, `bootstrap_timeout` | The VM stopped answering; it was stopped and its jobs went back to `PENDING`. Ask before starting again. |
 | job | `COMFY_REJECTED`, `COMFY_EXECUTION_ERROR`, `OUTPUT_NOT_FOUND`, `JOB_FAILED` | That job failed; the others carried on. Report `error.error_message`. |

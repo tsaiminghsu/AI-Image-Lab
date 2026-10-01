@@ -79,7 +79,7 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
 ## 驗證慣例
 
 - **離線檢查就是一行**：`powershell -ExecutionPolicy Bypass -File check.ps1`
-  （ruff → `ruff format --check tests` → pytest → 換行稽核，約 2 秒，不需要 GPU 也不需要
+  （ruff → `ruff format --check tests` → pytest → 換行稽核，約 45 秒，不需要 GPU 也不需要
   ComfyUI）。改完先跑它再實機跑。這些以前要人眼複查的事現在都有測試守著：
   - GUI 每個 handler 的參數數量 vs 按鈕 `inputs` 長度（用 AST，不 import `gui.py`）
   - workflow JSON 的 node id ↔ class_type 契約（`training/workflow_contracts.py` 是單一真相，
@@ -159,3 +159,12 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   多支影片用 `--manifest`／`--segments` 共用一個 session（約 40 GB 模型只下載一次，實測三支 5 秒 1.51 CU，分開跑約
   2.55 CU）。Colab 帳號是幾個 Claude 工作階段共用的：開跑前會檢查帳號上有沒有別的 runtime（`COLAB_BUSY`），成本只看
   整批 settle 後的餘額差。實測數字見 CHANGELOG。
+- Z-Image Colab worker（2026-10-02）：Claude Code skill `.claude/skills/z-image-colab/`，文字 → Z-Image Turbo（官方
+  bf16 權重）→ `output/zimage/<job_id>/result.png`。job 是本機檔案佇列（`submit.py`），`worker.py up` 開**一個**
+  Colab L4 session 跑完整個佇列，閒置 `worker.idle_timeout_seconds` 後自動關。ComfyUI 原始碼、pip 套件、模型存在
+  Google Drive，之後的 session 只解壓和複製、不重裝不重抓（`environment.json`＋模型 manifest 比對版本）；但 Colab
+  每台新 VM 都要使用者按一次 Drive 同意，沒按就整個重新下載。與 H3 skill 共用 Docker 映像檔與登入。圖用的是
+  `training/workflow_template_txt2img_zimage.json`（`comfyui_client.build_zimage_txt2img_workflow`），負面詞走
+  `_build_prompt_and_negative`，所以年齡安全詞與 cfg 下限跟本機一樣，VM 上的 worker 會再檢查一次。
+  **離線測試 210 個通過，但從未在真的 Colab GPU 上跑過**——首次安裝、重啟不重裝、連續 3 張、閒置關機四項實機
+  驗收都還沒做，時間與 CU 都沒有數字。

@@ -2083,6 +2083,29 @@ ComfyUI\.venv\Scripts\python.exe training\generate_character.py --backend runpod
 - 進度只顯示雲端狀態文字（排隊中／冷啟動／雲端步數），沒有本機那種逐步進度條
 - 本機 8GB 卡的限制常數（例如高清 1.5 倍）仍然照樣套用，大卡目前沒有自動放寬
 
+### Colab 上的 Z-Image 常駐 worker（Claude Code skill）
+
+不想用本機顯卡、或一次要很多張的時候：`.claude/skills/z-image-colab/` 把文字生圖排成佇列，開**一個** Colab L4
+session 用 Z-Image Turbo（官方 bf16 權重）全部跑完，閒置一段時間後自動關機。ComfyUI、pip 套件與模型存在你的
+Google Drive，之後的 session 只解壓和複製，不重裝、不重新下載。
+
+```powershell
+$py = "ComfyUI\.venv\Scripts\python.exe"; $s = ".claude\skills\z-image-colab\scripts"
+& $py $s\setup_colab.py preflight          # 不花 CU：Docker、登入、帳號上有沒有別的 runtime
+& $py $s\submit.py --prompt "A white ceramic mug on a plain white background, centered." --aspect 16:9 --count 3
+& $py $s\worker.py up                      # 花 CU：開一個 session 跑完佇列
+& $py $s\status.py
+```
+
+- 在 Claude Code 裡直接說「用 Z Image 生 3 張…」就會走這個 skill。
+- prompt 原樣送出，程式只加安全負面詞（年齡安全詞一定在，cfg 下限 1.5，跟本機同一條組裝路徑）。
+- 圖在 `output\zimage\<job_id>\result.png`，旁邊有 `metadata.json` 和可重現的 `workflow.json`。
+- **每台新 VM 開頭要你在瀏覽器按一次 Google Drive 同意**；沒按的話那個 session 會整個重新下載（約 20 GB）。
+- 與 MiniMax H3 skill 共用 Docker 映像檔 `h3-colab-cli:0.7.4` 和 Google 登入。
+- **還沒在真的 Colab GPU 上跑過**，每張耗時與 CU 都沒有實測；離線測試 210 個通過。
+
+完整說明（Drive 目錄結構、版本升級、設定、錯誤碼）：[.claude/skills/z-image-colab/README.md](.claude/skills/z-image-colab/README.md)。
+
 ## AI 短劇（分鏡表 → 9:16 成片）
 
 一集短劇寫成一個分鏡表（JSON），`training/drama.py` 依序產生關鍵幀、配音、動態鏡頭，再組成一支
@@ -2363,7 +2386,7 @@ AI-Image-Lab/
 
 ## 改程式之前：跑一次檢查
 
-測試不需要 GPU、不需要 ComfyUI、不需要模型權重，整套跑完約 2 秒。它們守著幾件以前只能靠
+測試不需要 GPU、不需要 ComfyUI、不需要模型權重，整套跑完約 45 秒。它們守著幾件以前只能靠
 人眼複查的事：GUI 每個按鈕的參數數量、workflow JSON 的 node id、年齡／內容安全負面詞、
 fp8 變體的選擇規則、CLI 的子指令與旗標。
 
