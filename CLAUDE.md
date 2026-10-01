@@ -88,7 +88,7 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
 ## 驗證慣例
 
 - **離線檢查就是一行**：`powershell -ExecutionPolicy Bypass -File check.ps1`
-  （ruff → `ruff format --check tests` → pytest → 換行稽核，約 45 秒，不需要 GPU 也不需要
+  （ruff → `ruff format --check tests` → pytest → 換行稽核，約 70 秒，不需要 GPU 也不需要
   ComfyUI）。改完先跑它再實機跑。這些以前要人眼複查的事現在都有測試守著：
   - GUI 每個 handler 的參數數量 vs 按鈕 `inputs` 長度（用 AST，不 import `gui.py`）
   - workflow JSON 的 node id ↔ class_type 契約（`training/workflow_contracts.py` 是單一真相，
