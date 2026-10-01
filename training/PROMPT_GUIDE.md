@@ -101,6 +101,10 @@ negative = [PONY_QUALITY_NEGATIVE_TAGS, ] <tier 安全負面詞> [, style_negati
   傳空字串則整段不加（Wan 就是這樣關掉風格詞的）。
 - tier `safe` 用 `SAFE_SAFETY_NEGATIVE`，`suggestive` 用 `SUGGESTIVE_NEGATIVE`。兩者都含 `AGE_SAFETY_NEGATIVE`，
   沒有任何參數能拿掉。
+- 關鍵字參數 `solo`（預設 `True`）／`allow_text`（預設 `False`）只調整畫質段：`solo=False` 拿掉
+  `SOLO_NEGATIVE`（多人詞），`allow_text=True` 拿掉 `TEXT_NEGATIVE`。預設值組出來的字串跟上面兩個常數
+  一模一樣；目前只有 Colab Z-Image skill（產品圖、多人場景、要求畫面上有字）會改。露骨詞與
+  `AGE_SAFETY_NEGATIVE` 在 `*_CONTENT_NEGATIVE` 那一半，任何組合都不會被拿掉。
 - `gender_weight="auto"`（預設）只有 SD1.5 checkpoint 會套用 `SD15_GENDER_WEIGHT`，把性別寫成 `(man:1.3)`。
 
 各入口傳進去的參數不同，這是家族差異的真正來源：
@@ -179,6 +183,27 @@ child, children, kid, minor, teen, teenager, underage, young girl
 常常補出第二個人（跪姿骨架最明顯），只靠 `bad anatomy` 擋不掉：
 ```
 lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, multiple people, two people, duplicate, twins, extra person, crowd
+```
+
+它是三段接起來的，分開只是為了 `solo`／`allow_text` 開關（見第 2 節）：
+**`QUALITY_CORE_NEGATIVE`**、**`TEXT_NEGATIVE`**、**`SOLO_NEGATIVE`**：
+```
+lowres, blurry, deformed, extra limbs, bad anatomy, watermark
+```
+```
+text
+```
+```
+multiple people, two people, duplicate, twins, extra person, crowd
+```
+
+**`SAFE_CONTENT_NEGATIVE`**／**`SUGGESTIVE_CONTENT_NEGATIVE`** — 兩個 tier 的露骨詞加 `AGE_SAFETY_NEGATIVE`，
+也就是下面兩個常數去掉畫質段的前半：
+```
+nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, teenager, underage, young girl
+```
+```
+exposed genitalia, exposed vulva, exposed penis, exposed nipples, sexual intercourse, penetration, pornographic, explicit sexual act, child, children, kid, minor, teen, teenager, underage, young girl
 ```
 
 **`SAFE_SAFETY_NEGATIVE`**（tier `safe`）＝ 露骨詞加 `AGE_SAFETY_NEGATIVE` 加 `QUALITY_NEGATIVE`：

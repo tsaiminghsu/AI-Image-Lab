@@ -115,18 +115,49 @@ def test_known_negative_prompt_constants_inventory():
     all_negative_constants = {
         name for name, value in vars(gc).items() if name.isupper() and "NEGATIVE" in name and isinstance(value, str)
     }
-    safety_tier = {"AGE_SAFETY_NEGATIVE", "SAFE_SAFETY_NEGATIVE", "SUGGESTIVE_NEGATIVE", "NEGATIVE_PROMPT"}
+    safety_tier = {
+        "AGE_SAFETY_NEGATIVE",
+        "SAFE_CONTENT_NEGATIVE",
+        "SAFE_SAFETY_NEGATIVE",
+        "SUGGESTIVE_CONTENT_NEGATIVE",
+        "SUGGESTIVE_NEGATIVE",
+        "NEGATIVE_PROMPT",
+    }
     style_or_quality = {
         "REALISTIC_NEGATIVE",
         "VIDEO_REALISTIC_NEGATIVE",
         "WAN_VIDEO_NEGATIVE",
         "QUALITY_NEGATIVE",
+        "QUALITY_CORE_NEGATIVE",
+        "TEXT_NEGATIVE",
+        "SOLO_NEGATIVE",
         "PONY_QUALITY_NEGATIVE_TAGS",
     }
     assert all_negative_constants == safety_tier | style_or_quality
 
 
-@pytest.mark.parametrize("name", ["SAFE_SAFETY_NEGATIVE", "SUGGESTIVE_NEGATIVE", "NEGATIVE_PROMPT"])
+def test_quality_negative_split_is_byte_identical():
+    """QUALITY_NEGATIVE was split into three parts for the solo/allow_text switches. Pin the composite
+    string itself, so the split can't quietly change what every existing caller sends."""
+    assert gc.QUALITY_NEGATIVE == (
+        "lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, "
+        "multiple people, two people, duplicate, twins, extra person, crowd"
+    )
+    assert gc.SAFE_SAFETY_NEGATIVE == f"{gc.SAFE_CONTENT_NEGATIVE}, {gc.QUALITY_NEGATIVE}"
+    assert gc.SUGGESTIVE_NEGATIVE == f"{gc.SUGGESTIVE_CONTENT_NEGATIVE}, {gc.QUALITY_NEGATIVE}"
+    assert gc.SAFE_CONTENT_NEGATIVE == f"nsfw, nude, naked, explicit, sexual content, {gc.AGE_SAFETY_NEGATIVE}"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "SAFE_CONTENT_NEGATIVE",
+        "SUGGESTIVE_CONTENT_NEGATIVE",
+        "SAFE_SAFETY_NEGATIVE",
+        "SUGGESTIVE_NEGATIVE",
+        "NEGATIVE_PROMPT",
+    ],
+)
 def test_age_safety_negative_is_substring_of_every_safety_tier_constant(name):
     """AGE_SAFETY_NEGATIVE is "always included no matter the content tier" per its own comment
     (generate_character.py:67-69) - assert that promise against the actual composed strings rather
@@ -185,6 +216,33 @@ def test_age_safety_negative_survives_every_assembly_path(tier, style_negative, 
         checkpoint,
     )
     assert gc.AGE_SAFETY_NEGATIVE in negative
+
+
+@pytest.mark.parametrize(
+    "tier,solo,allow_text,checkpoint",
+    list(itertools.product(_TIERS, [True, False], [True, False], [None, "z_image_turbo", "cyberrealistic_pony"])),
+)
+def test_quality_switches_never_drop_the_age_or_content_terms(tier, solo, allow_text, checkpoint):
+    """solo/allow_text trim only the quality floor. The age terms and the tier's explicit-content terms
+    must survive every combination, including the Colab skill's (solo=False, allow_text=True)."""
+    _, negative = gc._build_prompt_and_negative(
+        "a prompt", None, tier, None, "", "", checkpoint, solo=solo, allow_text=allow_text
+    )
+    content = gc.SAFE_CONTENT_NEGATIVE if tier == "safe" else gc.SUGGESTIVE_CONTENT_NEGATIVE
+    assert gc.AGE_SAFETY_NEGATIVE in negative
+    assert content in negative
+    assert gc.QUALITY_CORE_NEGATIVE in negative
+    assert (gc.SOLO_NEGATIVE in negative) is solo
+    terms = {t.strip() for t in negative.split(",")}
+    assert ("text" in terms) is (not allow_text)
+
+
+@pytest.mark.parametrize("tier", _TIERS)
+def test_quality_switch_defaults_reproduce_the_old_negative(tier):
+    """The defaults are what every existing caller gets, so they must equal the old composites exactly."""
+    expected = gc.SAFE_SAFETY_NEGATIVE if tier == "safe" else gc.SUGGESTIVE_NEGATIVE
+    _, negative = gc._build_prompt_and_negative("p", None, tier, None, "", "", None)
+    assert negative == expected
 
 
 # --- cfg floors: they exist ONLY because ComfyUI skips the negative prompt entirely at cfg == 1.0,

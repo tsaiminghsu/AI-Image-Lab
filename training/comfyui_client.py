@@ -1451,7 +1451,27 @@ def submit_txt2img_generation_zimage(
     if missing:
         raise RuntimeError(f"Z-Image model files not found by ComfyUI: {', '.join(missing)} - see README "
                            "'Z-Image Turbo' for the download commands")
-    files = ZIMAGE_MODELS[model]
+    wf = build_zimage_txt2img_workflow(prompt, negative_prompt, seed, filename_prefix, ZIMAGE_MODELS[model],
+                                       width=width, height=height, steps=steps, cfg=cfg)
+    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_ZIMAGE)
+
+
+def build_zimage_txt2img_workflow(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    files: dict,
+    width: int = ZIMAGE_WIDTH,
+    height: int = ZIMAGE_HEIGHT,
+    steps: int = ZIMAGE_STEPS,
+    cfg: float = ZIMAGE_CFG,
+) -> dict:
+    """The filled Z-Image txt2img graph, with no I/O beyond reading the template. Split out of
+    submit_txt2img_generation_zimage so the Colab skill (.claude/skills/z-image-colab), which posts to a
+    remote ComfyUI and never goes through _submit_and_wait, fills the exact same graph. `files` is a
+    ZIMAGE_MODELS-shaped dict - the skill passes the official bf16 names, which are not in ZIMAGE_MODELS
+    because they don't fit the local 8 GB card. The cfg floor stays here for the same reason."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH))
     wf["10"]["inputs"]["unet_name"] = files["unet"]
     wf["11"]["inputs"]["clip_name"] = files["text_encoder"]
@@ -1468,7 +1488,7 @@ def submit_txt2img_generation_zimage(
     wf["3"]["inputs"]["sampler_name"] = ZIMAGE_SAMPLER
     wf["3"]["inputs"]["scheduler"] = ZIMAGE_SCHEDULER
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
-    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_ZIMAGE)
+    return wf
 
 
 def _round_to(x: float, step: int, minimum: int) -> int:

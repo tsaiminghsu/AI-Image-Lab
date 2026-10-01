@@ -91,32 +91,35 @@ AGE_SAFETY_NEGATIVE = "child, children, kid, minor, teen, teenager, underage, yo
 # SECOND person in the empty space. Measured on the kneeling skeleton: 1 of 3
 # seeds duplicated, and adding these terms fixed the failing seed. Every
 # generator in this project renders exactly one character, so this is always the
-# intent, pose or not.
-QUALITY_NEGATIVE = (
-    "lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, "
-    "multiple people, two people, duplicate, twins, extra person, crowd"
-)
+# intent, pose or not. The three parts are separate constants only so the Colab
+# Z-Image skill (general scenes: products, groups, lettering) can drop the solo
+# and "text" terms via _build_prompt_and_negative(solo=False, allow_text=True);
+# the composite below is byte-identical to what every other caller always got.
+QUALITY_CORE_NEGATIVE = "lowres, blurry, deformed, extra limbs, bad anatomy, watermark"
+TEXT_NEGATIVE = "text"
+SOLO_NEGATIVE = "multiple people, two people, duplicate, twins, extra person, crowd"
+QUALITY_NEGATIVE = f"{QUALITY_CORE_NEGATIVE}, {TEXT_NEGATIVE}, {SOLO_NEGATIVE}"
 
 # Safety-only, no style/quality terms baked in - kept separate from
 # REALISTIC_NEGATIVE specifically so gen_custom's style_negative param (see
 # below, exposed as an editable GUI field) can be freely overridden without
 # ever touching this. Never expose this constant itself as user-editable.
-SAFE_SAFETY_NEGATIVE = (
-    f"nsfw, nude, naked, explicit, sexual content, {AGE_SAFETY_NEGATIVE}, "
-    f"{QUALITY_NEGATIVE}"
-)
+# The *_CONTENT_NEGATIVE halves carry the age terms on their own, so no quality
+# switch can ever drop them.
+SAFE_CONTENT_NEGATIVE = f"nsfw, nude, naked, explicit, sexual content, {AGE_SAFETY_NEGATIVE}"
+SAFE_SAFETY_NEGATIVE = f"{SAFE_CONTENT_NEGATIVE}, {QUALITY_NEGATIVE}"
 
 NEGATIVE_PROMPT = f"{SAFE_SAFETY_NEGATIVE}, {REALISTIC_NEGATIVE}"
 
 # Blocks fully explicit content specifically (genitals, sex acts, porn) while
 # allowing suggestive/artistic content (swimwear, lingerie, implied nudity,
 # bare shoulders/back) through. AGE_SAFETY_NEGATIVE is never dropped.
-SUGGESTIVE_NEGATIVE = (
+SUGGESTIVE_CONTENT_NEGATIVE = (
     f"exposed genitalia, exposed vulva, exposed penis, exposed nipples, "
     f"sexual intercourse, penetration, pornographic, explicit sexual act, "
-    f"{AGE_SAFETY_NEGATIVE}, "
-    f"{QUALITY_NEGATIVE}"
+    f"{AGE_SAFETY_NEGATIVE}"
 )
+SUGGESTIVE_NEGATIVE = f"{SUGGESTIVE_CONTENT_NEGATIVE}, {QUALITY_NEGATIVE}"
 
 # Hard floor - 16/17 are minors in most jurisdictions and are never
 # generated here, regardless of per-character age choices below.
@@ -599,7 +602,8 @@ def gen_suggestive_variations(trigger, anchor_path, out_dir, count, ip_adapter_w
 
 
 def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_positive, style_negative, checkpoint,
-                               *, gender_weight="auto", include_trigger=None, character_overrides=None):
+                               *, gender_weight="auto", include_trigger=None, character_overrides=None,
+                               solo=True, allow_text=False):
     """Shared by gen_custom(), gen_gif() and gen_video_animatediff() so they all compose the
     final positive/negative prompt strings identically - character identity prefix, style
     terms, safety negatives, and the Pony quality-tag auto-prepend all live in exactly one
@@ -616,11 +620,22 @@ def _build_prompt_and_negative(prompt, extra_negative, tier, trigger, style_posi
     None means "auto": kept for every checkpoint except Z-Image, which has no LoRA path here and
     paints prompt words as visible text (the id "taeoh" came out lettered on a coffee machine).
     character_overrides replaces the character's appearance/style text for this call only (see
-    character_profile); age and gender cannot be overridden."""
+    character_profile); age and gender cannot be overridden.
+
+    solo/allow_text only trim the quality floor (QUALITY_NEGATIVE's solo and "text" terms) for callers
+    whose scene is not one character - the Colab Z-Image skill's product shots, groups and requested
+    lettering. The defaults reproduce SAFE_SAFETY_NEGATIVE / SUGGESTIVE_NEGATIVE exactly, and the
+    content half (with AGE_SAFETY_NEGATIVE) is never affected by either switch."""
     style_positive = REALISTIC_STYLE if style_positive is None else style_positive
     style_negative = REALISTIC_NEGATIVE if style_negative is None else style_negative
 
-    safety_negative = SAFE_SAFETY_NEGATIVE if tier == "safe" else SUGGESTIVE_NEGATIVE
+    content_negative = SAFE_CONTENT_NEGATIVE if tier == "safe" else SUGGESTIVE_CONTENT_NEGATIVE
+    quality_parts = [QUALITY_CORE_NEGATIVE]
+    if not allow_text:
+        quality_parts.append(TEXT_NEGATIVE)
+    if solo:
+        quality_parts.append(SOLO_NEGATIVE)
+    safety_negative = f"{content_negative}, {', '.join(quality_parts)}"
     base_negative = f"{safety_negative}, {style_negative}" if style_negative else safety_negative
     negative_prompt = f"{base_negative}, {extra_negative}" if extra_negative else base_negative
     if checkpoint in client.PONY_CHECKPOINTS:

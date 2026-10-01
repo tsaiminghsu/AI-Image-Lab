@@ -60,3 +60,12 @@ training/settings/
 .env.*
 token.json
 client_secret*.json
+
+# Z-Image Colab skill (.claude/skills/z-image-colab): the machine-local config. Its queue, images, logs
+# and ledgers live under /output/zimage/ (ignored above). It shares the H3 skill's google-colab-cli Docker
+# volume for the OAuth token, so no credential file belongs in the repo; these names are ignored anyway.
+.claude/skills/z-image-colab/config/config.json
+credentials/
+secrets/
+*.token
+*.key
