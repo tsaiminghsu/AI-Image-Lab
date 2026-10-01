@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "comfyui": {
+    "ref": "master@2d6b732",
+    "commit": "2d6b73283af2447bdd065ece4090b8c6b1784544",
+    "tarball_url": "https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/2d6b73283af2447bdd065ece4090b8c6b1784544",
+    "port": 8188,
+    "startup_timeout_seconds": 600,
+    "extra_args": []
+  },
+  "custom_nodes": {
+    "ComfyUI-VideoHelperSuite": {
+      "commit": "4d907bee61e92c2e65af3bd6383a4e4d356126d1",
+      "tarball_url": "https://codeload.github.com/Kosinkadink/ComfyUI-VideoHelperSuite/tar.gz/4d907bee61e92c2e65af3bd6383a4e4d356126d1"
+    }
+  },
+  "runtime": {
+    "local_root": "/content/aiwf",
+    "min_free_disk_gib": 10
+  },
+  "worker": {
+    "heartbeat_seconds": 15,
+    "poll_interval_seconds": 5,
+    "idle_timeout_seconds": 600,
+    "max_session_seconds": 10800,
+    "stale_worker_seconds": 180,
+    "max_attempts": 2
+  },
+  "compute": {
+    "provider": "colab-notebook",
+    "worker_notebook": "notebooks/01_comfyui.ipynb"
+  }
+}

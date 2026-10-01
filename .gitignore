@@ -69,3 +69,7 @@ credentials/
 secrets/
 *.token
 *.key
+
+# Workflow platform (ai_workflow/): where this machine's Google Drive for desktop put the workspace.
+# The workspace itself (jobs, outputs, models) lives on Google Drive, never in the repo.
+/ai_workflow/configs/local.json

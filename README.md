@@ -2106,6 +2106,34 @@ $py = "ComfyUI\.venv\Scripts\python.exe"; $s = ".claude\skills\z-image-colab\scr
 
 完整說明（Drive 目錄結構、版本升級、設定、錯誤碼）：[.claude/skills/z-image-colab/README.md](.claude/skills/z-image-colab/README.md)。
 
+### AI Workflow 平台（Google Drive ＋ Colab notebook，不綁 AI 供應商）
+
+`ai_workflow/` 是一套獨立的工作流平台：Google Drive 是持久工作區，Colab 是運算，ComfyUI 是生成引擎。
+有兩個入口、共用同一套 Core：
+
+- **不用 AI**：在 Google Drive 開 `AI-Workflow/notebooks/02_image_generation.ipynb` 或 `03_video_generation.ipynb`
+  → 用 Colab 開啟 → 全部執行。表單分 Simple／Advanced。
+- **AI Agent**：任何能執行指令的 Agent 用六個工具（`ai_workflow/scripts/aiwf.py`）建立 job、查狀態、取結果；
+  你開著 `01_comfyui.ipynb` 讓它執行佇列。說明在 `ai_workflow/AGENTS.md`，對每一種 Agent 都一樣。
+
+```powershell
+$py = "ComfyUI\.venv\Scripts\python.exe"
+& $py ai_workflow\scripts\deploy.py --dry-run     # 看會複製什麼到 Drive 同步資料夾
+& $py ai_workflow\scripts\deploy.py               # 部署（需要先設定 ai_workflow\configs\local.json）
+& $py ai_workflow\scripts\aiwf.py list-workflows
+& $py ai_workflow\scripts\aiwf.py create-job z-image-basic --prompt "A white ceramic mug on a white background" --set aspect=16:9
+& $py ai_workflow\scripts\aiwf.py result JOB_ID --wait 600
+```
+
+- 需要 Google Drive 電腦版（串流模式）和 Colab 運算單元；不需要 Docker，也不需要任何 AI API key。
+- 目前三個 workflow：`z-image-basic`、`minimax-h3-basic`（prompt → Z-Image 首幀 → H3 影片）、`test-generation`。
+  新增模型＝一個 ComfyUI API 格式的 JSON＋`workflows/registry.json` 的一筆，不改 Core。
+- ComfyUI、pip 套件、模型（約 64 GB）第一次安裝後存在 Drive，之後的 session 只解壓和複製。
+- 安全負面詞、cfg 下限 1.5、H3 的 prompt 過濾與首幀來源限制都在 Core 裡，表單和工具都關不掉。
+- **還沒有在真的 Colab 上跑過**，時間與 CU 都沒有數字。
+
+完整說明（工作區結構、job 格式、新增 workflow、實機驗收清單）在 [ai_workflow/README.md](ai_workflow/README.md)。
+
 ## AI 短劇（分鏡表 → 9:16 成片）
 
 一集短劇寫成一個分鏡表（JSON），`training/drama.py` 依序產生關鍵幀、配音、動態鏡頭，再組成一支
@@ -2329,6 +2357,7 @@ AI-Image-Lab/
 ├── SadTalker/                # 第三方安裝（對嘴影片），不進 repo（見「會講話的嘴型影片」章節）
 ├── MuseTalk/                 # 第三方安裝（對嘴，尚未接進 CLI/GUI），不進 repo
 ├── models/                   # SDXL/IP-Adapter/CLIP 權重，不進 repo（見模型章節）
+├── ai_workflow/              # Drive＋Colab＋ComfyUI 工作流平台（Core、notebooks、workflows；見上面「AI Workflow 平台」）
 ├── training/
 │   ├── generate_character.py # CLI 入口：角色定義 + prompt 組裝
 │   ├── comfyui_client.py     # ComfyUI HTTP client（不 import torch）

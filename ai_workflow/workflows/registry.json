@@ -1,0 +1,254 @@
+{
+  "schema": 1,
+  "workflows": {
+    "z-image-basic": {
+      "type": "image",
+      "task_types": ["text_to_image"],
+      "workflow_file": "image/z-image-basic.json",
+      "enabled": true,
+      "title": "Z-Image Turbo 文字生圖",
+      "safety": "negative_cfg",
+      "timeout_seconds": 1800,
+      "gpu": {"min_vram_gib": 15, "require_bf16": true},
+      "custom_nodes": [],
+      "limits": {"max_pixels": 4194304},
+      "constants": [
+        {"node": "10", "input": "unet_name", "value": "z_image_turbo_bf16.safetensors"},
+        {"node": "11", "input": "clip_name", "value": "qwen_3_4b.safetensors"},
+        {"node": "12", "input": "vae_name", "value": "ae.safetensors"},
+        {"node": "13", "input": "shift", "value": 3.0},
+        {"node": "5", "input": "batch_size", "value": 1},
+        {"node": "3", "input": "sampler_name", "value": "res_multistep"},
+        {"node": "3", "input": "scheduler", "value": "simple"}
+      ],
+      "parameters": {
+        "prompt": {
+          "type": "string", "in": "input", "required": true, "max_chars": 2000, "simple": true,
+          "label": "Prompt（原樣送給模型，中英文都可以）",
+          "bind": [{"node": "6", "input": "text"}]
+        },
+        "negative": {
+          "type": "negative", "in": "input", "max_chars": 1000,
+          "label": "Negative Prompt（接在安全負面詞後面，不會取代它）",
+          "bind": [{"node": "7", "input": "text"}]
+        },
+        "aspect": {
+          "type": "aspect", "default": "1:1", "simple": true, "label": "比例",
+          "sizes": {
+            "1:1": [1024, 1024], "16:9": [1344, 768], "9:16": [768, 1344], "4:3": [1152, 896],
+            "3:4": [896, 1152], "3:2": [1216, 832], "2:3": [832, 1216]
+          }
+        },
+        "width": {
+          "type": "int", "min": 512, "max": 2048, "multiple_of": 16, "label": "寬（自訂尺寸，與比例擇一）",
+          "bind": [{"node": "5", "input": "width"}]
+        },
+        "height": {
+          "type": "int", "min": 512, "max": 2048, "multiple_of": 16, "label": "高",
+          "bind": [{"node": "5", "input": "height"}]
+        },
+        "steps": {
+          "type": "int", "min": 1, "max": 50, "default": 8, "label": "Steps",
+          "bind": [{"node": "3", "input": "steps"}]
+        },
+        "cfg": {
+          "type": "float", "min": 1.5, "max": 10.0, "default": 2.0, "label": "CFG（最低 1.5）",
+          "bind": [{"node": "3", "input": "cfg"}]
+        },
+        "seed": {
+          "type": "seed", "max": 4294967295, "label": "Seed（-1 = 隨機）",
+          "bind": [{"node": "3", "input": "seed"}]
+        },
+        "solo": {"type": "bool", "default": false, "label": "畫面只有一個人（加上排除第二個人的負面詞）"},
+        "allow_text": {"type": "bool", "default": false, "label": "允許畫面出現文字"}
+      },
+      "output": {"node": "9", "kind": "image", "ext": "png", "prefix_input": "filename_prefix"},
+      "models": [
+        {
+          "name": "z_image_turbo_bf16.safetensors", "folder": "diffusion_models", "store": "models/z-image/diffusion_models",
+          "repo": "Comfy-Org/z_image_turbo", "revision": "6fc90a3b1b653e935a0d175e260736de25b84df5",
+          "path_in_repo": "split_files/diffusion_models/z_image_turbo_bf16.safetensors",
+          "size": 12309866400, "sha256": "2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6",
+          "loader": ["UNETLoader", "unet_name"]
+        },
+        {
+          "name": "qwen_3_4b.safetensors", "folder": "text_encoders", "store": "models/z-image/text_encoders",
+          "repo": "Comfy-Org/z_image_turbo", "revision": "6fc90a3b1b653e935a0d175e260736de25b84df5",
+          "path_in_repo": "split_files/text_encoders/qwen_3_4b.safetensors",
+          "size": 8044982048, "sha256": "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a",
+          "loader": ["CLIPLoader", "clip_name"]
+        },
+        {
+          "name": "ae.safetensors", "folder": "vae", "store": "models/z-image/vae",
+          "repo": "Comfy-Org/z_image_turbo", "revision": "6fc90a3b1b653e935a0d175e260736de25b84df5",
+          "path_in_repo": "split_files/vae/ae.safetensors",
+          "size": 335304388, "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+          "loader": ["VAELoader", "vae_name"]
+        }
+      ]
+    },
+    "minimax-h3-basic": {
+      "type": "video",
+      "task_types": ["text_to_video", "image_to_video"],
+      "workflow_file": "video/minimax-h3-basic.json",
+      "enabled": true,
+      "title": "MiniMax H3 首幀生影片（含音訊）",
+      "safety": "screened_prompt",
+      "timeout_seconds": 3000,
+      "gpu": {"min_vram_gib": 38},
+      "comfyui_args": [{"when_vram_below_gib": 48, "args": ["--lowvram"]}],
+      "custom_nodes": ["ComfyUI-VideoHelperSuite"],
+      "inputs": {
+        "first_frame": {
+          "kind": "image",
+          "label": "首幀來源",
+          "sources": ["generate", "job", "file"],
+          "default_source": "generate",
+          "attestation_sources": ["file"],
+          "generate": {
+            "workflow": "z-image-basic",
+            "prompt_param": "first_frame_prompt",
+            "fallback_prompt_param": "prompt",
+            "pass": ["aspect"]
+          },
+          "bind": [{"node": "6", "input": "image"}]
+        }
+      },
+      "parameters": {
+        "prompt": {
+          "type": "string", "in": "input", "required": true, "max_chars": 3000, "simple": true,
+          "label": "Prompt（英文描述畫面與動作）",
+          "forbid_patterns": ["<Picture\\s+\\d+>", "\\[Shot\\s+\\d+\\]"]
+        },
+        "first_frame_prompt": {
+          "type": "string", "in": "input", "max_chars": 2000,
+          "label": "首幀 Prompt（留空就用上面的 Prompt 生首幀）"
+        },
+        "soundscape": {
+          "type": "string", "in": "input", "max_chars": 600, "default": "Soft ambient sound that matches the scene.",
+          "label": "Soundscape"
+        },
+        "music": {"type": "string", "in": "input", "max_chars": 300, "default": "N/A", "label": "Music（N/A = 不要配樂）"},
+        "aspect": {
+          "type": "choice", "choices": ["9:16", "16:9", "1:1", "3:4", "4:3", "2:3", "3:2"], "default": "9:16",
+          "simple": true, "label": "比例（只在首幀由 Z-Image 生成時使用）"
+        },
+        "duration": {
+          "type": "float", "min": 4, "max": 15, "default": 5, "simple": true, "label": "Duration（秒，4–15）",
+          "transform": {"kind": "seconds_to_frames", "fps": 24, "step": 17, "offset": 5},
+          "bind": [{"node": "7", "input": "length"}]
+        },
+        "steps": {
+          "type": "int", "min": 4, "max": 20, "default": 8, "label": "Steps",
+          "bind": [{"node": "11", "input": "steps"}]
+        },
+        "seed": {
+          "type": "seed", "max": 281474976710655, "label": "Seed（-1 = 隨機）",
+          "bind": [{"node": "9", "input": "noise_seed"}]
+        },
+        "sampler": {
+          "type": "choice", "choices": ["euler"], "default": "euler", "label": "Sampler",
+          "bind": [{"node": "10", "input": "sampler_name"}]
+        },
+        "scheduler": {
+          "type": "choice", "choices": ["beta", "simple"], "default": "beta", "label": "Scheduler",
+          "bind": [{"node": "11", "input": "scheduler"}]
+        },
+        "lora_strength": {
+          "type": "float", "min": 0.5, "max": 1.5, "default": 1.0, "label": "Turbo LoRA 強度",
+          "bind": [{"node": "2", "input": "strength_model"}]
+        },
+        "crf": {
+          "type": "int", "min": 10, "max": 30, "default": 20, "label": "MP4 CRF",
+          "bind": [{"node": "15", "input": "crf"}]
+        }
+      },
+      "compose": [
+        {
+          "max_chars": 4000,
+          "template": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] {prompt}\n\noverall_soundscape: {soundscape}\n\nnon_diegetic_music: {music}",
+          "bind": [{"node": "7", "input": "prompt"}]
+        }
+      ],
+      "derived": [
+        {
+          "rule": "auto_resolution", "from_input": "first_frame", "short_side": 768, "max_megapixels": 1.2, "multiple": 32,
+          "bind_width": [{"node": "7", "input": "width"}],
+          "bind_height": [{"node": "7", "input": "height"}]
+        }
+      ],
+      "output": {
+        "node": "15", "kind": "video", "ext": "mp4", "prefix_input": "filename_prefix", "prefix_template": "h3_{job_id}",
+        "list_key": "gifs",
+        "expect": {"video_codec": "h264", "pix_fmt": "yuv420p", "fps": 24, "audio": true}
+      },
+      "models": [
+        {
+          "name": "minimax_h3_fl2va_pruned_fp8_scaled.safetensors", "folder": "diffusion_models",
+          "store": "models/minimax-h3/diffusion_models",
+          "repo": "Comfy-Org/MiniMax-H3", "revision": "e5eb578a89295337b8ff433a035929ce0279e0b6",
+          "path_in_repo": "diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+          "size": 20958205608, "sha256": "12944c1f7791637e7de12208aef04da82bd26b95271b1b47d817364315ade993",
+          "loader": ["UNETLoader", "unet_name"]
+        },
+        {
+          "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "folder": "text_encoders",
+          "store": "models/minimax-h3/text_encoders",
+          "repo": "Comfy-Org/MiniMax-H3", "revision": "e5eb578a89295337b8ff433a035929ce0279e0b6",
+          "path_in_repo": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "size": 15687142551, "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+          "loader": ["CLIPLoader", "clip_name"]
+        },
+        {
+          "name": "minimax_h3_video_vae_fp16.safetensors", "folder": "vae", "store": "models/minimax-h3/vae",
+          "repo": "Comfy-Org/MiniMax-H3", "revision": "e5eb578a89295337b8ff433a035929ce0279e0b6",
+          "path_in_repo": "vae/minimax_h3_video_vae_fp16.safetensors",
+          "size": 5207808496, "sha256": "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522",
+          "loader": ["VAELoader", "vae_name"]
+        },
+        {
+          "name": "minimax_h3_audio_vae_fp32.safetensors", "folder": "vae", "store": "models/minimax-h3/vae",
+          "repo": "Comfy-Org/MiniMax-H3", "revision": "e5eb578a89295337b8ff433a035929ce0279e0b6",
+          "path_in_repo": "vae/minimax_h3_audio_vae_fp32.safetensors",
+          "size": 605254808, "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+          "loader": ["VAELoader", "vae_name"]
+        },
+        {
+          "name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors", "folder": "loras", "store": "loras",
+          "repo": "drbaph/MiniMax-H3-Turbo-Lora-ComfyUI", "revision": "bb2bc497cbaca89dadd0bcf1856eed4f8275be20",
+          "path_in_repo": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+          "size": 620285592, "sha256": "7098acf3ee75028fd9fcd948f50fcc8d995057fabb76f86bd3ca2c0ffc58e409",
+          "loader": ["LoraLoaderModelOnly", "lora_name"]
+        }
+      ]
+    },
+    "test-generation": {
+      "type": "image",
+      "task_types": ["test"],
+      "workflow_file": "test/test-generation.json",
+      "enabled": true,
+      "title": "測試：純色圖（不需要模型）",
+      "safety": "static",
+      "timeout_seconds": 120,
+      "gpu": {"min_vram_gib": 0},
+      "custom_nodes": [],
+      "constants": [{"node": "1", "input": "batch_size", "value": 1}],
+      "parameters": {
+        "width": {
+          "type": "int", "min": 64, "max": 1024, "multiple_of": 8, "default": 256, "simple": true, "label": "寬",
+          "bind": [{"node": "1", "input": "width"}]
+        },
+        "height": {
+          "type": "int", "min": 64, "max": 1024, "multiple_of": 8, "default": 256, "simple": true, "label": "高",
+          "bind": [{"node": "1", "input": "height"}]
+        },
+        "color": {
+          "type": "int", "min": 0, "max": 16777215, "default": 3368601, "label": "顏色（RGB 整數）",
+          "bind": [{"node": "1", "input": "color"}]
+        }
+      },
+      "output": {"node": "2", "kind": "image", "ext": "png", "prefix_input": "filename_prefix"},
+      "models": []
+    }
+  }
+}

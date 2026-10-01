@@ -35,11 +35,11 @@ function Invoke-Step([string]$Name, [scriptblock]$Body) {
 Push-Location $PSScriptRoot
 try {
     if ($Fix) {
-        Invoke-Step "ruff check --fix" { & $py -m ruff check --fix training tests worker .claude/skills }
-        Invoke-Step "ruff format tests" { & $py -m ruff format tests .claude/skills }
+        Invoke-Step "ruff check --fix" { & $py -m ruff check --fix training tests worker .claude/skills ai_workflow }
+        Invoke-Step "ruff format tests" { & $py -m ruff format tests .claude/skills ai_workflow }
     }
-    Invoke-Step "ruff check" { & $py -m ruff check training tests worker .claude/skills }
-    Invoke-Step "ruff format --check" { & $py -m ruff format --check tests .claude/skills }
+    Invoke-Step "ruff check" { & $py -m ruff check training tests worker .claude/skills ai_workflow }
+    Invoke-Step "ruff format --check" { & $py -m ruff format --check tests .claude/skills ai_workflow }
     Invoke-Step "pytest" { & $py -m pytest }
     if ($Live) { Invoke-Step "pytest -m live" { & $py -m pytest -m live } }
 

@@ -5,6 +5,49 @@
 
 ## 2026-10-02
 
+### AI Workflow 平台：不綁 AI 供應商的 Drive＋Colab＋ComfyUI 工作流（離線完成，尚未實機驗證）
+
+- **為什麼**：兩個 Colab skill（Z-Image worker、MiniMax H3）都只有 Claude 能用、佇列在本機、workflow 寫死在程式裡，
+  也沒有不靠 AI 的入口。要的是：任何訂閱制 AI Agent 都能控制，沒有 AI 也能在 Google Drive 開 notebook 按「全部執行」，
+  而且兩條路是同一套程式；系統不需要任何 AI API key。
+- **做了什麼**（`ai_workflow/`，說明見該資料夾的 README；兩個舊 skill 沒有動）：
+  - `controller/`：純 stdlib 的 Core，本機與 Colab 跑同一份。`storage`（介面＋資料夾實作）、`registry`／`params`
+    （workflow JSON＋registry 的參數綁定）、`safety`、`jobs`、`tools`（六個工具）、`environment`（ComfyUI／套件／模型
+    「有就用、沒有才裝」）、`comfy`、`validate`、`worker`、`notebook`、`compute`（介面＋Colab notebook 實作）。
+  - `scripts/aiwf.py`：六個工具的 CLI，輸出 JSON。`scripts/deploy.py`：部署到 Drive 同步資料夾（registry 用合併的，
+    不覆蓋工作區自己加的 workflow；不碰 models／jobs／outputs）。`scripts/build_notebooks.py`：從 registry 產生 5 本 notebook。
+  - `workflows/`：`z-image-basic`（就是 `training/workflow_template_txt2img_zimage.json`）、`minimax-h3-basic`
+    （H3 skill 的 `build_graph` 匯出成 JSON）、`test-generation`（EmptyImage → SaveImage，不需要模型，用來做 API 測試）。
+  - `AGENTS.md`：給任何 Agent 的工具說明，不含供應商專屬內容。
+- **幾個刻意的設計**：
+  - **單一寫入者**：Drive 同步遇到兩邊同時改同一個檔會留下「檔名 (1).json」，所以 job 建立後只有 worker 搬動它；
+    工具只新增 `jobs/pending/*.json` 和 `jobs/cancel/*.request`（測試比對呼叫前後的整棵目錄）。
+  - **job 不存節點圖**，只存 workflow 名稱和參數；worker 綁定前重新驗證一次（job 檔可能被手改），實際送出的圖寫到
+    `logs/jobs/<id>/workflow.json`。
+  - **「輸入 prompt → H3 影片」不放寬安全規則**：預設先用 Z-Image（帶安全負面詞）生首幀，再交給 H3；也可以指定已完成的
+    圖片 job（worker 核對 sha256）或 `inputs/` 的圖（要勾選來源聲明）。沒有負面詞的 profile 寫死只給
+    `minimax-h3-basic`，registry 不能替別的 workflow 宣告。
+  - GPU 不夠的 job 留在 pending 並寫明原因，不標失敗；ComfyUI 的啟動參數只增不減（40 GB 的 A100 上 H3 需要
+    `--lowvram`，圖片與影片 job 交錯時不會每個 job 重啟一次）。
+- **已核對的版本釘選**（2026-10-02 查 HuggingFace／GitHub API）：ComfyUI `2d6b7328`（`output/h3_jobs.jsonl` 裡 8 次 H3
+  成功用的 commit）；VideoHelperSuite `4d907bee`（2026-09-02，H3 實跑當時的 HEAD）；`Comfy-Org/MiniMax-H3@e5eb578a` 的
+  `fl2va_pruned_fp8_scaled` 20,958,205,608 bytes、`qwen3vl_32b…nvfp4_awq` 15,687,142,551、video VAE 5,207,808,496、
+  audio VAE 605,254,808；`drbaph/MiniMax-H3-Turbo-Lora-ComfyUI@bb2bc497` 的 turbo LoRA 620,285,592。H3 合計約 43 GB，
+  加 Z-Image 20.7 GB，Drive 上約 64 GB。sha256 取自 HuggingFace 的 LFS oid。
+- **離線測試**：`tests/test_aiwf_*.py` 167 個、約 21 秒（整套 pytest 因此從約 44 秒變成約 65 秒）。兩個 workflow 綁定出來的節點圖與專案既有的圖逐欄位相等；
+  安全常數釘在專案常數與 H3 skill 的詞表上；第二個 session（新的 VM 磁碟、同一個工作區）網路呼叫次數為 0。
+  寫測試時抓到的問題：
+  - `present`（本機碟已經有）會蓋掉同一個 session 稍早的 `downloaded`／`installed`，session 記錄因此看不出這次到底
+    有沒有下載。改成 `present` 不覆蓋既有記錄。
+  - worker 關機後在同一個 kernel 再跑一次生成，心跳 thread 不會重新啟動。
+  - Windows 上對已關閉的 localhost 埠連線要約 2 秒才失敗，測試裡把假 ComfyUI 太早關掉會讓下一個 runtime 等滿 600 次
+    啟動輪詢，看起來就是卡死。測試改成同一個測試內共用一個假 ComfyUI。
+- **還沒做、也沒有數字的**：Google Drive 電腦版還沒裝，`deploy.py` 只對暫存資料夾跑過；實機驗收全部未做。
+  特別不確定的幾件事——從 Drive 掛載複製 43 GB 到 VM 要多久（H3 從 HuggingFace 直接抓實測約 5–6 分鐘，Drive 較慢的話
+  「模型放 Drive」對 H3 是負優化）；Drive 電腦版的同步延遲；`runtime.unassign()` 在 notebook 裡是否如預期釋放；
+  ComfyUI 以 `HF_HUB_OFFLINE=1` 啟動時 H3 的節點會不會想連外（H3 skill 沒有設這個變數）；ComfyUI `2d6b7328` 跑
+  Z-Image 模板（之前釘的是 `v0.38.0`）。
+
 ### Z-Image 在 Colab 上的常駐 worker：一個 session 跑完整個佇列（離線完成，尚未實機驗證）
 
 - **為什麼**：本機 RTX 2070 跑 Z-Image 要用量化版而且慢；在 Colab 上「一張圖開一個 session」又每次都要裝

@@ -14,6 +14,10 @@
 - `training/image_api.py`：FastAPI 包裝，給外部專案用 HTTP 呼叫
 - `worker/`：RunPod serverless worker（雲端 GPU）
 
+另外有一個獨立的子系統 `ai_workflow/`（Google Drive＋Colab＋ComfyUI 的工作流平台，見「現況」最後一項與
+[ai_workflow/README.md](ai_workflow/README.md)）：它不經過 `comfyui_client`，Core 是純 stdlib、整包部署到
+Google Drive 後在 Colab 上執行。
+
 ## 硬體與環境（左右了大部分技術決定）
 
 - **RTX 2070 8 GB、Turing sm_75**：沒有 bf16、沒有 fp8 運算（fp8 只能拿來存，算的時候
@@ -72,6 +76,11 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   同意改用兩道補償控管：首幀只能是本專案生成的虛構成人角色或沒有人物的圖（不能用真人照片），以及
   `h3_colab.screen_prompt` 對完整 prompt 做正向詞過濾、沒有繞過的參數（測試釘住詞表，而且要涵蓋
   `AGE_SAFETY_NEGATIVE` 的每個詞）。其他模型不要比照這個例外。
+  `ai_workflow/` 平台的 `minimax-h3-basic` 是同一張節點圖、同一個例外：`controller/safety.py` 的
+  `SCREENED_PROMPT_WORKFLOWS` 只列它一個，registry 不能替別的 workflow 宣告這個 profile；首幀來源是
+  `generate`／`job`（worker 核對 sha256）或 `file`（`inputs/` 的圖，程式驗不了來源，所以一定要有使用者的
+  聲明：notebook 的核取方塊或 `--attest`，Agent 不能自己代勾）。平台的 Core 在 Colab 上沒有 repo 可 import，
+  安全常數是釘選的複本，`tests/test_aiwf_safety.py` 斷言它們等於本專案的常數與 H3 skill 的詞表。
 - **錯誤型別**：library 層用 `generate_character.UsageError` 表示呼叫端參數錯誤，**不要用
   `SystemExit`**（它是 `BaseException`，`except Exception` 接不到，這正是 image_api 和 GUI
   兩個邊界 bug 的成因）。只有 CLI 的 `__main__` 把它轉回 `SystemExit`。
@@ -93,6 +102,9 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
     直接印出可貼回的字串）
   - `training/booru_lexicon.json` 涵蓋專案自己的所有詞彙（角色外觀／詞庫／場景／骨架），
     而且推導出的標籤不含任何年齡／露骨詞（`tests/test_prompt_adapter.py`）
+  - `ai_workflow/` 平台（`tests/test_aiwf_*.py`）：兩個 workflow 綁定出來的節點圖等於
+    `build_zimage_txt2img_workflow` 與 H3 skill 的 `build_graph`；工具只新增檔案、不改既有檔；第二個 session
+    零下載；notebook 等於 `build_notebooks.py` 的輸出而且不含邏輯；程式裡不出現任何 AI 供應商或 API key 字樣
 - CI（`.github/workflows/checks.yml`）在 ubuntu 與 windows 兩個 runner 上跑同一套，
   worker image 的 build 有 `needs: checks` 擋著。
 - 臉／身分比較用 `training/face_similarity.py`（InsightFace `buffalo_l`，跟 FaceID 同一個
@@ -168,3 +180,15 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `_build_prompt_and_negative`，所以年齡安全詞與 cfg 下限跟本機一樣，VM 上的 worker 會再檢查一次。
   **離線測試 210 個通過，但從未在真的 Colab GPU 上跑過**——首次安裝、重啟不重裝、連續 3 張、閒置關機四項實機
   驗收都還沒做，時間與 CU 都沒有數字。
+- AI Workflow 平台（2026-10-02）：`ai_workflow/`，不綁 AI 供應商的 Drive＋Colab＋ComfyUI 工作流。兩個入口共用一套
+  Core（`controller/`，純 stdlib）：notebook（`notebooks/00–03、99`，由 `scripts/build_notebooks.py` 從 registry 產生，
+  不要手改）和六個工具（`scripts/aiwf.py`：list-workflows／create-job／status／list-jobs／cancel／result，給任何
+  Agent 用，說明在 `AGENTS.md`；Claude 這邊只有一個指過去的薄 skill `.claude/skills/ai-workflow/`）。workflow 是
+  `workflows/` 裡的 JSON＋`registry.json`（參數綁定、模型釘選 revision／size／sha256、GPU 下限），目前三個：
+  `z-image-basic`、`minimax-h3-basic`（prompt → Z-Image 首幀 → H3）、`test-generation`（不需要模型）。job 是 Drive 上
+  `jobs/<狀態>/` 的 JSON；**單一寫入者規則**：建立之後只有 Colab 上的 worker 搬動 job 檔，本機只新增 pending 和
+  cancel request（Drive 同步會把兩邊同時改的檔變成「(1)」複本）。Colab runtime 由使用者開 notebook 啟動，Agent 不會
+  自己開、不花 CU。`scripts/deploy.py` 把程式部署到 Drive 電腦版的同步資料夾（路徑在已 gitignore 的
+  `configs/local.json`）。與兩個舊的 Colab skill 並存，沒有動它們。
+  **離線測試 167 個通過，但從未在真的 Colab 上跑過**，Google Drive 電腦版也還沒裝、還沒 deploy 過；實機驗收
+  （Phase 3–6、Test A／B／C／D、Session Restart）全部未做，時間／VRAM／CU／Drive 同步延遲都沒有數字。
