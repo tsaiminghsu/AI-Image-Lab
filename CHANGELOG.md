@@ -5,6 +5,33 @@
 
 ## 2026-10-02
 
+### AI 短劇概念片：五個故事的 Z-Image 候選圖流程（離線完成，尚未生圖）
+
+- **為什麼**：要先驗證「這五個故事視覺化之後值不值得繼續做」，所以只做劇本 → Scene → Z-Image 候選 → **人工審核** →
+  Approved Master Image，到這裡停；不碰 H3、影片、FFmpeg。AI 不挑「最好的一張」，只做技術執行與記錄，挑圖是人的事。
+- **資料不是程式**：`projects/ai_short_drama/visual_bible.json`（風格、9:16 720×1280、steps 8／cfg 2.0、A/B/C/D 構圖規則、
+  審核清單）與 `story_*/story.json`（Character Bible、7 個 Scene：劇情、台詞、字幕、畫面文字、光線、A/B 兩種構圖）。
+  五個故事 × 7 Scene = 35 Scene，第一輪 A/B 兩張 = 70 條 prompt，已展開在各故事的 `prompts.json`，**生圖前就能讀、能改**。
+- **`training/concept_stills.py`**（`init`／`prompts`／`generate`／`index`／`sheet`／`review`／`status`）：prompt 走
+  `_build_prompt_and_negative`、圖走固定的 `build_zimage_txt2img_workflow`，所以年齡安全負面詞與 cfg 下限 1.5 跟其他路徑
+  一樣、關不掉。每張圖旁邊存 `candidate_NN.json`（story/scene/candidate id、prompt、negative、seed、寬高、steps、cfg、
+  model、workflow 樣板 sha256、時間）與 `candidate_NN.workflow.json`（填好的節點圖），可以重生同一張。
+  seed = `seed_base + scene×10 + 候選編號`，A/B 只差構圖。
+- **狀態機**：`NO_CANDIDATES → CANDIDATES_READY → HUMAN_REVIEW → APPROVED | REGENERATE`。C/D 只有在該 Scene 被判
+  `REGENERATE` 之後才允許生成；`APPROVED` 的 Scene 不能 `--force` 覆蓋；`review --approve` 才會複製出 `master.png`。
+  `sheet` 產生 `review_sheet.html`（候選並排、畫面文字要核對的字、審核清單、Image→Video 風險問題）。
+- **刻意的取捨**：
+  - 使用者的「no illustration / no anime / no cartoon」放在**負面詞**，不放正面詞（Z-Image 會把正面詞裡的字畫出來，
+    之前 `taeoh` 被畫成咖啡機上的字樣就是這個原因）。
+  - 夜景不寫 extremely dark，每個 Scene 的 `lighting` 都指定一個合理光源與看得清楚的背景。
+  - 群像／雙胞胎／空月台的 Scene 會關掉單人負面詞（`solo`／`negative_extra`），有畫面文字的 Scene 關掉 `text` 負面詞。
+  - 劇本沒給外觀的角色（《不要回答》的陳先生、《第七個人》六人與第七人、《這次，我不救你》的兇手、《另一個我》的服裝）
+    是我補的設定，已在 story.json 標明「請確認」。
+- **測試**：`tests/test_concept_stills.py` 23 個，涵蓋 5×7 結構、70 張第一輪、seed 規則、每張候選都帶年齡安全負面詞、
+  Character Bible 原文進每個 Scene、雙胞胎描述一致、狀態機與 metadata 可重建。整套 2965 passed。
+  測試中抓到一個真的 bug：`"" in "ABCD"` 為真，`--approve 9` 會被當成合法候選。
+- **還沒做**：沒有生過任何一張圖。實機生成要先確認用本機 RTX 2070 還是 Colab（Z-Image worker 也還沒實機驗收）。
+
 ### 儲存規則：模型與生成結果存 Google Drive，Colab 只放中間過程（離線完成，尚未實機驗證）
 
 - **為什麼**：你定的規則——下載的模型存 Drive、生成的檔案存 Drive、Colab 上只有運算過程。平台本來就朝這個方向做，

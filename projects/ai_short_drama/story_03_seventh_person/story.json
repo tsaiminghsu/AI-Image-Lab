@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "story_id": "story_03_seventh_person",
+  "number": 3,
+  "title": "The Seventh Person",
+  "title_zh": "《第七個人》",
+  "genre": "生存規則 / 密室 / 心理懸疑",
+  "hook": "房間裡只有六個人，但規則說不能尋找第七個人。",
+  "seed_base": 3000000,
+  "characters": {
+    "six": {
+      "label": "六個陌生人（劇本未給外觀，此為補充設定，請確認）",
+      "description": "six adult strangers aged 28 to 55 strapped to six metal chairs around a steel table: a balding man in his mid 40s with glasses and a grey sweater, a woman in her late 20s with a ponytail and a white shirt, an athletic man in his early 30s in a dark hoodie, a woman in her mid 50s with short grey hair and a navy cardigan, a thin man in his late 20s with a buzz cut and an olive T-shirt, a bearded man in his late 30s in a checked flannel shirt"
+    },
+    "seventh": {
+      "label": "第七個人（補充設定）",
+      "description": "a seventh man in his 30s, tall, pale, short dark hair, plain white shirt and dark trousers, an unnervingly calm expression"
+    }
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "六個陌生人在密室醒來",
+      "beat_zh": "六個陌生人同時在密室醒來。所有人被固定在椅子上。牆壁：只有一個人可以離開。",
+      "characters": ["six"],
+      "action": "Six strangers wake up at the same moment, groggy and frightened, each strapped by leather straps at the wrists to a metal chair around a steel table; one is lifting his head, another is pulling at the strap.",
+      "setting": "a windowless bare concrete room, a long steel table with six metal chairs, an industrial ceiling lamp, a large dark one-way glass panel on one wall, a bold message painted on the far wall",
+      "lighting": "cold overhead fluorescent light evenly lighting the whole room, every face and the wall readable",
+      "on_screen_text": "the far wall has black painted lettering: \"只有一個人可以離開\"",
+      "solo": false,
+      "compositions": {
+        "A": "high wide shot from a corner of the room, all six people visible around the table, the painted wall at the back",
+        "B": "eye-level shot from the end of the table, three faces in sharp focus waking in fear in the foreground, the painted wall legible behind them"
+      }
+    },
+    {
+      "scene": 2,
+      "title": "牆上出現三條規則",
+      "beat_zh": "牆壁出現 RULE 01 不要說謊。RULE 02 不要離開座位。RULE 03 不要尋找第七個人。",
+      "characters": ["six"],
+      "action": "The six strapped strangers stare up in silence at the wall where three rules are now written, their faces tense and afraid.",
+      "setting": "the same windowless concrete room with a steel table, six metal chairs and a dark glass panel, a wall of painted rules facing them",
+      "lighting": "cold overhead fluorescent light, a faint glow on the wall text, all faces and the wall readable",
+      "on_screen_text": "the wall shows three lines of large white painted text: \"RULE 01 不要說謊\", \"RULE 02 不要離開座位\", \"RULE 03 不要尋找第七個人\"",
+      "solo": false,
+      "compositions": {
+        "A": "wide shot from behind the six people, their heads and shoulders in the lower frame, the wall of three rules large and legible in front of them",
+        "B": "shot from the side of the wall, the three lines of text in the foreground and the six frightened faces looking up in the middle distance"
+      }
+    },
+    {
+      "scene": 3,
+      "title": "燈光熄滅：誰已經死過一次？",
+      "beat_zh": "燈光熄滅。機械聲：誰已經死過一次？",
+      "dialogue": ["機械聲：誰已經死過一次？"],
+      "characters": ["six"],
+      "action": "The main lights have gone out and the six strapped strangers sit rigid in the dim room, eyes wide, looking up toward a small ceiling speaker.",
+      "setting": "the same windowless concrete room with the steel table and six chairs, a small speaker grille on the ceiling",
+      "lighting": "main lights off, the room lit by a small red indicator light on the ceiling speaker and a dim emergency lamp, the faces and table still clearly visible in a dim red-orange glow",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "wide high shot of the room in dim red light, all six people visible around the table, the glowing red speaker at the top of the frame",
+        "B": "medium shot from table level, three frightened faces in the red glow looking upward, the speaker's red light in the soft-focus background"
+      }
+    },
+    {
+      "scene": 4,
+      "title": "燈光亮起，桌上出現一把刀",
+      "beat_zh": "燈光亮起。桌面出現一把刀。六人恐懼。",
+      "characters": ["six"],
+      "action": "The lights are back on and a single kitchen knife now lies in the middle of the steel table; the six strapped strangers stare at it in terror.",
+      "setting": "the same windowless concrete room, steel table with one knife in the centre, six metal chairs, dark glass panel on the wall",
+      "lighting": "cold overhead fluorescent light, a sharp highlight on the steel table and the knife blade, all faces readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "high angle shot looking down at the table, the knife in the centre and the six frightened faces around it",
+        "B": "low angle at table level, the knife sharp in the foreground and three terrified faces out of focus behind it"
+      }
+    },
+    {
+      "scene": 5,
+      "title": "一二三四五六……我們不是六個人",
+      "beat_zh": "一名男人開始數人數。一、二、三、四、五、六……他突然停下。我們不是六個人。",
+      "dialogue": ["男人：一、二、三、四、五、六……", "男人：我們不是六個人。"],
+      "characters": ["six"],
+      "action": "The thin man in the olive T-shirt, strapped to his chair, turns his head slowly counting the people around the table with his eyes; his mouth is open and his face has gone white with sudden realisation while the others look at him.",
+      "setting": "the same windowless concrete room, steel table and metal chairs",
+      "lighting": "cold overhead fluorescent light, his face clearly lit, the others readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot from across the table, the thin man in sharp focus at the centre, two or three of the others looking at him on either side",
+        "B": "close-up of the thin man's horrified face, his wide eyes fixed on something off to the side, the other strapped people blurred behind him"
+      }
+    },
+    {
+      "scene": 6,
+      "title": "玻璃反射中出現七個人",
+      "beat_zh": "玻璃反射中出現七個人。現實中只有六個。",
+      "characters": ["six"],
+      "action": "The six strapped strangers sit around the table and look toward a large dark glass panel on the wall; in the reflection in the glass there are seven people around the table, one more than in the room.",
+      "setting": "the same windowless concrete room, the large dark glass panel acting as a mirror, the steel table and chairs",
+      "lighting": "cold overhead fluorescent light, the glass reflecting the room clearly, all details readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "wide shot with the glass panel filling the right half of the frame, six people in the room at the left and seven people in the reflection",
+        "B": "close view of the glass panel, the reflection showing seven people seated and standing around the table, two of the real people's backs at the edge of the frame"
+      },
+      "video_note": "Counting people in a reflection is hard for the model; judge by whether the 'extra' figure reads clearly."
+    },
+    {
+      "scene": 7,
+      "title": "第七個人抬頭微笑：ROUND ONE",
+      "beat_zh": "第七個人站在六人之間。慢慢抬頭。對鏡頭微笑。機械聲：ROUND ONE.",
+      "dialogue": ["機械聲：ROUND ONE."],
+      "characters": ["six", "seventh"],
+      "action": "The seventh man stands calmly among the six strapped strangers, who stare ahead in terror; he slowly lifts his head and smiles directly into the camera.",
+      "setting": "the same windowless concrete room, steel table and chairs, a wall-mounted LED display above the dark glass panel",
+      "lighting": "cold overhead fluorescent light on all seven figures, a red glow from the LED display, faces readable",
+      "on_screen_text": "the wall-mounted LED display glows red with the text \"ROUND ONE\"",
+      "solo": false,
+      "compositions": {
+        "A": "wide frontal shot, the seventh man standing in the centre between the six seated people, looking up at the camera with a faint smile, the LED display behind him",
+        "B": "medium close-up of the seventh man's smiling face in the centre, two of the strapped people blurred on either side in the foreground"
+      }
+    }
+  ]
+}

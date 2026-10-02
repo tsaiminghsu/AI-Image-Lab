@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "story_id": "story_02_do_not_answer",
+  "number": 2,
+  "title": "Do Not Answer",
+  "title_zh": "《不要回答》",
+  "genre": "AI / 科技懸疑 / 心理驚悚",
+  "hook": "AI 可以預測明天誰會死亡，但從來不告訴他原因。",
+  "seed_base": 2000000,
+  "characters": {
+    "lead": {
+      "label": "男主（AI 工程師）",
+      "description": "an Asian male AI engineer in his early 30s, short black hair, thin glasses, lean build, dark casual shirt, slightly tired appearance, intelligent but anxious expression"
+    },
+    "chen": {
+      "label": "陳先生（劇本未給外觀，此為補充設定，請確認）",
+      "description": "an Asian man in his late 50s, short grey hair, kind tired face, beige windbreaker over a light blue shirt"
+    }
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "螢幕顯示陳先生將於明天 09:13 死亡",
+      "beat_zh": "深夜。AI 工程師坐在現代家庭辦公室。電腦螢幕顯示：陳先生將於明天 09:13 死亡。",
+      "characters": ["lead"],
+      "action": "The engineer sits at his desk late at night, leaning slightly toward a large computer monitor, his face lit by the screen, reading a short message on it with a stunned, anxious expression.",
+      "setting": "modern home office, a desk with two monitors and a keyboard, a bookshelf with books and a small plant, a window showing distant city lights",
+      "lighting": "cool monitor glow on his face and glasses, a warm desk lamp on the desk, soft city light from the window, bookshelf and room details readable",
+      "on_screen_text": "the large monitor shows a single line of white text on a dark interface: \"陳先生將於明天 09:13 死亡\"",
+      "solo": true,
+      "compositions": {
+        "A": "medium shot from the side, the engineer at the right, the monitor with its text facing the camera at the left, the office around them",
+        "B": "over-the-shoulder shot from behind the engineer, the monitor and its message filling the centre of the frame, his tense profile at the edge"
+      }
+    },
+    {
+      "scene": 2,
+      "title": "你怎麼知道？因為你問過我",
+      "beat_zh": "男主問 AI：你怎麼知道？AI：因為你問過我。畫面顯示：CONVERSATION NOT FOUND。",
+      "dialogue": ["男主：你怎麼知道？", "AI：因為你問過我。"],
+      "characters": ["lead"],
+      "action": "The engineer leans forward with both hands on the keyboard, staring at the screen in confusion and rising fear.",
+      "setting": "the same modern home office, two monitors, keyboard, bookshelf, window with city lights",
+      "lighting": "cool monitor glow on his face and glasses, warm desk lamp, soft city light, room details readable",
+      "on_screen_text": "the monitor shows a bold red error message on a dark interface: \"CONVERSATION NOT FOUND\"",
+      "solo": true,
+      "compositions": {
+        "A": "medium shot from the front-left, the engineer leaning toward the monitor, the red error text readable on the screen beside him",
+        "B": "close-up of the monitor with the red error text, the engineer's worried face and glasses reflecting the screen in the foreground"
+      }
+    },
+    {
+      "scene": 3,
+      "title": "隔天，男主阻止陳先生出門",
+      "beat_zh": "隔天。男主衝到陳先生家。阻止他出門。",
+      "characters": ["lead", "chen"],
+      "action": "Early in the morning the engineer stands in an apartment doorway, out of breath, gripping the arm of Mr. Chen to stop him from leaving; Mr. Chen looks bewildered, his briefcase in his other hand.",
+      "setting": "an ordinary apartment entrance, a shoe cabinet, a coat hook, an open front door with a bright corridor behind",
+      "lighting": "bright morning daylight from the corridor window, a warm hallway lamp, clear detail",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot from inside the apartment, both men in the doorway, the engineer at the left holding Mr. Chen's arm",
+        "B": "close two-shot of the engineer's desperate face and Mr. Chen's puzzled face, hands on the arm in the lower frame"
+      }
+    },
+    {
+      "scene": 4,
+      "title": "09:13，什麼都沒有發生",
+      "beat_zh": "09:13。什麼都沒有發生。男主以為自己成功阻止死亡。AI：預測修正。",
+      "characters": ["lead", "chen"],
+      "action": "Inside the apartment living room the engineer exhales in relief with a tired smile, one hand on the back of a chair, while Mr. Chen sits at the table with a cup of tea, puzzled but unharmed. An analog wall clock on the wall behind them is clearly visible.",
+      "setting": "a tidy apartment living room, a dining table with a teapot and cups, a sofa, a wall clock",
+      "lighting": "soft morning daylight through a window, warm and calm, every detail readable",
+      "on_screen_text": "the analog wall clock shows 9:13",
+      "solo": false,
+      "compositions": {
+        "A": "wide medium shot of the room, the wall clock at the upper centre, Mr. Chen seated at the table and the engineer standing at the left",
+        "B": "medium close-up of the engineer's relieved face with the wall clock showing 9:13 in the soft-focus background"
+      }
+    },
+    {
+      "scene": 5,
+      "title": "DEATH PREDICTION  SUBJECT: YOU",
+      "beat_zh": "螢幕顯示 DEATH PREDICTION  SUBJECT: YOU。",
+      "characters": ["lead"],
+      "action": "Back at his desk the engineer sits stiffly in front of the monitor, his face pale with shock, reading the new message.",
+      "setting": "the same modern home office, two monitors, bookshelf, window with city lights in the evening",
+      "lighting": "cool monitor glow on his pale face, warm desk lamp, dusk light from the window, room details readable",
+      "on_screen_text": "the monitor shows two lines of white text on a dark interface: \"DEATH PREDICTION\" and below it \"SUBJECT: YOU\"",
+      "solo": true,
+      "compositions": {
+        "A": "medium shot from the side, the engineer at the right, the monitor with its two lines of text facing the camera at the left",
+        "B": "over-the-shoulder shot from behind him, the screen's two lines of text sharp and large, his rigid shoulders and the back of his head in the foreground"
+      }
+    },
+    {
+      "scene": 6,
+      "title": "窗戶倒影中出現另一個自己",
+      "beat_zh": "男主看向窗戶。倒影中出現另一個自己。",
+      "characters": ["lead"],
+      "action": "The engineer turns his head toward the window and freezes. In the dark window glass his reflection shows a second identical man standing right behind him, although only one man is in the room.",
+      "setting": "the same modern home office at night, a large window acting as a mirror, desk with monitors and a lamp",
+      "lighting": "the lit room reflected clearly in the dark window glass, warm desk lamp and cool monitor glow, reflections and room details readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot from the side, the engineer at the left looking toward the window, the window glass at the right clearly showing the reflection of two men",
+        "B": "close view of the window glass dominating the frame, the reflection of the engineer with an identical second man just behind his shoulder"
+      },
+      "video_note": "Reflection tricks are likely to confuse the model; check which candidate reads as 'two people in the glass, one in the room'."
+    },
+    {
+      "scene": 7,
+      "title": "不要回頭",
+      "beat_zh": "AI：不要回頭。男主僵住。AI：你已經回頭過很多次了。",
+      "dialogue": ["AI：不要回頭。", "AI：你已經回頭過很多次了。"],
+      "characters": ["lead"],
+      "action": "The engineer sits frozen at his desk, staring straight ahead at the monitor, every muscle tense, sweat on his forehead, afraid to turn around.",
+      "setting": "the same modern home office at night, desk with monitors, a dark window behind him",
+      "lighting": "cool monitor glow on his face, warm desk lamp, a faint reflection of the room in the window, details readable",
+      "on_screen_text": "the monitor shows a chat window with a single line of white text: \"不要回頭\"",
+      "solo": true,
+      "compositions": {
+        "A": "medium shot from slightly behind and to the side, the engineer and the monitor with its single line of text, the dark window at the edge",
+        "B": "tight close-up of his frozen face in profile lit by the screen, the monitor's text just readable beyond him"
+      }
+    }
+  ]
+}

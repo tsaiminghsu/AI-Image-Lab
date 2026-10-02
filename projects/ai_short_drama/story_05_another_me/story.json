@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "story_id": "story_05_another_me",
+  "number": 5,
+  "title": "Another Me",
+  "title_zh": "《另一個我》",
+  "genre": "平行世界 / 科幻 / 懸疑",
+  "hook": "他在地鐵遇到另一個自己，而對方只說：「你還有十一分鐘。」",
+  "seed_base": 5000000,
+  "characters": {
+    "lead": {
+      "label": "男主（劇本只規定兩人 same face / age / hairstyle / clothing / body proportions，外觀為補充設定，請確認）",
+      "description": "an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance"
+    },
+    "double": {
+      "label": "另一個自己（與男主完全相同，只有表情與行為不同）",
+      "description": "his exact double: the same man twice, an Asian man in his late 20s, the same face, the same age, the same short black hair, the same dark green utility jacket over a white T-shirt, the same body proportions, only a calmer and more tired expression"
+    }
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "夜晚地鐵，對面坐著另一個自己",
+      "beat_zh": "夜晚地鐵。男主抬頭。看到另一個與自己完全一樣的人坐在對面。",
+      "characters": ["lead", "double"],
+      "action": "Two identical men sit facing each other across the aisle of a late-night subway carriage: the man has just looked up and stares in shock, while his exact double sits opposite him, calm and watching him.",
+      "setting": "a modern subway carriage at night, blue and grey seats, handrails, a nearly empty carriage with one or two blurred passengers far down the aisle, dark tunnel windows",
+      "lighting": "bright even carriage fluorescent light, the dark tunnel window reflections, every face and detail readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "wide shot down the carriage along the aisle, the two identical men facing each other left and right in the middle of the frame",
+        "B": "over-the-shoulder shot from behind the first man's shoulder at the left, the double sitting opposite in sharp focus in the centre"
+      },
+      "video_note": "Two identical faces in one frame is the hardest case for identity drift."
+    },
+    {
+      "scene": 2,
+      "title": "不要說話。你還有十一分鐘。",
+      "beat_zh": "另一個自己：不要說話。你還有十一分鐘。",
+      "dialogue": ["另一個自己：不要說話。", "另一個自己：你還有十一分鐘。"],
+      "characters": ["lead", "double"],
+      "action": "The double leans slightly forward in his seat with one finger raised to his lips in a silent gesture, staring intently at the man opposite, whose shoulder and tense face are at the edge of the frame.",
+      "setting": "the same modern subway carriage at night, blue and grey seats, handrails, dark tunnel windows",
+      "lighting": "bright even carriage fluorescent light, clear detail",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot, the double centred and in focus with his finger at his lips, the man's shoulder and profile in the left foreground",
+        "B": "close two-shot across the aisle, the double's finger-to-lips gesture sharp and the man's anxious eyes watching him"
+      }
+    },
+    {
+      "scene": 3,
+      "title": "第三個隧道後，不要看窗外",
+      "beat_zh": "另一個自己：列車進入第三個隧道後，不要看窗外。",
+      "dialogue": ["另一個自己：列車進入第三個隧道後，不要看窗外。"],
+      "characters": ["lead", "double"],
+      "action": "The double speaks quietly with a glance toward the dark tunnel window, as if warning the man not to look at it; the man listens, tense, his hands gripping his knees.",
+      "setting": "the same modern subway carriage at night, tunnel windows showing the dark rushing tunnel wall",
+      "lighting": "bright even carriage fluorescent light, window reflections, clear detail",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "wide shot across the aisle, both men visible, the double glancing at the window at the right of the frame",
+        "B": "close-up of the man's uneasy eyes in the foreground, the double and the dark window softly visible behind him"
+      }
+    },
+    {
+      "scene": 4,
+      "title": "倒影裡所有乘客都沒有臉",
+      "beat_zh": "列車進入隧道。男主忍不住看向窗戶。倒影裡：所有乘客都沒有臉。",
+      "characters": ["lead"],
+      "action": "The man turns to look at the dark window and freezes. In the glass his reflection shows the other passengers seated behind him with smooth blank skin where their faces should be, no eyes and no mouths, while the carriage itself looks normal.",
+      "setting": "a modern subway carriage at night inside a tunnel, several passengers seated in a row behind him, the window as a dark mirror",
+      "lighting": "carriage fluorescent light reflected clearly in the dark window glass, reflections readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot with the man at the left looking at the window, the window glass at the right showing his reflection and the blank-faced passengers behind him",
+        "B": "close view of the window glass, the man's alarmed reflection in front and the row of faceless passengers behind it"
+      },
+      "video_note": "Faceless passengers in a reflection; judge whether it reads as unsettling rather than as a broken render."
+    },
+    {
+      "scene": 5,
+      "title": "燈光恢復，座位上只剩一支手機",
+      "beat_zh": "燈光恢復。另一個自己消失。座位上只剩一支手機。",
+      "characters": ["lead"],
+      "action": "The man sits alone, looking at the empty seat opposite him where his double was; a single smartphone lies on the blue seat.",
+      "setting": "a modern subway carriage at night, the empty seat opposite him, handrails, tunnel windows",
+      "lighting": "bright even carriage fluorescent light, clear detail",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "wide shot from behind the man's shoulder at the left, the empty seat opposite with the smartphone lying on it in the centre of the frame",
+        "B": "close-up of the smartphone lying on the seat in the foreground, the man's tense face softly visible beyond it"
+      },
+      "video_note": "Camera push to the phone; the empty seat opposite is the motion the double leaves behind."
+    },
+    {
+      "scene": 6,
+      "title": "手機影片：如果你看到這段影片……代表我失敗了",
+      "beat_zh": "手機播放影片。影片中的另一個自己：如果你看到這段影片……代表我失敗了。",
+      "dialogue": ["影片中的另一個自己：如果你看到這段影片……", "影片中的另一個自己：代表我失敗了。"],
+      "characters": ["lead", "double"],
+      "action": "The man holds the smartphone in both hands, watching a video on it; on the screen his double looks straight into the camera, grim and exhausted. The man's face is lit by the screen, pale and horrified.",
+      "setting": "a modern subway carriage at night, blue and grey seats, handrails",
+      "lighting": "bright carriage fluorescent light plus the phone screen's glow on his face, the video image on the screen readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "over-the-shoulder shot from behind the man, the phone screen with his double's face clearly visible in the lower half of the frame",
+        "B": "medium close-up of the man's pale horrified face with the phone raised in front of his chest, the double's face on the screen readable"
+      }
+    },
+    {
+      "scene": 7,
+      "title": "車門打開：門外是另一列完全相同的地鐵",
+      "beat_zh": "列車停下。車門打開。門外不是月台。而是另一列完全相同的地鐵。",
+      "characters": ["lead"],
+      "action": "The train has stopped and the doors are open; the man stands at the doorway and stares out. Instead of a station platform, directly beyond the doors there is another identical subway carriage, the same blue and grey seats, the same lights, the same handrails.",
+      "setting": "a modern subway carriage at night with its doors open, a narrow gap, and an identical carriage facing it across the gap",
+      "lighting": "bright carriage fluorescent light on both sides, a thin dark gap between the two trains, clear detail",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "wide shot from inside the carriage looking out through the open doors at the identical carriage opposite, the man standing at the threshold at the left",
+        "B": "shot from behind the man at the doorway, his silhouette in the foreground and the identical carriage interior sharp in the open doorway ahead of him"
+      }
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "story_id": "story_01_2347",
+  "number": 1,
+  "title": "23:47",
+  "title_zh": "《23:47》",
+  "genre": "時間循環 / 懸疑 / 犯罪",
+  "hook": "每天晚上 23:47，他都會收到一通來自「明天的自己」的電話。",
+  "seed_base": 1000000,
+  "characters": {
+    "lead": {
+      "label": "主角",
+      "description": "an Asian man in his late 20s, short slightly messy black hair, lean build, pale skin, dark charcoal jacket over a black shirt, tired eyes, realistic cinematic appearance"
+    }
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "深夜房間，23:46，手機響起",
+      "beat_zh": "深夜房間。年輕亞洲男性獨自坐在床邊。手機放在桌上。時間 23:46。手機突然響起，來電顯示：ME。",
+      "characters": ["lead"],
+      "action": "The man sits alone on the edge of an unmade bed late at night, staring at a smartphone lying on the wooden desk beside him. The phone screen is lit up with an incoming call. A small digital alarm clock on the desk is clearly visible next to the phone.",
+      "setting": "small modern apartment bedroom, wooden desk, bed with grey sheets, closed curtains, a few books and a mug on the desk, an old cardigan on the chair",
+      "lighting": "warm desk lamp pool of light on the desk and the man's face, soft blue glow from the phone screen, faint city light through the curtains, the whole room and its details readable",
+      "on_screen_text": "the phone screen shows the caller name \"ME\" and the digital alarm clock reads \"23:46\"",
+      "solo": true,
+      "compositions": {
+        "A": "medium wide shot from across the room, the man sitting at the left third of the frame, the desk with the glowing phone on the right",
+        "B": "over-the-shoulder shot from behind the man, the glowing phone with the caller name legible in the foreground and the alarm clock beside it"
+      },
+      "video_note": "Phone rings; subtle vibration of the phone and the man's reaction."
+    },
+    {
+      "scene": 2,
+      "title": "接起電話：不要去車站",
+      "beat_zh": "男主接起電話。電話另一端是與他完全相同的聲音。",
+      "dialogue": ["對方：不要去車站。", "男主：你是誰？", "對方：我就是你。"],
+      "characters": ["lead"],
+      "action": "The man holds the phone to his ear, his eyes wide with shock and disbelief, lips slightly parted as if about to speak. He is still sitting on the edge of the bed.",
+      "setting": "the same small modern apartment bedroom, wooden desk and bed with grey sheets in the background",
+      "lighting": "warm desk lamp light from one side, soft blue phone-screen glow on his cheek, background details still visible",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "medium close-up in profile, the man with the phone at his ear, the lit desk lamp and bed softly visible behind him",
+        "B": "close-up of his face from the front, eyes wide, the glowing call screen visible at the edge of the frame"
+      }
+    },
+    {
+      "scene": 3,
+      "title": "第二天，月台，通話紀錄消失",
+      "beat_zh": "第二天。男主站在現代城市地鐵月台。查看手機。昨晚的通話紀錄消失。",
+      "characters": ["lead"],
+      "action": "The man stands on a modern city subway platform in the daytime, looking down at the phone in his hand with a confused frown, scrolling its empty call history. A few commuters stand out of focus along the platform behind him.",
+      "setting": "modern city subway platform, tiled floor, yellow safety line, tracks and tunnel entrance, a few blurred commuters in the background",
+      "lighting": "bright even fluorescent station lighting with cool daylight spilling in from a stairwell, clear readable detail everywhere",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot from the front, the man at the left third looking down at his phone, the platform and tunnel receding behind him",
+        "B": "close-up over the man's shoulder showing the phone screen with an empty call-history list, his troubled face just visible"
+      }
+    },
+    {
+      "scene": 4,
+      "title": "再次來電：你已經死過十七次了",
+      "beat_zh": "手機再次響起。來電：ME。電話中的自己：你已經死過十七次了。",
+      "dialogue": ["電話中的自己：你已經死過十七次了。"],
+      "characters": ["lead"],
+      "action": "On the subway platform the man holds his ringing phone in front of him and stares at it with fear, the screen showing an incoming call.",
+      "setting": "the same modern city subway platform in the daytime, tiled floor, yellow safety line, tunnel entrance, blurred commuters far behind",
+      "lighting": "bright even fluorescent station lighting, cool daylight from the stairwell, clear detail",
+      "on_screen_text": "the phone screen shows the caller name \"ME\"",
+      "solo": false,
+      "compositions": {
+        "A": "medium shot, the man centred, holding the lit phone at chest height, the platform behind him",
+        "B": "tight close-up from over the shoulder, the phone screen with the caller name sharp in the foreground and his frightened face softly out of focus behind it"
+      }
+    },
+    {
+      "scene": 5,
+      "title": "月台另一端：一個完全一樣的人",
+      "beat_zh": "月台另一端。男主看見一個與自己完全一樣的人。兩人隔著人群對視。",
+      "characters": ["lead"],
+      "action": "Two identical men stare at each other across a busy subway platform: the man stands in the foreground at the left, and at the far end of the platform stands his exact double, the same man twice with the same face, the same haircut and the same dark charcoal jacket over a black shirt. Commuters pass between them.",
+      "setting": "modern city subway platform in the daytime, tiled floor, yellow safety line, a stream of commuters walking between the two men",
+      "lighting": "bright even fluorescent station lighting, clear detail, both men's faces readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "wide shot along the length of the platform, the man in the left foreground, his double small but sharp at the far end, commuters between them",
+        "B": "the man's point of view: blurred commuter silhouettes in the foreground and his double standing in the centre of the frame, sharp, staring straight at the camera"
+      },
+      "video_note": "Two identical faces in one frame is the hardest case for identity drift."
+    },
+    {
+      "scene": 6,
+      "title": "不要讓他看見你，另一個自己消失",
+      "beat_zh": "男主再次接到電話。電話中的自己：不要讓他看見你。男主抬頭。另一個自己突然消失。",
+      "dialogue": ["電話中的自己：不要讓他看見你。"],
+      "characters": ["lead"],
+      "action": "The man holds the phone to his ear and looks up with alarm toward the far end of the platform, where his double still stands, small and slightly out of focus, between commuters.",
+      "setting": "modern city subway platform in the daytime, tiled floor, yellow safety line, commuters in the middle distance",
+      "lighting": "bright even fluorescent station lighting, clear detail",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "medium close-up of the man at the right of the frame, phone at his ear, looking up and to the left, the platform and his tiny double in the background",
+        "B": "close-up on his alarmed face and upturned eyes, the far platform end with the standing double blurred behind him"
+      },
+      "video_note": "First frame keeps the double visible; the vanishing is the motion H3 has to make."
+    },
+    {
+      "scene": 7,
+      "title": "空蕩月台，23:46 跳到 23:47",
+      "beat_zh": "空蕩月台。電子鐘 23:46，時間跳到 23:47。字幕：第十八次，開始。",
+      "subtitle": "第十八次，開始。",
+      "characters": [],
+      "action": "An empty subway platform late at night with nobody on it, a large electronic clock sign hanging above the platform clearly showing the time.",
+      "setting": "modern city subway platform at night, tiled floor with reflections, yellow safety line, empty tracks and tunnel mouth, an overhead electronic clock sign",
+      "lighting": "all platform fluorescent lights switched on, light reflecting off the polished tiles, the clock sign glowing red, tunnel lit by distant signal lights, every detail readable",
+      "on_screen_text": "the electronic clock sign reads \"23:46\"",
+      "solo": false,
+      "negative_extra": "people, person, crowd",
+      "compositions": {
+        "A": "wide symmetrical shot down the empty platform, the clock sign at the top centre, the tunnel mouth at the far end",
+        "B": "low angle looking up at the glowing clock sign with the lit platform ceiling and tracks around it"
+      },
+      "video_note": "The master shows 23:46; the jump to 23:47 happens in the video (or as a clock overlay)."
+    }
+  ]
+}

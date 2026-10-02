@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "story_id": "story_04_i_wont_save_you",
+  "number": 4,
+  "title": "I Won't Save You This Time",
+  "title_zh": "《這次，我不救你》",
+  "genre": "重生 / 復仇 / 情感懸疑",
+  "hook": "上一世，他為了救她而死；重生後，他決定第一次看著她死去。",
+  "seed_base": 4000000,
+  "characters": {
+    "lead": {
+      "label": "男主",
+      "description": "an Asian man in his late 20s, short black hair, lean build, dark casual jacket, emotionally restrained expression"
+    },
+    "heroine": {
+      "label": "女主",
+      "description": "an Asian woman in her late 20s, long dark hair, soft facial features, beige coat, expressive eyes"
+    },
+    "killer": {
+      "label": "兇手（劇本未給外觀，此為補充設定，請確認）",
+      "description": "a tall man in his 40s in a black raincoat, face half in shadow, blank cold expression"
+    }
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "暴雨，女主倒在街道",
+      "beat_zh": "暴雨。女主倒在街道。男主抱著她。",
+      "characters": ["lead", "heroine"],
+      "action": "In heavy rain the woman lies motionless on the wet street with her eyes closed, her beige coat soaked by the rain, while the man kneels beside her cradling her head and shoulders, soaked and desperate, shouting for help.",
+      "setting": "a city street at night in a downpour, wet asphalt, a crosswalk, shop signs, parked cars, rain streaks in the air",
+      "lighting": "streetlights and shop signs reflecting on the wet asphalt, warm and cool light mixed, glowing car headlights in the distance, faces and the street readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "wide medium shot from slightly above, the couple in the centre of the rainy street with the glowing shop lights around them",
+        "B": "close shot of the man's anguished wet face looking down at the woman's face resting on his arm, rain falling in the foreground"
+      }
+    },
+    {
+      "scene": 2,
+      "title": "從床上醒來，回到三年前",
+      "beat_zh": "男主突然從床上醒來。發現自己回到三年前。",
+      "characters": ["lead"],
+      "action": "The man bolts upright in bed, gasping, eyes wide, one hand on his chest, disoriented as if waking from a nightmare; an older model smartphone lies on the bedside table.",
+      "setting": "a modest apartment bedroom, rumpled sheets, a bedside table with an older smartphone and a glass of water, a window with curtains",
+      "lighting": "soft cool morning daylight through the curtains, a gentle glow on his face, room details readable",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "medium wide shot from the foot of the bed, the man sitting up in the centre, the window and bedside table around him",
+        "B": "close-up of his startled face and heaving shoulders, the bedside phone soft in the corner of the frame"
+      }
+    },
+    {
+      "scene": 3,
+      "title": "訊息：今晚 21:30，她會死",
+      "beat_zh": "手機收到訊息：今晚 21:30，她會死。",
+      "characters": ["lead"],
+      "action": "The man sits on the edge of the bed holding his smartphone in both hands, reading the message on its screen with a pale, tense face.",
+      "setting": "the same modest apartment bedroom, rumpled bed, curtains, bedside table",
+      "lighting": "soft daylight from the window, the phone screen's glow on his face, readable details",
+      "on_screen_text": "the phone screen shows a text message bubble reading \"今晚 21:30，她會死。\"",
+      "solo": true,
+      "compositions": {
+        "A": "medium shot from the front, the man seated at the bed's edge holding the phone, the message legible on the screen",
+        "B": "over-the-shoulder shot with the phone screen and its message sharp in the lower half of the frame and his tense jaw above"
+      }
+    },
+    {
+      "scene": 4,
+      "title": "你能來接我嗎？不了。",
+      "beat_zh": "女主打電話：你能來接我嗎？男主：不了。",
+      "dialogue": ["女主：你能來接我嗎？", "男主：不了。"],
+      "characters": ["lead"],
+      "action": "The man stands by the window with the phone at his ear, answering with a cold, restrained expression, eyes looking away from the phone, one hand gripping the window frame.",
+      "setting": "a modest apartment living room by a window at dusk, a sofa and a table with a lamp, city rooftops outside",
+      "lighting": "warm lamp light inside, dusk blue light through the window, soft orange sunset glow on his face, details readable",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "medium shot from the side, the man at the left by the window with the phone at his ear, the dusk skyline beyond",
+        "B": "close-up of his controlled, tight-jawed face in profile with the phone at his ear, the window light behind"
+      }
+    },
+    {
+      "scene": 5,
+      "title": "21:29，這一次，我不救你",
+      "beat_zh": "男主獨坐房間。牆上時鐘：21:29。他告訴自己：這一次，我不救你。",
+      "subtitle": "這一次，我不救你。",
+      "characters": ["lead"],
+      "action": "The man sits alone on a sofa with his elbows on his knees, staring at the floor with a hardened, haunted expression; an analog wall clock behind him is clearly visible.",
+      "setting": "a modest apartment living room at night, a sofa, a coffee table with a closed laptop, a wall clock above a shelf, a window with city lights",
+      "lighting": "a single warm lamp beside the sofa lighting his face and the room, cool city light from the window, the clock and room details readable",
+      "on_screen_text": "the analog wall clock shows 9:29",
+      "solo": true,
+      "compositions": {
+        "A": "wide medium shot of the room, the man on the sofa at the left, the wall clock at the upper right",
+        "B": "medium close-up of his face with the wall clock in the soft-focus background showing 9:29"
+      }
+    },
+    {
+      "scene": 6,
+      "title": "21:30，手機收到一張照片：她還活著",
+      "beat_zh": "21:30。手機收到一張照片。女主還活著。",
+      "characters": ["lead", "heroine"],
+      "action": "The man looks at his phone, which has just received a photo; on the screen the woman in a beige coat stands under a streetlight at night, alive and smiling softly. His eyes are wide with shock.",
+      "setting": "a modest apartment living room at night, sofa and lamp, the phone in his hand",
+      "lighting": "warm lamp light and the phone screen glow on his face, the photo on the screen clear and readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "over-the-shoulder shot from behind the man, the phone screen with the woman's photo clearly visible, his tense profile at the edge",
+        "B": "medium close-up of his stunned face, the phone in the lower foreground with the smiling woman's photo readable on the screen"
+      },
+      "video_note": "The woman appears only as a photo on a phone screen here; her face on the screen is small."
+    },
+    {
+      "scene": 7,
+      "title": "放大照片：她身後站著殺死他的兇手",
+      "beat_zh": "男主放大照片。女主身後站著一個男人。那是上一世殺死他的兇手。字幕：原來，死的從來不是她。",
+      "subtitle": "原來，死的從來不是她。",
+      "characters": ["lead", "heroine", "killer"],
+      "action": "The man zooms in on the photo on his phone: behind the smiling woman in the beige coat stands a tall man in a black raincoat, his face half in shadow, staring toward the camera. The man holding the phone looks at it with dawning horror.",
+      "setting": "a modest apartment living room at night, the phone held close",
+      "lighting": "the bright phone screen lighting his face from below, a warm lamp in the background, the zoomed photo clear and readable",
+      "on_screen_text": "",
+      "solo": false,
+      "compositions": {
+        "A": "macro shot of the phone screen showing the woman and the man in the black raincoat standing behind her, the man's blurred horrified face reflected in the dark glass around it",
+        "B": "medium close-up of the man's wide-eyed face with the phone raised in front of his chest, the photo of the two people on the screen readable"
+      }
+    }
+  ]
+}

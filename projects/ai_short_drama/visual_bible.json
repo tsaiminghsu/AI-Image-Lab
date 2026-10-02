@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "stage": "concept stills for human review - no video, no H3, no FFmpeg",
+  "model": "z_image_turbo",
+  "workflow": "training/workflow_template_txt2img_zimage.json",
+  "canvas": {
+    "aspect": "9:16",
+    "width": 720,
+    "height": 1280,
+    "note": "Vertical short-drama frame (same as training/drama.py). About 0.9 MP, the same pixel count the local card already handles at 1024x1024. H3 takes the image's own aspect ratio, so the master keeps this shape."
+  },
+  "sampler": {"steps": 8, "cfg": 2.0},
+  "style_positive": "realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+  "style_negative_extra": "anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+  "style_note": "The user's 'no illustration / no anime / no cartoon' list lives in the negative prompt on purpose: written into a positive prompt, Z-Image tends to paint the words it is told to avoid.",
+  "lighting_rule": "Master images keep information first. A night scene is lit by a plausible light source (lamp, screen glow, platform lights, street lights, rain reflections) with a readable background, never 'extremely dark'. Day / Sunset / Night variants come later, from the approved master.",
+  "composition_rule": "Candidate A = cinematic composition, B = narrative composition (what the story information needs to read). Same character, location, costume, lighting and story information in both - only the framing differs. Candidates C / D are only made for a scene whose review says REGENERATE.",
+  "extra_compositions": {
+    "C": "slightly low camera angle, medium shot, the subject and the key story object both in frame",
+    "D": "eye-level medium close-up from a different side than the first two candidates, clean uncluttered background"
+  },
+  "seed_rule": "seed = story.seed_base + scene * 10 + candidate_number (A=1, B=2, C=3, D=4). Reproducing an image needs the same seed AND the same width/height.",
+  "review_checklist": [
+    "story information is clear",
+    "character is consistent",
+    "location is correct",
+    "composition is sound",
+    "light is bright enough to see detail",
+    "suitable for image to video",
+    "no obvious AI artifact"
+  ],
+  "video_potential_questions": [
+    "Will the person deform when animated?",
+    "Are the hands a likely problem?",
+    "Is the background too complicated?",
+    "Is the action easy to describe?",
+    "Is the camera easy to move?"
+  ],
+  "age_rule": "Every person in every story is an adult (the character bibles say so). The tool never drops the project's age-safety negatives or the cfg 1.5 floor."
+}

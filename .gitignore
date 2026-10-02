@@ -73,3 +73,9 @@ secrets/
 # Workflow platform (ai_workflow/): where this machine's Google Drive for desktop put the workspace.
 # The workspace itself (jobs, outputs, models) lives on Google Drive, never in the repo.
 /ai_workflow/configs/local.json
+
+# Concept stills for the AI short-drama pitches (training/concept_stills.py): the specs, prompts and
+# review records are tracked, the rendered images and the review sheet are regenerable.
+/projects/ai_short_drama/**/*.png
+/projects/ai_short_drama/review_sheet.html
+/projects/ai_short_drama/candidate_index.json
