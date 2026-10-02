@@ -91,6 +91,25 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
    deductions land on the next clip (measured 0.95 / 0.00 / 0.56). After a success, it is worth extracting
    a few frames with ffmpeg to look at them (motion quality is not something ffprobe can judge).
 
+## Lessons from the 23:47 batches (2026-10-03; details in README "實戰遇到的問題與做法")
+
+- **Watch the log, not just the exit.** `colab exec` can print `RuntimeError: Connection was lost.` and then sit
+  silent; the runner only gives up after `exec_idle_timeout_seconds` (900 s, about 1.7 CU). In a long batch grep the
+  stderr log for that line and `colab stop` at once. A clip that was lost is not retried without asking (rule 4).
+  A background waiter that times out is not the job ending: read the last JSON line of the stdout file and run
+  `check.py` (`active runtimes 0`).
+- **Estimate with one lost session in it.** A 6-clip, 8 s batch estimated at 3-4 CU cost 6.54. Inside one session an
+  8 s clip is ~315 s of inference and ~0.56 CU; a fresh session adds ~0.9-1.8 CU.
+- **`H3_MODEL_SOURCE=download`** when the user wants the models downloaded instead of copied from Drive (copy was
+  371-535 s, download 172 s); Drive still stores the clips.
+- **Prompts that went wrong:** "camera holds a steady shot" alone did not stop a push-in (use
+  `--constraint locked-camera` if the user wants a locked camera); a number that must change needs "holds, then
+  changes once near the end, which digit" (the plain version gave 46-44-42-47); "commuters walk past between them"
+  turned a passer-by from a man into a woman (keep bystanders in place, keep the gap clear); an object that must
+  disappear has to be in the first frame; text in the frame must already be legible in the first frame.
+- **Off-screen dialogue (a phone voice, `(S2)`) is not verified** - ask the user to listen, or leave it for dubbing.
+- Join clips only after measuring loudness: one batch ranged from -10.6 to -35.1 LUFS.
+
 ## States and error codes
 
 `PENDING → PREPARING → CONNECTING_COLAB → UPLOADING → LOADING_MODEL → INFERENCE → DOWNLOADING → VALIDATING →

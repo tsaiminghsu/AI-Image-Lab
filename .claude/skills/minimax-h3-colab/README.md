@@ -281,6 +281,24 @@ ffprobe 每一條規則、狀態機的每一條失敗路徑（壞圖／缺圖／
   之後的 session 不用再下載和複製進 Drive，預期會省回來，但還沒量。
 - 還沒量到的：第二個 session 從 Drive 複製（`staged`）要多久；沒按同意時（`ephemeral`）的實際行為；長時間 flush 失敗的情況。
 
+## 實戰遇到的問題與做法（2026-10-03，《23:47》八支片段）
+
+| 問題 | 發生了什麼 | 做法 |
+| --- | --- | --- |
+| Docker Desktop 沒開 | `check.py` 回 `[FAIL] transport:docker`；`--dry-run` 只能驗 prompt 與輸入。Agent 不該自己啟動使用者的桌面程式 | 請使用者開 Docker，開好再 `check.py` |
+| 每台新 VM 都要按 Drive 同意 | 一批裡中途換 session（見下）又要按一次；這次第二個 session 沒人按，90 秒後自動送 Enter，掛載仍然成功（可能沿用同一天稍早的授權，沒有保證） | 看到 `DRIVE_CONSENT_NEEDED` 就請使用者按，按完才跑 `consent_done.py`；不要假設一定會成功 |
+| `colab exec` 掉線 | 一批 6 支做完第 4 支後（00:55:32）印出 `RuntimeError: Connection was lost.`，程式空等滿 900 秒才判 `TIMEOUT`、關 session，約 1.7 CU，下一支（Scene 6）沒做；批次自動開第二個 session 做最後一支。第一個 session 的「存到 Drive」那步因為 kernel 忙而被跳過 | 長批次監看 stderr 記錄，看到 `Connection was lost` 就馬上 `colab stop`，不用等 900 秒；掉線的那支要問過使用者再重跑（規則 4），不要自動重試 |
+| 預估 CU 偏低 | 預估 6 支 3–4 CU，實際 6.54（含 1.7 的掉線）。同 session 內每支 8 秒約 315 秒推論、0.56 CU；新 session 的 setup＋模型＋存檔約 0.9–1.8 CU | 報預估時把「掉線一次」算進去；成本只看整批 settle 後的餘額差 |
+| 從 Drive 複製模型比下載慢 | 43 GB：Drive 複製 371–535 秒，HuggingFace 下載 172 秒 | `H3_MODEL_SOURCE=download`（影片照存 Drive）。這位使用者要求用下載 |
+| 說「鏡頭固定」但鏡頭還是推近 | 只寫 "The camera holds a steady shot." 時，Scene 4、6 的人物臉部愈拍愈近 | 使用者要固定鏡頭就加 `--constraint locked-camera`（規則 3：只有使用者要求時才加） |
+| 數字亂跳 | 時鐘 prompt 寫 "change from 23:46 to 23:47" → 46、44、42、47。改成「23:46 穩定維持大部分時間，接近結尾最後一位只變一次，6 變 7」→ 24 格抽樣乾淨 | 要變的數字寫成「先維持、只變一次、哪一位」；結果仍要逐格看 |
+| 路人變身 | prompt 寫 commuters walk past between them → 一個路過的人從男生變成女生 | 想避免就寫「周圍的人留在原位、外觀不變、兩人中間保持淨空」，不要讓人穿過主體 |
+| 首幀沒有的東西做不出來 | 劇本要「另一個自己突然消失」，但首幀 B 裡沒有他，影片只是人物推近 | 首幀要先包含會消失／出現的東西；要換首幀由使用者決定，不替他選 |
+| 畫面文字 | 手機上的「ME」在 Z-Image 首幀就讀不出來，H3 不會讓它變清楚 | 文字要在首幀就清楚，不然後製疊字 |
+| 台詞：畫面外的電話聲 | 用 `(S2)` 標記電話裡的聲音；語音有沒有出來、嘴型對不對**沒有自動檢查** | 請使用者聽；要確定的聲音就留到後製配音 |
+| 背景等待被逾時殺掉 | 用 `until grep ...; do sleep 20; done` 當等待器，設了 55 分鐘 timeout 被系統砍掉，但 job 還在跑 | 等待器結束不等於 job 結束：讀 `.out` 檔最後一行 JSON 和 `check.py` 的 `active runtimes` 才算數 |
+| 8 秒片段的響度差很大 | 同一批 −10.6 到 −35.1 LUFS（空月台只有環境聲） | 接片前先量響度（`ebur128`），做法見 `projects/ai_short_drama/story_01_2347/rough_cut.md` |
+
 ## 實測（2026-09-30，Google AI Pro）
 
 以下是 Drive 路線之前量的（每個 session 都重新下載、不存 Drive）。
