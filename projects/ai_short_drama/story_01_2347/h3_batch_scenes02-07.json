@@ -1,0 +1,95 @@
+{
+  "batch_id": "story01-scenes02-07-B",
+  "jobs": [
+    {
+      "job_id": "s01_sc02_B",
+      "scene_id": "story_01_2347/scene_02",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_02/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The man in the first frame sits on the same bed in his dark charcoal jacket and black shirt, holding the phone to his ear, with the warm desk lamp and the bedside table behind him. His eyes are wide with shock and disbelief. A muffled male voice from the phone (S2) says: <d>[Chinese] 不要去車站。</d> The man (S1) answers with a trembling voice: <d>[Chinese] 你是誰？</d> The voice from the phone (S2), identical to his own, replies: <d>[Chinese] 我就是你。</d> The camera holds a steady shot.",
+        "soundscape": "Quiet night room tone with a faint city hum and the thin, muffled sound of a voice coming through a phone speaker."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene02_B_h3.mp4"
+    },
+    {
+      "job_id": "s01_sc03_B",
+      "scene_id": "story_01_2347/scene_03",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_03/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The man in the first frame stands on the same bright subway platform in his dark charcoal jacket and black shirt, looking down at the phone in his hand. His thumb scrolls the screen and he frowns in confusion, while a few commuters move slowly in the blurred background. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience with distant footsteps, a faint echoing announcement and a train rumbling somewhere in the tunnel."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene03_B_h3.mp4"
+    },
+    {
+      "job_id": "s01_sc04_B",
+      "scene_id": "story_01_2347/scene_04",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_04/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The man in the first frame stands on the same subway platform in his dark charcoal jacket and black shirt, holding the phone whose screen shows an incoming call from ME. The phone rings and he stares at it with fear, then lifts it to his ear. The voice from the phone (S2), identical to his own, says: <d>[Chinese] 你已經死過十七次了。</d> His face drains of colour. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience, a phone ringing and then a thin voice through the phone speaker."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene04_B_h3.mp4"
+    },
+    {
+      "job_id": "s01_sc05_B",
+      "scene_id": "story_01_2347/scene_05",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_05/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The two identical men in the first frame stand on the same busy subway platform in his dark charcoal jacket and black shirt, staring at each other. Commuters walk past between and around them while the two men hold their gaze with tense expressions. The camera holds a steady shot.",
+        "soundscape": "Subway platform murmur of a crowd, many footsteps and a distant train rumble."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene05_B_h3.mp4"
+    },
+    {
+      "job_id": "s01_sc06_B",
+      "scene_id": "story_01_2347/scene_06",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_06/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The man in the first frame holds the phone to his ear on the same subway platform in his dark charcoal jacket and black shirt, wide-eyed. The voice from the phone (S2), identical to his own, says urgently: <d>[Chinese] 不要讓他看見你。</d> He looks up and to the side with alarm, scanning the platform. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience with a crowd murmur and a thin voice through the phone speaker."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene06_B_h3.mp4"
+    },
+    {
+      "job_id": "s01_sc07_B",
+      "scene_id": "story_01_2347/scene_07",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_07/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The same empty subway platform at night, with the glowing red electronic clock sign above the polished tiles and the yellow safety line. Nobody is on the platform. The numbers on the clock sign change from 23:46 to 23:47 while the lights stay on and the platform stays still. The camera holds a steady shot.",
+        "soundscape": "Empty station ambience with a low electrical hum, a faint distant train rumble in the tunnel and a soft click as the clock changes."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene07_B_h3.mp4"
+    }
+  ]
+}

@@ -5,6 +5,27 @@
 
 ## 2026-10-03
 
+### 《23:47》Scene 2–7 的 H3 影片，以及「從 Drive 複製比下載慢」→ 新增 `drive.model_source`
+
+- **第一批**（Scene 2–7、候選 B、各 8 秒、Scene 2/4/6 帶中文台詞，一個 manifest）：5 支完成、Scene 6 `TIMEOUT`。
+  Scene 5 做完後 `colab exec` 回 `Connection was lost`（10-01 那種失敗），等滿 900 秒才判逾時並關掉 session（約 1.7 CU），
+  再自動開第二個 session 做 Scene 7。整批 59.12 → 52.58 = **6.54 CU**（預估 3–4）。同 session 內每支推論約 315 秒、
+  約 0.56 CU、VRAM 峰值 47,690 MiB。
+- **Drive 路線第二個 session 的實測（之前欠的數字）**：五個模型全是 `staged`，但**從 Drive 複製花了 535.5 秒和 371.3 秒**，
+  10-03 第一次直接下載是 171.9 秒。也就是說把模型放 Drive 在時間與 CU 上不划算，好處只剩不依賴 HuggingFace。
+  第二個 session 的 Drive 同意沒有人按，90 秒後自動繼續，掛載仍然成功（同一天稍早按過）。
+- **所以加了 `drive.model_source`**（`drive` 預設／`download`，環境變數 `H3_MODEL_SOURCE`）：Drive 照掛、影片照存 Drive，
+  模型改從釘選 revision 下載並驗 sha256，Drive 已有的檔不再存一次。`drive.mode: off` 做不到這件事，因為它連影片都不存 Drive。
+  測試 +2，整套 2967 passed。
+- **第二批用 `H3_MODEL_SOURCE=download`**（Scene 6 重跑、Scene 5 v2、Scene 7 v2，各 8 秒）：3/3 完成，下載 176.1 秒，
+  session 1345.2 秒，52.58 → 51.43 = **1.15 CU**（settle 120 秒後的讀數；照費率估是 2.53，可能還有延遲扣款）。
+  finalize 只花 8.2 秒（Drive 已有模型，沒有東西要複製）。
+- **兩個修正的結果**（只描述抽格看到的）：Scene 7 v2 每 1/3 秒抽一格共 24 格，23:46 維持到約 6.7 秒，之後是 23:47，
+  沒看到別的數字（v1 是 46 → 44 → 42 → 47）。Scene 5 v2 改成兩人原地轉頭對視、周圍的人留在原位；每秒一格的 9 格裡
+  沒有人從兩人中間橫越，中間背景的路人是背對鏡頭走遠。逐格的人物外觀有沒有變，要看影片確認。
+  Scene 6 鏡頭有往臉推近（prompt 寫的是鏡頭不動），而且首幀裡本來就沒有「另一個自己」，所以消失那一下沒有做出來。
+- 台詞語音沒有做自動檢查。
+
 ### H3 的 Drive 儲存路線：第一個 session 實機跑通（1 支 5 秒，1.13 CU）
 
 - **為什麼**：「模型與生成結果存 Drive」這條路之前只有離線測試。《23:47》1-01 的試影片（`projects/ai_short_drama`，

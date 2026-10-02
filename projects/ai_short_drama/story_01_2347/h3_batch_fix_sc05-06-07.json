@@ -1,0 +1,50 @@
+{
+  "batch_id": "story01-fix-sc06-sc05-sc07",
+  "jobs": [
+    {
+      "job_id": "s01_sc06_B",
+      "scene_id": "story_01_2347/scene_06",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_06/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The man in the first frame holds the phone to his ear on the same subway platform in his dark charcoal jacket and black shirt, wide-eyed. The voice from the phone (S2), identical to his own, says urgently: <d>[Chinese] 不要讓他看見你。</d> He looks up and to the side with alarm, scanning the platform. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience with a crowd murmur and a thin voice through the phone speaker."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene06_B_h3.mp4"
+    },
+    {
+      "job_id": "s01_sc05_B_v2",
+      "scene_id": "story_01_2347/scene_05",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_05/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The two identical men in the first frame stand on the same busy subway platform in his dark charcoal jacket and black shirt, staring at each other with tense expressions. They stay where they are and slowly turn their heads toward each other. The commuters around them remain in their places, each keeping the same appearance and clothing, with only slight natural movement, and the space between the two men stays clear. The camera holds a steady shot.",
+        "soundscape": "Subway platform murmur of a crowd, many footsteps and a distant train rumble."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene05_B_h3_v2.mp4"
+    },
+    {
+      "job_id": "s01_sc07_B_v2",
+      "scene_id": "story_01_2347/scene_07",
+      "input": {
+        "image": "projects/ai_short_drama/story_01_2347/scene_07/candidate_02.png"
+      },
+      "prompt": {
+        "description": "The same empty subway platform at night, with the glowing red electronic clock sign above the polished tiles and the yellow safety line. Nobody is on the platform. The clock sign reads 23:46 and holds that reading steadily for most of the shot. Near the end the last digit changes once, from 6 to 7, so the sign reads 23:47 and stays that way. The lights stay on and the platform stays still. The camera holds a steady shot.",
+        "soundscape": "Empty station ambience with a low electrical hum, a faint distant train rumble in the tunnel and a soft click as the clock changes."
+      },
+      "settings": {
+        "duration": 8
+      },
+      "output": "output/story01/s01_scene07_B_h3_v2.mp4"
+    }
+  ]
+}
