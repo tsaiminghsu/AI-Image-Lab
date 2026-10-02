@@ -176,7 +176,9 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   模型 Drive 上有就複製到 VM、沒有才從釘選 revision 下載並背景存回 Drive，MP4 另存 `AI-Workflow/outputs/videos/`，
   `colab stop` 之前多一次 exec 等複製完成並 flush。Drive 佈局與 manifest 跟 `ai_workflow/` 平台共用（43 GB 只有一份）。
   存檔失敗或 kernel 卡住時**照樣關機**，只在記錄寫 warning。沒按同意＝`ephemeral`（跟以前一樣重抓、不存）。
-  **這條 Drive 路線只有離線測試，還沒實機跑過**；上面的 CU 數字都是改之前量的。
+  **這條 Drive 路線的第一個 session 在 2026-10-03 實機跑過一次**（5 秒單支：VM 上 440 秒、finalize 存 Drive 253 秒、
+  整個 session 857 秒、1.13 CU；模型與影片都存進 Drive，數字見 skill README「Drive 路線實測」）。**第二個 session
+  從 Drive 複製、不重抓還沒測**；更早的 CU 數字是改之前量的。
 - Z-Image Colab worker（2026-10-02）：Claude Code skill `.claude/skills/z-image-colab/`，文字 → Z-Image Turbo（官方
   bf16 權重）→ `output/zimage/<job_id>/result.png`。job 是本機檔案佇列（`submit.py`），`worker.py up` 開**一個**
   Colab L4 session 跑完整個佇列，閒置 `worker.idle_timeout_seconds` 後自動關。ComfyUI 原始碼、pip 套件、模型存在

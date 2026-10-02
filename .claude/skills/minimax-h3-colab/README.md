@@ -43,8 +43,9 @@ Claude（SKILL.md、prompts/video_prompt.md）
   自動繼續）。**沒按同意**：這個 session 照樣出片，但模型重新下載、什麼都不存到 Drive，記錄的 `persistence` 是
   `ephemeral`。`drive.mode: "off"`（或 `H3_DRIVE=off`）則完全不掛 Drive。
 - 本機 `output/` 仍然會下載一份 MP4：ffprobe 驗證和看畫面都靠它。Drive 那份是正本。
-- **還沒有實機跑過這條 Drive 路線**（下面的實測數字都是改之前、每次重新下載的）。43 GB 寫進 Drive 要多久、
-  從 Drive 複製回 VM 要多久、flush 要多久都還不知道。
+- **Drive 路線「第一次 session」已實機跑過一次**（2026-10-03，見下面「Drive 路線實測」）：模型下載並存進 Drive、
+  影片存進 Drive、session 照常關掉。**「第二個 session 從 Drive 複製、不重抓」還沒測**，那才是這條路的主要賣點，
+  所以從 Drive 複製回 VM 要多久仍然不知道。
 
 - **為什麼用 Docker**：google-colab-cli 官方只支援 Linux／macOS，它在啟動時就 `import termios`，
   Windows 上連 `colab version` 都跑不起來。每次呼叫都是一個用完即丟的容器，OAuth token 和 session
@@ -251,7 +252,35 @@ ffprobe 每一條規則、狀態機的每一條失敗路徑（壞圖／缺圖／
   未複製程式碼）、[MiniMax H3 模型卡](https://huggingface.co/MiniMaxAI/MiniMax-H3)、
   [ComfyUI H3 節點](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_minimax_h3.py)。
 
+## Drive 路線實測（2026-10-03，第一個 session，Google AI Pro）
+
+1 支 5 秒（`s01_scene01_B_h3.mp4`，首幀 720×1280 → 輸出 768×1376、124 幀），沒有別的 runtime，使用者在 session
+開始約 2 分鐘內按了 Drive 同意。A100-SXM4-80GB、torch 2.11.0+cu130、`persistence: drive`，五個模型全是
+`downloaded`（Drive 上原本沒有）。
+
+| 階段 | 秒 |
+| --- | ---: |
+| 安裝 ComfyUI 等（setup） | 28.7 |
+| 五個模型下載（平行；最大的 19.5 GiB 檔 171 秒） | 171.9 |
+| ComfyUI 啟動 | 64.1 |
+| 推論 | 170.6 |
+| **VM 上的合計** | **440.1** |
+| 存 Drive 的 finalize（`drive_saved.seconds`，其中 flush 238.2） | 253.2 |
+| 整個 session | 857.5（job 861.3） |
+
+- 背景複製到 Drive 各檔：0.56 GiB 2.5 秒、0.58 GiB 2.6 秒、4.85 GiB 29.0 秒、14.61 GiB 48.4 秒、19.53 GiB 61.3 秒，
+  都跟下載重疊，所以複製本身沒有拉長 session；**多出來的是最後的 finalize 約 253 秒**（記錄是 `flushed: true`、
+  `error: null`；影片在 `drive_output` = `outputs/videos/s01_scene01_B_h3.mp4`。我沒有在 Drive 網頁上逐檔核對）。
+- 模型下載＋啟動合計 265 秒，比 09-30 的「安裝＋下載＋啟動 422 秒」短，推論 170.6 秒（09-30 是 195 秒）。VRAM 峰值 42,106 MiB。
+- **CU：餘額 60.25 → 59.12，用掉 1.13**（settle 後再讀一次，一樣）。照 6.77 CU/小時乘 857.5 秒的預估是 1.61，實測是預估的
+  70%；09-30 那支 5 秒（663 秒，預估 1.25，實測 0.85）也是約 68%，所以這個比例看起來穩定，原因不明。
+- 跟 09-30 同樣是 5 秒單支的 0.85 CU 比，多出來的 0.28 CU 大致就是 finalize 這一步。**第一次存 Drive 要付這筆；**
+  之後的 session 不用再下載和複製進 Drive，預期會省回來，但還沒量。
+- 還沒量到的：第二個 session 從 Drive 複製（`staged`）要多久；沒按同意時（`ephemeral`）的實際行為；長時間 flush 失敗的情況。
+
 ## 實測（2026-09-30，Google AI Pro）
+
+以下是 Drive 路線之前量的（每個 session 都重新下載、不存 Drive）。
 
 兩支都是 Colab 分配的 NVIDIA A100-SXM4-80GB、高 RAM；session 每小時 6.77 CU。首幀是 9:16 的圖，解析度自動選 768×1376。
 
