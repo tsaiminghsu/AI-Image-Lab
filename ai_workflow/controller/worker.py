@@ -49,6 +49,7 @@ class WorkerState:
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.thread = None
+        self.refresh = None  # callable returning fields to refresh on every write (the model-sync picture)
         self.data = {
             "session": session,
             "seq": 0,
@@ -69,6 +70,8 @@ class WorkerState:
 
     def write(self):
         with self.lock:
+            if self.refresh is not None:
+                self.data.update(self.refresh())
             self.data["seq"] += 1
             self.data["updated_epoch"] = self.clock()
             self.data["updated_at"] = jobs.now_iso()
@@ -124,6 +127,7 @@ class Worker:
         self.registry_stamp = self._registry_stamp()
         self.cfg = dict(self.ctx.config.get("worker", {}))
         self.state = WorkerState(storage, self.session, clock=clock)
+        self.state.refresh = lambda: {"model_sync": self.model_sync()}
         self.client_id = "aiwf-" + uuid.uuid4().hex[:12]
         self.t0 = clock()
         self.jobs_done = 0
@@ -131,6 +135,16 @@ class Worker:
 
     def log(self, message):
         self.echo("[%s] %s" % (time.strftime("%H:%M:%S"), message))
+
+    def model_sync(self):
+        """Model files downloaded this session that are not in the workspace yet (deleting the runtime now
+        would lose them), and the ones whose copy failed."""
+        status = self.env.sync_status()
+        return {
+            "pending": [item["name"] for item in status["pending"]],
+            "pending_bytes": status["pending_bytes"],
+            "failed": status["failed"],
+        }
 
     # -- boot ---------------------------------------------------------------------------------------
 
@@ -288,6 +302,7 @@ class Worker:
             job = store.finish(dict(job, **extra), status, error=_error(exc))
         except Exception as exc:  # noqa: BLE001 - one job must never stop the worker
             job = store.finish(dict(job, **extra), jobs.FAILED, error=_error(exc, "JOB_FAILED", traceback.format_exc()))
+        self.clean_job_files(job_id)
         self.jobs_done += 1
         seconds = round(self.clock() - t0, 1)
         self.log("job %s %s in %s s" % (job_id, job["status"], seconds))
@@ -397,8 +412,25 @@ class Worker:
                         raise WorkflowError("OUTPUT_NOT_FOUND", "the save node reported no %s file" % ext)
                 self.sleep(self.cfg.get("job_poll_seconds", 2))
 
+    def clean_job_files(self, job_id):
+        """The runtime's disk holds work in progress only. Once a job has ended - either way - what ComfyUI
+        wrote for it, its input copies and its staged output are removed; the result lives in the workspace.
+        Best effort: a file that cannot be removed costs disk space, never the job."""
+        folders = (self.env.comfy_out, self.env.comfy_dir / "input", self.env.stage)
+        for folder in folders:
+            try:
+                found = [p for p in folder.rglob("*") if p.is_file() and job_id in p.name]
+            except OSError:
+                continue
+            for path in found:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
     def store_output(self, job_id, workflow, values, graph, item):
-        """Fetch the file from ComfyUI, validate it on local disk, and only then put it in the workspace."""
+        """Fetch the file from ComfyUI, validate it on local disk, and only then put it in the workspace.
+        The staged copy is removed by clean_job_files when the job ends."""
         out = workflow["output"]
         kind = out["kind"]
         staged = self.env.stage / ("%s.%s" % (job_id, out["ext"]))
@@ -423,8 +455,6 @@ class Worker:
             if self.previewer(staged, preview):
                 output["preview"] = "outputs/previews/%s.jpg" % job_id
                 self.storage.copy_in(preview, output["preview"])
-                preview.unlink()
-        staged.unlink()
         return output
 
     # -- loops ----------------------------------------------------------------------------------------
@@ -470,12 +500,14 @@ class Worker:
         finally:
             self.state.update(serving=False)
 
-    def shutdown(self, reason, release=False):
-        """Stop ComfyUI, wait until downloaded models are in the workspace, write the session record, and -
-        when asked - flush the mounted folder and give the runtime back so it stops costing compute units."""
+    def shutdown(self, reason, flush=False, release=False, progress=None):
+        """Stop ComfyUI, wait until every downloaded model is in the workspace, and write the session record.
+        With `flush`, the mounted folder is then flushed, so models and outputs are really in Google Drive and
+        not only in the mount's local cache. With `release` (which implies flush), the runtime is given back
+        afterwards so it stops costing compute units."""
         self.state.update(worker_state="stopping", shutdown_reason=reason)
         self.env.stop_comfy()
-        sync = self.env.wait_for_sync()
+        sync = self.env.wait_for_sync(progress)
         summary = {
             "session": self.session,
             "started_at": self.state.data.get("started_at"),
@@ -496,14 +528,23 @@ class Worker:
         self.state.update(worker_state="stopped", current_job=None, summary=summary)
         self.state.stop_heartbeat()
         self.booted = False
+        summary["flushed"] = summary["released"] = None
+        if flush or release:
+            summary["flushed"] = self._call(self.flush_fn, "flush the mounted folder")
         if release:
-            for fn in (self.flush_fn, self.release_fn):
-                if fn is not None:
-                    try:
-                        fn()
-                    except Exception as exc:  # noqa: BLE001 - report it; the person can still stop the runtime by hand
-                        self.log("could not %s: %s" % (getattr(fn, "__name__", "release the runtime"), exc))
+            summary["released"] = self._call(self.release_fn, "release the runtime")
         return summary
+
+    def _call(self, fn, what):
+        """True = done, False = it raised (reported; the person can still do it by hand), None = not available."""
+        if fn is None:
+            return None
+        try:
+            fn()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.log("could not %s: %s" % (what, exc))
+            return False
 
 
 def _error(exc, code=None, stack=None):

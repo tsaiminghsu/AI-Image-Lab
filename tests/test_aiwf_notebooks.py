@@ -192,3 +192,23 @@ def test_the_core_imports_only_the_standard_library():
         every = {n.names[0].name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)}
         every |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level == 0}
         assert every <= allowed | optional, "%s: %s" % (path.name, every - allowed - optional)
+
+
+def test_generation_notebooks_end_by_saving_to_drive_and_setup_can_prefetch():
+    """The last cell is what makes "models and results are in Google Drive" true before the runtime goes away."""
+    for name in ("02_image_generation", "03_video_generation"):
+        _, code = cells(name)
+        last = code[-1]
+        assert "儲存並結束" in last and "nb.finish(session, release_runtime)" in last
+        assert 'release_runtime = True  #@param {type:"boolean"}' in last and "wait_for_jobs = False" in last
+    markdown = json.loads((PLATFORM_DIR / "notebooks" / "03_video_generation.ipynb").read_text(encoding="utf-8"))
+    intro = "".join(markdown["cells"][0]["source"])
+    assert "Google Drive 的 `AI-Workflow/`" in intro and "儲存並結束" in intro
+    _, setup = cells("00_setup")
+    prefetch, finish = setup[-2], setup[-1]
+    assert "fetch_z_image_basic = False" in prefetch and "fetch_minimax_h3_basic = False" in prefetch
+    assert "約 20.7 GB" in prefetch and "約 43.1 GB" in prefetch
+    assert '{"z-image-basic": fetch_z_image_basic, "minimax-h3-basic": fetch_minimax_h3_basic}' in prefetch
+    assert "nb.finish(session, release_runtime)" in finish
+    _, worker = cells("01_comfyui")
+    assert "nb.serve(session, idle_minutes, release_runtime)" in worker[-1]  # serve() flushes on its way out

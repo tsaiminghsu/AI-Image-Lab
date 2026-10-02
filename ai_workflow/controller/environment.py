@@ -144,6 +144,7 @@ class Environment:
         comfy_factory=ComfyProcess,
         comfy_url=None,
         base_freeze=None,
+        copy_fn=copy_large,
     ):
         self.storage = storage
         self.config = config
@@ -156,6 +157,7 @@ class Environment:
         self.runner = runner
         self.comfy_factory = comfy_factory
         self.base_freeze = base_freeze
+        self.copy_to_workspace = copy_fn
         workspace = storage.local_path("cache")
         if workspace is None:
             raise WorkflowError("STORAGE_UNSUPPORTED", "the runtime needs a storage backend with real file paths")
@@ -386,14 +388,22 @@ class Environment:
     def ensure_models(self, specs):
         """Stage the model files on the runtime's local disk: copied from the workspace when a verified copy is
         there, downloaded from the pinned source (and then copied into the workspace in the background) when
-        not. Only the files that are missing or changed are fetched."""
+        not. Only the files that are missing or changed are fetched.
+
+        The workspace copy is the one that counts; the copy on the runtime's disk is working material. So a
+        file that is on this disk but neither in the workspace nor on its way there (an earlier copy failed)
+        is sent again, not left for the next session to download a second time."""
         missing, present = [], []
         for spec, ok in self.model_status(specs):
             (present if ok else missing).append(spec)
         todo = [s for s in missing if not self._local_ok(s)]
         if todo:
             self.check_space(sum(s["size"] for s in todo))
-            self._download(todo)
+            self._start_sync(self._download(todo))
+        in_flight = {item["name"] for item in self.sync_status()["pending"]}
+        retry = [s for s in missing if s not in todo and s["name"] not in in_flight]
+        if retry:
+            self._start_sync([(s, self._local_path(s)) for s in retry])
         for spec in missing:
             self.act("model:" + spec["name"], "downloaded" if spec in todo else "present")
         for spec in present:
@@ -401,13 +411,16 @@ class Environment:
                 self.act("model:" + spec["name"], "present")
                 continue
             t = self.clock()
-            copy_large(self.workspace / spec["store"] / spec["name"], self.local_models / spec["folder"] / spec["name"])
+            copy_large(self.workspace / spec["store"] / spec["name"], self._local_path(spec))
             self.model_seconds[spec["name"]] = {"staged": round(self.clock() - t, 1)}
             self.log("staged %s from the workspace in %.1f s" % (spec["name"], self.clock() - t))
             self.act("model:" + spec["name"], "staged")
 
+    def _local_path(self, spec):
+        return self.local_models / spec["folder"] / spec["name"]
+
     def _local_ok(self, spec):
-        local = self.local_models / spec["folder"] / spec["name"]
+        local = self._local_path(spec)
         return local.is_file() and local.stat().st_size == spec["size"]
 
     def check_space(self, need_bytes):
@@ -419,38 +432,105 @@ class Environment:
                 "DISK_FULL", "%.1f GiB free on the runtime, the models need %.1f GiB" % (free / 2**30, need / 2**30)
             )
 
+    def _download_one(self, spec):
+        """Download one file from its pinned source to the runtime's disk and verify it. Returns its path."""
+        t = self.clock()
+        got = Path(self.hf_download(spec["repo"], spec["path_in_repo"], spec["revision"], self.stage))
+        seconds = self.clock() - t
+        digest = sha256_file(got)
+        if digest != spec["sha256"] or got.stat().st_size != spec["size"]:
+            raise WorkflowError("MODEL_CHECKSUM", "%s: sha256 %s, expected %s" % (spec["name"], digest, spec["sha256"]))
+        local = self._local_path(spec)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(got, local)
+        self.model_seconds[spec["name"]] = {"downloaded": round(seconds, 1)}
+        self.log("downloaded %s: %.2f GiB in %.1f s, sha256 ok" % (spec["name"], spec["size"] / 2**30, seconds))
+        return local
+
     def _download(self, specs):
         import concurrent.futures
 
-        def one(spec):
-            t = self.clock()
-            got = Path(self.hf_download(spec["repo"], spec["path_in_repo"], spec["revision"], self.stage))
-            seconds = self.clock() - t
-            digest = sha256_file(got)
-            if digest != spec["sha256"] or got.stat().st_size != spec["size"]:
-                raise WorkflowError(
-                    "MODEL_CHECKSUM", "%s: sha256 %s, expected %s" % (spec["name"], digest, spec["sha256"])
-                )
-            local = self.local_models / spec["folder"] / spec["name"]
-            local.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(got, local)
-            self.model_seconds[spec["name"]] = {"downloaded": round(seconds, 1)}
-            self.log("downloaded %s: %.2f GiB in %.1f s, sha256 ok" % (spec["name"], spec["size"] / 2**30, seconds))
-            return spec, local
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(specs)) as pool:
-            results = list(pool.map(one, specs))
+            return list(zip(specs, pool.map(self._download_one, specs)))
+
+    def _start_sync(self, results):
         sync = ModelSync(self, results)
         sync.start()
         self.sync_threads.append(sync)
 
-    def wait_for_sync(self):
-        """Block until every freshly downloaded model is in the workspace. Called before the runtime is released."""
-        report = {}
+    def save_to_workspace(self, spec, local):
+        """Copy one verified model file into the workspace, then record it in the manifest - in that order, so
+        a manifest entry always means a complete file."""
+        t = self.clock()
+        self.copy_to_workspace(local, self.workspace / spec["store"] / spec["name"])
+        with ModelSync.lock:
+            manifest = self.storage.read_json(MANIFEST_FILE, {}) or {}
+            manifest["%s/%s" % (spec["store"], spec["name"])] = {
+                "name": spec["name"],
+                "revision": spec["revision"],
+                "source": "https://huggingface.co/%s/resolve/%s/%s"
+                % (spec["repo"], spec["revision"], spec["path_in_repo"]),
+                "size": spec["size"],
+                "sha256": spec["sha256"],
+                "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            }
+            self.storage.write_json(MANIFEST_FILE, manifest)
+        seconds = round(self.clock() - t, 1)
+        self.model_seconds.setdefault(spec["name"], {})["copied_to_workspace"] = seconds
+        self.log("copied %s into the workspace in %s s" % (spec["name"], seconds))
+        return seconds
+
+    def sync_status(self):
+        """Where the freshly downloaded models are on their way into the workspace: still being copied, saved,
+        or failed. `pending` is what would be lost if the runtime were deleted right now."""
+        pending, saved, failed = [], {}, {}
         for thread in self.sync_threads:
-            thread.join()
-            report.update(thread.report)
-        return report
+            for spec, _ in thread.results:
+                result = thread.report.get(spec["name"])
+                if result is None:
+                    pending.append({"name": spec["name"], "bytes": spec["size"]})
+                elif result.startswith("failed"):
+                    failed[spec["name"]] = result
+                    saved.pop(spec["name"], None)
+                else:
+                    saved[spec["name"]] = result
+                    failed.pop(spec["name"], None)
+        return {"pending": pending, "pending_bytes": sum(p["bytes"] for p in pending), "saved": saved, "failed": failed}
+
+    def wait_for_sync(self, progress=None, every_seconds=30):
+        """Block until every freshly downloaded model is in the workspace (or its copy has failed). Called
+        before the mounted folder is flushed and the runtime released. `progress` is called with sync_status()
+        every `every_seconds` while it waits - tens of GB take a while and silence looks like a hang."""
+        for thread in self.sync_threads:
+            while thread.is_alive():
+                thread.join(every_seconds)
+                if progress is not None and thread.is_alive():
+                    progress(self.sync_status())
+        status = self.sync_status()
+        return dict(status["saved"], **status["failed"])
+
+    def prefetch_models(self, specs):
+        """Put model files into the workspace without generating anything: one file at a time - download,
+        verify, copy into the workspace, record, delete the runtime's copy - so the runtime needs room for the
+        largest single file, not for the whole set, and no GPU. Files already verified in the workspace are
+        skipped. Returns {file name: what happened}."""
+        done = {}
+        for spec, ok in self.model_status(specs):
+            name = spec["name"]
+            if ok:
+                done[name] = "already in the workspace"
+                self.act("model:" + name, "in workspace")
+                continue
+            had_local = self._local_ok(spec)
+            if not had_local:
+                self.check_space(spec["size"])
+                self._download_one(spec)
+            self.save_to_workspace(spec, self._local_path(spec))
+            if not had_local:
+                self._local_path(spec).unlink()
+            done[name] = "saved to the workspace" if had_local else "downloaded and saved to the workspace"
+            self.act("model:" + name, "prefetched")
+        return done
 
     # -- the ComfyUI process ---------------------------------------------------------------------------
 
@@ -554,40 +634,23 @@ class Environment:
 
 
 class ModelSync(threading.Thread):
-    """Copies freshly downloaded models into the workspace in the background, then records each in the
-    manifest - only after its copy is complete."""
+    """Copies freshly downloaded models into the workspace in the background while the first job already runs
+    from the runtime's copy. `report` gains an entry per file when its copy has ended, one way or the other."""
 
     lock = threading.Lock()
 
     def __init__(self, env, results):
         super().__init__(name="aiwf-model-sync", daemon=True)
         self.env = env
-        self.results = results
+        self.results = list(results)
         self.report = {}
 
     def run(self):
-        env = self.env
         for spec, local in self.results:
-            t = env.clock()
             try:
-                copy_large(local, env.workspace / spec["store"] / spec["name"])
+                seconds = self.env.save_to_workspace(spec, local)
             except OSError as exc:
                 self.report[spec["name"]] = "failed: %s" % exc
-                env.log("could not copy %s into the workspace: %s" % (spec["name"], exc))
+                self.env.log("could not copy %s into the workspace: %s" % (spec["name"], exc))
                 continue
-            with self.lock:
-                manifest = env.storage.read_json(MANIFEST_FILE, {}) or {}
-                manifest["%s/%s" % (spec["store"], spec["name"])] = {
-                    "name": spec["name"],
-                    "revision": spec["revision"],
-                    "source": "https://huggingface.co/%s/resolve/%s/%s"
-                    % (spec["repo"], spec["revision"], spec["path_in_repo"]),
-                    "size": spec["size"],
-                    "sha256": spec["sha256"],
-                    "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                }
-                env.storage.write_json(MANIFEST_FILE, manifest)
-            seconds = round(env.clock() - t, 1)
-            env.model_seconds.setdefault(spec["name"], {})["copied_to_workspace"] = seconds
             self.report[spec["name"]] = "copied in %s s" % seconds
-            env.log("copied %s into the workspace in %s s" % (spec["name"], seconds))

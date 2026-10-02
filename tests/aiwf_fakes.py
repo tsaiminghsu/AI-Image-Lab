@@ -299,7 +299,7 @@ def fake_previewer(video, target):
 class Rig:
     """One 'runtime' on a workspace: FakeComfy + Environment + Worker with fake installers and a fake clock."""
 
-    def __init__(self, tmp_path, storage, blobs, *, gpu=GPU_A100, vm="vm", session=None, fake=None):
+    def __init__(self, tmp_path, storage, blobs, *, gpu=GPU_A100, vm="vm", session=None, fake=None, copy_fn=None):
         self.storage = storage
         self.fake = fake or FakeComfy(storage)
         self.owns_fake = fake is None
@@ -320,6 +320,7 @@ class Rig:
             comfy_factory=FakeProcess,
             comfy_url=self.fake.url,
             base_freeze="torch==2.9.0\n",
+            **({"copy_fn": copy_fn} if copy_fn else {}),
         )
         self.worker = Worker(
             storage,

@@ -276,9 +276,42 @@ def report(session, job_id, show=True):
         waiting = session.worker.state.data.get("waiting", {}).get(job_id)
         rows.append(("等待中", waiting or "尚未開始", False))
     _table(rows)
+    _sync_notice(session)
     if show and status == jobs.COMPLETED:
         _show(session.storage, job["output"])
     return tools.get_result(job_id, context=session.worker.ctx)
+
+
+def _sync_notice(session):
+    """Say so while downloaded models are still on their way into Google Drive: deleting the runtime now
+    would lose them, and the next session would download them again."""
+    status = session.env.sync_status()
+    if status["pending"]:
+        print(
+            "  ⏳ 模型正在存入 Google Drive：還有 %d 個檔（約 %.1f GB）。請勿刪除 runtime；"
+            "執行最後一格「儲存並結束」會等它完成。" % (len(status["pending"]), status["pending_bytes"] / 1e9)
+        )
+    for name, result in status["failed"].items():
+        print("  %s 模型 %s 沒有存進 Google Drive（%s）。下一個 job 或「儲存並結束」會再試一次。" % (BAD, name, result))
+
+
+def _sync_progress(status):
+    print("  ⏳ 還在存入 Google Drive：%d 個檔，約 %.1f GB" % (len(status["pending"]), status["pending_bytes"] / 1e9))
+
+
+def _saved_report(summary, release_runtime):
+    rows = [(name, result, not result.startswith("failed")) for name, result in summary["model_sync"].items()]
+    if rows:
+        print("這個 session 下載的模型")
+        _table(rows)
+    if summary["flushed"]:
+        print("%s 模型與輸出已寫入 Google Drive（已 flush）。" % OK)
+    elif summary["flushed"] is False:
+        print("%s Google Drive flush 失敗：請先不要刪除 runtime，稍後確認 Drive 上的檔案。" % BAD)
+    if summary["flushed"] and not release_runtime:
+        print("Drive 已卸載。要再生成，請重新執行第 1 格。runtime 還開著、仍在計費；不用時請中斷連線並刪除執行階段。")
+    if release_runtime and summary["released"] is False:
+        print("%s runtime 沒有釋放成功，請手動到「執行階段 > 中斷連線並刪除執行階段」。" % BAD)
 
 
 def api_test(session):
@@ -321,19 +354,54 @@ def serve(session, idle_minutes=10, release_runtime=True):
         % (idle_minutes, "會釋放 runtime" if release_runtime else "停止等待（runtime 不會自動釋放，仍在計費）")
     )
     reason = session.worker.serve(float(idle_minutes) * 60)
-    summary = session.worker.shutdown(reason, release=release_runtime)
+    summary = session.worker.shutdown(reason, flush=True, release=release_runtime, progress=_sync_progress)
     print("worker 已停止：%s，共完成 %d 個 job。" % (reason, summary["jobs"]))
-    if not release_runtime:
-        print("提醒：runtime 還開著。不用時到「執行階段 > 中斷連線並刪除執行階段」。")
+    _saved_report(summary, release_runtime)
     return summary
 
 
+def finish(session, release_runtime=True):
+    """The last cell of a generation notebook: wait until every model downloaded this session is in Google
+    Drive, flush the mounted folder so models and outputs are really there, then (by default) give the runtime
+    back. Until this has run, deleting the runtime can lose what is still being written."""
+    print("儲存中：等待模型與輸出寫入 Google Drive%s。" % ("，完成後釋放 runtime" if release_runtime else ""))
+    summary = session.worker.shutdown("finished", flush=True, release=release_runtime, progress=_sync_progress)
+    _saved_report(summary, release_runtime)
+    return summary
+
+
+def prefetch_models(session, selection):
+    """Download the models of the selected workflows straight into Google Drive, without generating anything
+    and without a GPU. `selection` maps workflow name -> bool (the checkboxes of the setup notebook). One file
+    at a time, so the runtime only needs room for the largest file."""
+    registry = session.worker.ctx.registry
+    chosen = [name for name, on in selection.items() if on]
+    if not chosen:
+        print("沒有勾選要預先下載的 workflow。")
+        return {}
+    session.env.check_workspace()
+    results = {}
+    words = {
+        "already in the workspace": "已在 Google Drive",
+        "saved to the workspace": "已存入 Google Drive",
+        "downloaded and saved to the workspace": "已下載並存入 Google Drive",
+    }
+    for name in chosen:
+        wf = registry.get(name)
+        print("%s：下載模型到 Google Drive（共 %.1f GB，一次一個檔）" % (name, sum(m["size"] for m in wf.models) / 1e9))
+        done = session.env.prefetch_models(wf.models)
+        _table([(file, words.get(result, result), True) for file, result in done.items()])
+        results[name] = done
+    print("完成。離開前請執行 notebook 最後的「儲存並結束」，或等 Drive 圖示顯示同步完成再刪除 runtime。")
+    return results
+
+
 def stop(session, release_runtime=False):
-    return session.worker.shutdown("manual", release=release_runtime)
+    return session.worker.shutdown("manual", flush=release_runtime, release=release_runtime)
 
 
 __all__ = [
     "connect", "mount_drive", "check_environment", "setup", "start_comfyui", "gpu_report", "check_models",
     "check_workflows", "generate", "report", "api_test", "list_jobs", "describe", "serve", "stop", "input_ref",
-    "comfy_log",
+    "comfy_log", "finish", "prefetch_models",
 ]  # fmt: skip

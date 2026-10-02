@@ -91,5 +91,9 @@ python scripts/aiwf.py result job-20261002-101500-ab12cd --wait 1800
 | `SESSION_LOST` | The runtime disappeared twice while this job ran. |
 | `CANCELLED` | The job was cancelled. |
 
+While a job is not finished, `status` may show `worker.model_sync.pending`: model files downloaded in this
+session that are still being copied into Google Drive. Tell the user not to delete the runtime until the
+notebook's last cell ("儲存並結束") has run, or those files will be downloaded again next time.
+
 A job that stays `pending` with a `waiting` reason ("needs a GPU with at least 38 GiB VRAM") is not failed:
 the open runtime is too small for it. Tell the user which GPU the workflow needs.

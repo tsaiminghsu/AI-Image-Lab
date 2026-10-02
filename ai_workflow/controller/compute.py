@@ -48,6 +48,7 @@ class ColabNotebookProvider(ComputeProvider):
             "vram_gib": (state.get("gpu") or {}).get("vram_gib"),
             "current_job": state.get("current_job"),
             "waiting": state.get("waiting") or {},
+            "model_sync": state.get("model_sync") or {},
         }
 
     def serve_hint(self):

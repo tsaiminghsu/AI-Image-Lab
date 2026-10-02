@@ -4,11 +4,13 @@ same workspace installs and downloads nothing.
 """
 
 import json
+import threading
 
 import pytest
 from aiwf_fakes import GPU_L4, GPU_NONE, FakeComfy, Rig, make_workspace, nb, png_bytes
 from controller import WorkflowError, safety, tools
 from controller.compute import WORKER_STATE_FILE
+from controller.environment import copy_large
 
 COFFEE = "A cup of coffee on a table, thin steam rises slowly."
 
@@ -99,6 +101,15 @@ def test_a_prompt_becomes_a_video_through_a_generated_first_frame(rig):
     out = tools.create_job(
         "minimax-h3-basic", {"prompt": COFFEE, "duration": 5, "aspect": "16:9"}, context=rig.worker.ctx
     )
+    frames_at_submit = []
+    submit = rig.env.http.submit
+
+    def recording_submit(graph, prompt_id, client_id):
+        if "6" in graph and graph["6"]["class_type"] == "LoadImage":
+            frames_at_submit.append((rig.env.comfy_dir / "input" / graph["6"]["inputs"]["image"]).read_bytes())
+        return submit(graph, prompt_id, client_id)
+
+    rig.env.http.submit = recording_submit
     rig.worker.drain()
     video = job_of(rig, out["job_id"])
     child = job_of(rig, video["depends_on"][0])
@@ -106,7 +117,7 @@ def test_a_prompt_becomes_a_video_through_a_generated_first_frame(rig):
     still, clip = rig.fake.submitted[-2], rig.fake.submitted[-1]
     assert still["7"]["inputs"]["text"] == safety.build_negative() and still["3"]["inputs"]["cfg"] >= safety.MIN_CFG
     assert clip["6"]["inputs"]["image"] == "%s_first_frame.png" % video["job_id"]
-    assert (rig.env.comfy_dir / "input" / clip["6"]["inputs"]["image"]).read_bytes() == png_bytes(1344, 768)
+    assert frames_at_submit == [png_bytes(1344, 768)]  # ComfyUI was handed the generated still
     assert (
         clip["7"]["inputs"]["width"] == 1344
         and clip["7"]["inputs"]["height"] == 768
@@ -351,10 +362,10 @@ def test_serve_takes_new_jobs_then_stops_after_the_idle_timeout(rig):
     assert json.loads(rig.storage.read_text("logs/sessions.jsonl").splitlines()[-1])["reason"] == "idle_timeout"
 
 
-def test_the_notebook_serve_cell_releases_only_when_asked(rig, capsys):
+def test_the_notebook_serve_cell_always_flushes_and_releases_only_when_asked(rig, capsys):
     rig.worker.cfg["poll_interval_seconds"] = 60
     nb.serve(rig.session, idle_minutes=1, release_runtime=False)
-    assert rig.released == [] and "runtime 還開著" in capsys.readouterr().out
+    assert rig.released == ["flush"] and "runtime 還開著" in capsys.readouterr().out
 
 
 # --- one runtime at a time, and what happens when one is lost -------------------------------------------
@@ -524,3 +535,141 @@ def test_alternating_workflows_do_not_restart_comfyui_every_job(make_rig):
     processes = [p for p in type(rig.env.process).instances if p.comfy_dir == rig.env.comfy_dir]
     assert [p.extra_args for p in processes] == [[], ["--lowvram"]]  # one restart, when H3 first needed it
     assert len(rig.fake.submitted) == 4
+
+
+# --- the storage rule: models and results live in the workspace, the runtime only holds work in progress ---
+
+ZIMAGE_FILES = ["ae.safetensors", "qwen_3_4b.safetensors", "z_image_turbo_bf16.safetensors"]
+
+
+def test_models_still_on_their_way_to_the_workspace_are_announced_and_the_last_cell_waits(make_rig, capsys):
+    gate = threading.Event()
+
+    def slow_copy(src, dst):
+        gate.wait(30)
+        copy_large(src, dst)
+
+    rig = make_rig(copy_fn=slow_copy)
+    result = nb.generate(rig.session, "z-image-basic", {"prompt": "A mug."})
+    out = capsys.readouterr().out
+    assert result["status"] == "completed"  # the result does not wait for the copies
+    assert "模型正在存入 Google Drive：還有 3 個檔" in out and "請勿刪除 runtime" in out
+    assert rig.storage.read_json("models/manifest.json") is None
+    state = rig.worker.ctx.provider.worker_state(rig.storage, now=rig.clock())
+    assert sorted(state["model_sync"]["pending"]) == ZIMAGE_FILES and state["model_sync"]["pending_bytes"] > 0
+    assert rig.released == []
+
+    gate.set()
+    summary = nb.finish(rig.session, release_runtime=True)
+    out = capsys.readouterr().out
+    assert sorted(summary["model_sync"]) == ZIMAGE_FILES and summary["flushed"] and summary["released"]
+    assert rig.released == ["flush", "release"]  # flushed after the copies ended, released last
+    assert len(rig.storage.read_json("models/manifest.json")) == 3
+    assert rig.storage.exists("models/z-image/vae/ae.safetensors")
+    assert "已 flush" in out and "copied in" in out
+    assert rig.env.sync_status()["pending"] == []
+
+
+def test_the_last_cell_flushes_even_when_the_runtime_is_kept(rig, capsys):
+    nb.generate(rig.session, "test-generation", {})
+    summary = nb.finish(rig.session, release_runtime=False)
+    assert rig.released == ["flush"] and summary["flushed"] is True and summary["released"] is None
+    assert "重新執行第 1 格" in capsys.readouterr().out
+
+
+def test_a_flush_that_fails_is_reported_and_the_runtime_is_not_called_saved(rig, capsys):
+    def broken_flush():
+        raise OSError("drive is busy")
+
+    rig.worker.flush_fn = broken_flush
+    nb.generate(rig.session, "test-generation", {})
+    summary = nb.finish(rig.session, release_runtime=False)
+    assert summary["flushed"] is False and "flush 失敗" in capsys.readouterr().out
+
+
+def test_a_model_copy_that_failed_is_sent_again_not_downloaded_again(make_rig):
+    calls = []
+
+    def flaky_copy(src, dst):
+        calls.append(dst)
+        if len(calls) <= 3:
+            raise OSError("quota exceeded")
+        copy_large(src, dst)
+
+    rig = make_rig(copy_fn=flaky_copy)
+    create(rig, "z-image-basic", {"prompt": "A mug."})
+    rig.worker.drain()
+    rig.env.wait_for_sync()
+    assert sorted(rig.env.sync_status()["failed"]) == ZIMAGE_FILES
+    assert rig.storage.read_json("models/manifest.json") is None
+    assert rig.worker.model_sync()["failed"]  # the state file says so too
+
+    job_id = create(rig, "z-image-basic", {"prompt": "A lamp."})
+    rig.worker.drain()
+    summary = rig.worker.shutdown("done")
+    assert job_of(rig, job_id)["status"] == "completed"
+    assert len(rig.installers.hf) == 3  # no second download
+    assert len(rig.storage.read_json("models/manifest.json")) == 3
+    assert rig.env.sync_status()["failed"] == {} and all(v.startswith("copied") for v in summary["model_sync"].values())
+
+
+def test_models_can_be_put_in_the_workspace_ahead_of_time_without_a_gpu(make_rig, capsys):
+    cpu = make_rig(gpu=GPU_NONE)
+    saved = nb.prefetch_models(cpu.session, {"z-image-basic": True, "minimax-h3-basic": False})
+    assert sorted(saved["z-image-basic"]) == ZIMAGE_FILES and "minimax-h3-basic" not in saved
+    assert len(cpu.storage.read_json("models/manifest.json")) == 3
+    for store in (
+        "vae/ae.safetensors",
+        "text_encoders/qwen_3_4b.safetensors",
+        "diffusion_models/z_image_turbo_bf16.safetensors",
+    ):
+        assert cpu.storage.exists("models/z-image/" + store)
+    assert list(cpu.env.local_models.rglob("*.safetensors")) == []  # nothing is kept on the runtime
+    assert not cpu.storage.exists("models/minimax-h3/vae/minimax_h3_video_vae_fp16.safetensors")
+    assert len(cpu.installers.hf) == 3 and "已下載並存入 Google Drive" in capsys.readouterr().out
+
+    nb.prefetch_models(cpu.session, {"z-image-basic": True})
+    assert len(cpu.installers.hf) == 3 and "已在 Google Drive" in capsys.readouterr().out
+    assert nb.prefetch_models(cpu.session, {"z-image-basic": False}) == {}
+
+    gpu = make_rig("vm2", gpu=GPU_L4)  # a later session: staged from the workspace, nothing downloaded
+    create(gpu, "z-image-basic", {"prompt": "A mug."})
+    gpu.worker.drain()
+    assert gpu.installers.hf == []
+    assert [v for k, v in gpu.env.actions.items() if k.startswith("model:")] == ["staged"] * 3
+
+
+def test_a_prefetch_with_a_bad_checksum_puts_nothing_in_the_workspace(make_rig, workspace):
+    _, storage, blobs = workspace
+    rig = make_rig(blobs=dict(blobs, **{"ae.safetensors": b"tampered"}))
+    with pytest.raises(WorkflowError) as exc:
+        nb.prefetch_models(rig.session, {"z-image-basic": True})
+    assert exc.value.code == "MODEL_CHECKSUM"
+    assert not storage.exists("models/z-image/vae/ae.safetensors")
+    assert "models/z-image/vae/ae.safetensors" not in (storage.read_json("models/manifest.json") or {})
+
+
+@pytest.mark.parametrize("behavior,status", [("ok", "completed"), ("error", "failed"), ("bad_png", "failed")])
+def test_nothing_of_a_finished_job_stays_on_the_runtime(rig, behavior, status):
+    rig.worker.boot()
+    out = tools.create_job("minimax-h3-basic", {"prompt": COFFEE}, context=rig.worker.ctx)
+    video = out["job_id"]
+    child = job_of(rig, video)["depends_on"][0]
+    rig.fake.behaviors[video] = behavior
+    # What ComfyUI itself would have left behind for these jobs, plus a file that belongs to nobody.
+    rig.env.comfy_out.mkdir(parents=True, exist_ok=True)
+    (rig.env.comfy_out / ("%s_00001_.png" % child)).write_bytes(b"x")
+    (rig.env.comfy_out / ("h3_%s_00001.mp4" % video)).write_bytes(b"x")
+    (rig.env.comfy_out / "unrelated.png").write_bytes(b"x")
+    rig.worker.drain()
+    assert job_of(rig, video)["status"] == status and job_of(rig, child)["status"] == "completed"
+    left = sorted(
+        p.name
+        for folder in (rig.env.comfy_out, rig.env.comfy_dir / "input", rig.env.stage)
+        for p in folder.rglob("*")
+        if p.is_file()
+    )
+    assert [name for name in left if child in name or video in name] == []
+    assert "unrelated.png" in left
+    in_workspace = rig.storage.list("outputs/images") + rig.storage.list("outputs/videos")
+    assert ("%s.png" % child) in in_workspace and (("%s.mp4" % video) in in_workspace) == (status == "completed")

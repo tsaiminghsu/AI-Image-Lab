@@ -14,6 +14,24 @@ AI Agent ──► scripts/aiwf.py（Tool Interface）─┐
 
 四個角色：訂閱制 AI＝控制器、Google Drive＝持久工作區、Google Colab＝運算、ComfyUI＝生成引擎。
 
+## 什麼放在哪裡
+
+規則只有一條：**下載的模型和生成的檔案都在 Google Drive，Colab 上只有運算過程中的暫存。**
+
+| Google Drive `AI-Workflow/`（持久） | Colab VM `/content/aiwf/`（session 結束就消失） |
+| --- | --- |
+| `models/`、`loras/`、`models/manifest.json` | 從 Drive 複製來給 ComfyUI 讀的模型副本 |
+| `outputs/images`、`outputs/videos`、`outputs/previews` | ComfyUI 的輸出暫存、驗證前的暫存檔（job 結束就刪） |
+| `jobs/`、`logs/`、`cache/`（ComfyUI 與套件的壓縮檔） | ComfyUI checkout、pip 套件樹 |
+
+- 模型會先複製到 VM 本機碟再載入（不直接從 Drive 掛載點讀）；Drive 那份是正本，VM 那份是暫存。
+- 模型**第一次**下載時是先落在 VM、再由背景複製到 Drive，所以生成結果會先出來。這時生成格會明講
+  「還有 N 個檔正在存入 Google Drive，請勿刪除 runtime」；**最後一格「儲存並結束」會等它存完、flush Drive，再釋放
+  runtime**。沒跑最後一格就刪掉 runtime，還沒存完的模型下次要重新下載（已存完的不受影響：manifest 是複製完成後才寫的）。
+- 某個檔複製到 Drive 失敗（例如空間不足）時不會重新下載：下一個 job 或「儲存並結束」會用 VM 上那份再存一次。
+- 想先把模型備好再生成：`00_setup` 的「預先下載模型到 Google Drive」。一次一個檔（下載 → 驗 sha256 → 存 Drive →
+  刪掉 VM 副本），不需要 GPU，磁碟只要放得下最大的單一檔案。
+
 > **驗證狀態（2026-10-02）**：離線測試全過（不需要 GPU、Colab 或 Google Drive，假的 ComfyUI 是本機 HTTP server）。
 > **還沒有在真的 Colab 上跑過**——下面「實機驗收」每一項都還沒做，所有時間、VRAM、CU 都是未知數。
 
@@ -40,7 +58,7 @@ AI Agent ──► scripts/aiwf.py（Tool Interface）─┐
 
 | Notebook | 做什麼 |
 | --- | --- |
-| `00_setup.ipynb` | 掛 Drive、環境檢查（Python／CUDA／GPU／VRAM／Drive／磁碟）、安裝或解壓 ComfyUI 與套件、列出模型狀態 |
+| `00_setup.ipynb` | 掛 Drive、環境檢查（Python／CUDA／GPU／VRAM／Drive／磁碟）、安裝或解壓 ComfyUI 與套件、列出模型狀態、（選用）預先下載模型到 Drive |
 | `01_comfyui.ipynb` | 啟動 ComfyUI、健康檢查、API 測試（不需要模型）、**等待 Agent 的 job** |
 | `02_image_generation.ipynb` | Z-Image 文字生圖 → `outputs/images/<job_id>.png` |
 | `03_video_generation.ipynb` | Prompt →（Z-Image 首幀）→ MiniMax H3 → `outputs/videos/<job_id>.mp4`，預覽圖在 `outputs/previews/` |
@@ -49,6 +67,10 @@ AI Agent ──► scripts/aiwf.py（Tool Interface）─┐
 每本生成用的 notebook 都有 **Simple**（Prompt、比例、Duration）和 **Advanced**（打勾後生效：Seed、Steps、CFG、
 Negative、LoRA 強度…，以及一個可填任何參數的 JSON 欄位）。Notebook 由 `scripts/build_notebooks.py` 從 registry
 產生，裡面只有表單和對 `controller.notebook` 的呼叫——**不要手改 `.ipynb`**，改 registry 或 Core 後重新產生。
+
+「全部執行」＝做一次然後「儲存並結束」（預設會釋放 runtime）。要連續生成多張／多支：依序執行到生成那一格，
+改表單重跑幾次都可以，最後再執行「儲存並結束」。那一格取消勾選「釋放 runtime」的話只做存檔與 flush（Drive 會被卸載，
+要再生成請重跑第 1 格），runtime 繼續計費。
 
 每台新的 Colab VM 掛 Drive 時都要按一次 Google 的同意畫面（Colab 的規定）。
 
@@ -68,7 +90,8 @@ python scripts/aiwf.py result JOB_ID --wait 600
 `aiwf.py` 只用標準函式庫，任何 Python 3.11+ 都能跑；輸出是 JSON。Agent **不會**自己開 Colab：`create-job` 只是把
 job 寫進 `jobs/pending/`，要有人開著 `01_comfyui.ipynb`（或 02／03 最後一格打勾）才會被執行。沒有 worker 時，
 工具的回應會帶 `hint` 告訴 Agent 該請使用者做什麼。佇列空了 `idle_minutes`（預設 10）分鐘後 worker 會停止並釋放
-runtime。
+runtime（結束前一樣會等模型存完並 flush Drive）。模型還在存入 Drive 時，`status` 回應的
+`worker.model_sync.pending` 會列出檔名。
 
 換一個 Agent＝把同一份 `AGENTS.md` 給它，Core 一行都不用改。
 
@@ -179,8 +202,9 @@ GPU 不夠大的 job（例如在 L4 上的 H3 job）會留在 `pending` 並在 `
 | D 換 workflow | 把 B 的 workflow 換成 `z-image-basic` | 只改指令裡的 workflow 名稱 |
 | Session Restart | 中斷 runtime，重開 notebook 再生成一次 | `setup_actions` 是 `extracted`／`staged`；舊的 jobs／outputs／notebooks 都還在 |
 
-要量的數字：各階段秒數、GPU、VRAM 峰值、CU（關機後等 2 分鐘再讀餘額）、Drive 同步延遲，以及**從 Drive 複製 43 GB
-到 VM 要多久**（H3 從 HuggingFace 直接下載實測約 5–6 分鐘；Drive 如果比較慢，就要重新考慮 H3 模型放 Drive 是否划算）。
+要量的數字：各階段秒數、GPU、VRAM 峰值、CU（關機後等 2 分鐘再讀餘額）、Drive 同步延遲、43 GB 寫進 Drive 與
+`flush` 各要多久，以及從 Drive 複製 43 GB 到 VM 要多久（H3 從 HuggingFace 直接下載實測約 5–6 分鐘）。
+模型放 Drive 是已經決定的事（2026-10-02），這些數字是用來知道每個 session 開頭要等多久，不是用來重新考慮。
 
 ## 測試
 
@@ -191,7 +215,8 @@ powershell -ExecutionPolicy Bypass -File check.ps1
 `tests/test_aiwf_*.py`，不碰 GPU／Colab／Drive：安全常數釘在專案常數上（`AGE_SAFETY_NEGATIVE`、cfg 下限、H3 的禁詞表）；
 兩個 workflow 綁定出來的節點圖等於專案既有的圖（`comfyui_client.build_zimage_txt2img_workflow`、H3 skill 的
 `build_graph`）；工具只會新增檔案；worker 的失敗隔離、取消、首幀驗證；兩種模式產生相同的 job；第二個 session 零下載；
-notebook 等於產生器的輸出而且不含邏輯；程式碼裡不出現任何 AI 供應商或 API key 的字樣。
+notebook 等於產生器的輸出而且不含邏輯；程式碼裡不出現任何 AI 供應商或 API key 的字樣；模型還在存入 Drive 時會
+明講、最後一格會等它存完並 flush；複製失敗會重存而不是重抓；預先下載不在 VM 留副本；job 結束後 VM 上不留它的檔案。
 
 ## 第一階段沒做的事
 

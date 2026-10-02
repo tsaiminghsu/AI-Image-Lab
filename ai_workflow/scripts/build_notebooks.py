@@ -89,6 +89,59 @@ SERVE_LINES = (
     "#@markdown 停止後釋放 runtime（不再消耗運算單元）。取消勾選的話 runtime 會繼續計費，要自己中斷。",
     'release_runtime = True  #@param {type:"boolean"}',
 )
+RELEASE_LINES = (
+    "#@markdown 存完後釋放 runtime（不再消耗運算單元）。取消勾選的話 runtime 會繼續計費，要自己中斷。",
+    'release_runtime = True  #@param {type:"boolean"}',
+)
+STORAGE_NOTE = (
+    "**存放位置**：模型、生成結果、job 記錄都在 Google Drive 的 `AI-Workflow/`；Colab 這台機器上只有運算過程中的暫存。"
+    "模型第一次下載後會在背景存入 Drive，**最後一格「儲存並結束」會等它存完並確實寫入 Drive**——"
+    "在那之前刪除 runtime，還沒存完的模型下次要重新下載。"
+)
+
+
+def _prefetch_cell(number, reg):
+    lines, pairs = [], []
+    for name, wf in reg["workflows"].items():
+        if not wf.get("models") or not wf.get("enabled", True):
+            continue
+        variable = "fetch_" + name.replace("-", "_")
+        gigabytes = sum(m["size"] for m in wf["models"]) / 1e9
+        lines += [
+            "#@markdown `%s`（%s，約 %.1f GB）" % (name, wf.get("title", name), gigabytes),
+            '%s = False  #@param {type:"boolean"}' % variable,
+        ]
+        pairs.append("%s: %s" % (lit(name), variable))
+    return code(
+        "%d. （選用）預先下載模型到 Google Drive" % number,
+        "#@markdown 勾選要先備好的 workflow。一次下載一個檔、驗證後直接存進 Drive，不需要 GPU，也不會生成任何東西。",
+        "#@markdown 已經在 Drive 上的檔案會略過。",
+        *lines,
+        "saved = nb.prefetch_models(session, {%s})" % ", ".join(pairs),
+    )
+
+
+def _finish_cell(number, with_queue=True):
+    if not with_queue:
+        return code(
+            "%d. 儲存並結束" % number,
+            "#@markdown 確認這個 session 寫入的東西都已進到 Google Drive（flush）。",
+            *RELEASE_LINES,
+            "summary = nb.finish(session, release_runtime)",
+        )
+    return code(
+        "%d. 儲存並結束" % number,
+        "#@markdown 等模型存入 Google Drive、把模型與生成結果確實寫入 Drive（flush），然後釋放 runtime。",
+        "#@markdown 想連續生成多張：先不要跑這一格，重複執行上一格；全部做完再跑這一格。",
+        "#@markdown ---",
+        "#@markdown （選用）結束前先繼續等待 Agent 建立的 job，像 01 一樣：",
+        'wait_for_jobs = False  #@param {type:"boolean"}',
+        *SERVE_LINES,
+        "if wait_for_jobs:",
+        "    summary = nb.serve(session, idle_minutes, release_runtime)",
+        "else:",
+        "    summary = nb.finish(session, release_runtime)",
+    )
 
 
 def setup_notebook(reg):
@@ -103,11 +156,16 @@ def setup_notebook(reg):
                 "- 檢查 Python／CUDA／GPU／VRAM／Drive／磁碟",
                 "- 準備 ComfyUI 與 Python 套件：工作區已有就解壓，沒有才安裝並存回工作區",
                 "",
-                "這本 notebook 不啟動 ComfyUI、不下載模型。模型在第一次執行對應的 workflow 時下載，之後都從工作區讀取。",
+                "這本 notebook 不啟動 ComfyUI。模型預設在第一次執行對應的 workflow 時下載；"
+                "想先把模型備好，勾選第 4 格的 workflow 再執行。",
+                "",
+                STORAGE_NOTE,
             ),
             BOOTSTRAP,
             code("2. 環境檢查與 ComfyUI 安裝", "actions = nb.setup(session)"),
-            code("3. 模型檢查（哪些已經在工作區）", "nb.check_models(session)"),
+            code("3. 模型檢查（哪些已經在 Google Drive）", "nb.check_models(session)"),
+            _prefetch_cell(4, reg),
+            _finish_cell(5, with_queue=False),
             md(
                 "下一步：`01_comfyui.ipynb`（啟動與 API 測試）、`02_image_generation.ipynb`、`03_video_generation.ipynb`。"
             ),
@@ -197,17 +255,6 @@ def _generate_cell(title, reg, kind, default_workflow, simple_lines, simple_name
     )
 
 
-def _serve_cell(number):
-    return code(
-        "%d. （選用）繼續等待 Agent 的 job" % number,
-        "#@markdown 勾選後，這本 notebook 會像 01 一樣留著執行佇列裡的 job。",
-        'wait_for_jobs = False  #@param {type:"boolean"}',
-        *SERVE_LINES,
-        "if wait_for_jobs:",
-        "    summary = nb.serve(session, idle_minutes, release_runtime)",
-    )
-
-
 def image_notebook(reg):
     wf = reg["workflows"]["z-image-basic"]
     aspect = wf["parameters"]["aspect"]
@@ -225,15 +272,18 @@ def image_notebook(reg):
                 "**執行階段 > 全部執行**：掛載 Drive → 啟動 ComfyUI → 用下面表單的內容生成一張圖 → PNG 存到 "
                 "`AI-Workflow/outputs/images/`。",
                 "",
-                "要再生一張：改表單，只重跑第 3 格。需要 **L4** 以上的 GPU。"
-                "第一次執行會下載模型（約 21 GB）並存進工作區，之後的 session 直接從工作區讀取。",
+                "「全部執行」會生成一張然後存檔並釋放 runtime。要連續生成多張：依序執行第 1–3 格，"
+                "改表單、重跑第 3 格幾次都可以，最後再執行第 4 格。需要 **L4** 以上的 GPU。"
+                "第一次執行會下載模型（約 21 GB）並存進 Google Drive，之後的 session 直接從 Drive 讀取。",
+                "",
+                STORAGE_NOTE,
                 "",
                 "安全負面詞與 CFG 下限（1.5）由 Core 套用，表單無法關閉。",
             ),
             BOOTSTRAP,
             code("2. 啟動 ComfyUI", "stats = nb.start_comfyui(session)", 'nb.check_models(session, "z-image-basic")'),
             _generate_cell("3. 生成圖片", reg, "image", "z-image-basic", simple_lines, ["prompt", "aspect"]),
-            _serve_cell(4),
+            _finish_cell(4),
         ],
         gpu="L4",
     )
@@ -272,7 +322,13 @@ def video_notebook(reg):
                 "**執行階段 > 全部執行**：掛載 Drive → 啟動 ComfyUI → 依 Prompt 生成首幀（Z-Image）→ H3 生成影片（含音訊）→ "
                 "MP4 存到 `AI-Workflow/outputs/videos/`，預覽圖在 `outputs/previews/`。",
                 "",
-                "需要 **A100**。第一次執行會下載模型（H3 約 43 GB、Z-Image 約 21 GB）並存進工作區。",
+                "「全部執行」會生成一支然後存檔並釋放 runtime。要連續生成多支：依序執行第 1–3 格，"
+                "重跑第 3 格，最後再執行第 4 格。",
+                "",
+                "需要 **A100**。第一次執行會下載模型（H3 約 43 GB、Z-Image 約 21 GB）並存進 Google Drive；"
+                "這麼大的檔案存進 Drive 需要一段時間，第 4 格會等它完成。",
+                "",
+                STORAGE_NOTE,
                 "",
                 "H3 沒有負面詞，所以 Prompt 會經過關鍵字過濾（命中就拒絕，沒有略過的選項），"
                 "首幀只能是本專案生成的圖，或由你聲明來源的 `inputs/` 圖片。不能使用真人照片。",
@@ -291,7 +347,7 @@ def video_notebook(reg):
                 extra_lines=frame_lines,
                 call_extra=', inputs={"first_frame": first_frame}',
             ),  # fmt: skip
-            _serve_cell(4),
+            _finish_cell(4),
         ],
         gpu="A100",
         high_mem=True,
