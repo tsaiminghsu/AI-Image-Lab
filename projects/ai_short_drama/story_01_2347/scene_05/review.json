@@ -1,0 +1,17 @@
+{
+  "story_id": "story_01_2347",
+  "scene_id": "scene_05",
+  "status": "HUMAN_REVIEW",
+  "approved_candidate": null,
+  "notes": "",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-02T23:06:34+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-02T23:06:34+08:00"
+    }
+  ]
+}

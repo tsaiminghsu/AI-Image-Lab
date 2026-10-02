@@ -1,0 +1,111 @@
+{
+  "10": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "11": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b_fp8_mixed.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    }
+  },
+  "12": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "13": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "shift": 3.0
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "wide symmetrical shot down the empty platform, the clock sign at the top centre, the tunnel mouth at the far end. An empty subway platform late at night with nobody on it, a large electronic clock sign hanging above the platform clearly showing the time. Setting: modern city subway platform at night, tiled floor with reflections, yellow safety line, empty tracks and tunnel mouth, an overhead electronic clock sign. Lighting: all platform fluorescent lights switched on, light reflecting off the polished tiles, the clock sign glowing red, tunnel lit by distant signal lights, every detail readable. Legible text in the image: the electronic clock sign reads \"23:46\", realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "clip": [
+        "11",
+        0
+      ]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, teenager, underage, young girl, lowres, blurry, deformed, extra limbs, bad anatomy, watermark, 3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers, people, person, crowd",
+      "clip": [
+        "11",
+        0
+      ]
+    }
+  },
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 720,
+      "height": 1280,
+      "batch_size": 1
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "13",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ],
+      "seed": 1000071,
+      "steps": 8,
+      "cfg": 2.0,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1.0
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "12",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "filename_prefix": "story_01_2347_s07_A"
+    }
+  }
+}
