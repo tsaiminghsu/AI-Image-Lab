@@ -322,6 +322,13 @@ def clean_line(value: str) -> str:
     return _ANSI_RE.sub("", value).replace("\r", "").rstrip("\n").rstrip()
 
 
+# What `colab exec` prints when its connection to the runtime dies. It then hangs instead of exiting
+# (2026-10-01, and again 2026-10-03 after the 4th clip of a batch), so waiting for the silence limit only
+# bills the A100 for another 15 minutes (~1.7 CU). A call that has an idle limit is a long `exec`; for those
+# the line itself ends the call at once, and the usual timeout handling stops the session.
+CONNECTION_LOST_MARKERS = ("Connection was lost",)
+
+
 def _kill(child: subprocess.Popen) -> None:
     if child.poll() is not None:
         return
@@ -412,6 +419,8 @@ def run_streaming(
             output.append(line)
             if on_line:
                 on_line(line)
+            if idle_timeout is not None and any(marker in line for marker in CONNECTION_LOST_MARKERS):
+                raise ColabTimeout(f"{label} lost its connection to the runtime (connection lost, not waiting)")
         try:
             returncode = child.wait(timeout=max(1.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired as exc:

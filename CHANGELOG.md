@@ -5,6 +5,17 @@
 
 ## 2026-10-03
 
+### H3：`colab exec` 一印出 `Connection was lost` 就直接結束並關機
+
+- **為什麼**：《23:47》Scene 2–7 那批在第 4 支做完後掉線，程式看到 `RuntimeError: Connection was lost.` 之後仍空等滿 900 秒
+  靜默限制才判 `TIMEOUT`，多花約 1.7 CU，而且那 15 分鐘什麼也沒做；10-01 那次更是白白空轉一小時、6.6 CU。
+- **做法**：`run_streaming` 在有靜默限制的呼叫（也就是長的 `exec`）上，一看到 `CONNECTION_LOST_MARKERS`（目前只有
+  `Connection was lost`）就拋 `ColabTimeout`，沿用原本的逾時處理：該支 `TIMEOUT`、session 關掉、批次的下一支用新 session。
+  那一行照樣寫進記錄。沒有靜默限制的短呼叫（upload、usage）不受影響，印出同樣字樣也不會被切掉。
+- **沒變**：沒印任何東西的卡死仍然是 900 秒靜默限制；掉線的那支不會自動重試。
+- **測試**：+2（遇到該行 10 秒內結束且行有被記錄；沒有靜默限制時忽略）。這是離線測試，沒有在真的掉線時驗證過。
+- 順手：`ruff format` 把另一個工作階段尚未 commit 的 `tests/test_job_webhook.py` 排版了一次（只有格式，20 個測試仍通過）。
+
 ### 《23:47》Scene 2–7 的 H3 影片，以及「從 Drive 複製比下載慢」→ 新增 `drive.model_source`
 
 - **第一批**（Scene 2–7、候選 B、各 8 秒、Scene 2/4/6 帶中文台詞，一個 manifest）：5 支完成、Scene 6 `TIMEOUT`。

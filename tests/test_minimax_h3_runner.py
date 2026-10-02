@@ -398,3 +398,26 @@ def test_exec_gets_the_idle_limit_and_nothing_else_does(tmp_path):
     limits = dict(zip(transport.subcommands, transport.idle_timeouts))
     assert limits["exec"] == 900
     assert limits["upload"] is None and limits["new"] is None
+
+
+def test_run_streaming_ends_at_once_when_the_exec_reports_a_lost_connection():
+    """The same failure as the silent hang, but the CLI says so: waiting out idle_timeout would only bill
+    another 15 minutes of A100 (2026-10-03: ~1.7 CU). The call ends on that line, so the session is stopped."""
+    script = "import time; print('RuntimeError: Connection was lost.', flush=True); time.sleep(30)"
+    started = time.monotonic()
+    seen = []
+    with pytest.raises(h3.ColabTimeout, match="connection lost"):
+        h3.run_streaming(
+            [sys.executable, "-c", script], label="exec", timeout=60, idle_timeout=600, on_line=seen.append
+        )
+    assert time.monotonic() - started < 10
+    assert seen == ["RuntimeError: Connection was lost."]  # the line is still logged
+
+
+def test_a_lost_connection_line_is_ignored_where_there_is_no_idle_limit():
+    """Only long exec calls carry an idle limit; a short call (upload, usage) printing the same words as
+    data must not be cut off."""
+    out = h3.run_streaming(
+        [sys.executable, "-c", "print('Connection was lost')"], label="usage", timeout=30, idle_timeout=None
+    )
+    assert out == ["Connection was lost"]

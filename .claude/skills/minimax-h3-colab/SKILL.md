@@ -93,9 +93,11 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
 
 ## Lessons from the 23:47 batches (2026-10-03; details in README "實戰遇到的問題與做法")
 
-- **Watch the log, not just the exit.** `colab exec` can print `RuntimeError: Connection was lost.` and then sit
-  silent; the runner only gives up after `exec_idle_timeout_seconds` (900 s, about 1.7 CU). In a long batch grep the
-  stderr log for that line and `colab stop` at once. A clip that was lost is not retried without asking (rule 4).
+- **A lost connection ends the call at once.** `colab exec` can print `RuntimeError: Connection was lost.` and then
+  hang. Since 2026-10-03 the runner stops on that line itself (`CONNECTION_LOST_MARKERS`, only for calls that have
+  an idle limit) instead of waiting `exec_idle_timeout_seconds` (900 s, about 1.7 CU): the clip ends `TIMEOUT`, the
+  session is stopped, and the save-to-Drive step is skipped because the kernel is busy. A clip that was lost is not
+  retried without asking (rule 4); the silence limit still covers a hang that prints nothing.
   A background waiter that times out is not the job ending: read the last JSON line of the stdout file and run
   `check.py` (`active runtimes 0`).
 - **Estimate with one lost session in it.** A 6-clip, 8 s batch estimated at 3-4 CU cost 6.54. Inside one session an

@@ -287,7 +287,7 @@ ffprobe 每一條規則、狀態機的每一條失敗路徑（壞圖／缺圖／
 | --- | --- | --- |
 | Docker Desktop 沒開 | `check.py` 回 `[FAIL] transport:docker`；`--dry-run` 只能驗 prompt 與輸入。Agent 不該自己啟動使用者的桌面程式 | 請使用者開 Docker，開好再 `check.py` |
 | 每台新 VM 都要按 Drive 同意 | 一批裡中途換 session（見下）又要按一次；這次第二個 session 沒人按，90 秒後自動送 Enter，掛載仍然成功（可能沿用同一天稍早的授權，沒有保證） | 看到 `DRIVE_CONSENT_NEEDED` 就請使用者按，按完才跑 `consent_done.py`；不要假設一定會成功 |
-| `colab exec` 掉線 | 一批 6 支做完第 4 支後（00:55:32）印出 `RuntimeError: Connection was lost.`，程式空等滿 900 秒才判 `TIMEOUT`、關 session，約 1.7 CU，下一支（Scene 6）沒做；批次自動開第二個 session 做最後一支。第一個 session 的「存到 Drive」那步因為 kernel 忙而被跳過 | 長批次監看 stderr 記錄，看到 `Connection was lost` 就馬上 `colab stop`，不用等 900 秒；掉線的那支要問過使用者再重跑（規則 4），不要自動重試 |
+| `colab exec` 掉線 | 一批 6 支做完第 4 支後（00:55:32）印出 `RuntimeError: Connection was lost.`，程式空等滿 900 秒才判 `TIMEOUT`、關 session，約 1.7 CU，下一支（Scene 6）沒做；批次自動開第二個 session 做最後一支。第一個 session 的「存到 Drive」那步因為 kernel 忙而被跳過 | **2026-10-03 起程式一看到 `Connection was lost` 就直接結束那次 exec、關 session**（`CONNECTION_LOST_MARKERS`），不再等 900 秒；沒印任何東西的卡死仍由 900 秒靜默限制處理。掉線的那支要問過使用者再重跑（規則 4），不要自動重試 |
 | 預估 CU 偏低 | 預估 6 支 3–4 CU，實際 6.54（含 1.7 的掉線）。同 session 內每支 8 秒約 315 秒推論、0.56 CU；新 session 的 setup＋模型＋存檔約 0.9–1.8 CU | 報預估時把「掉線一次」算進去；成本只看整批 settle 後的餘額差 |
 | 從 Drive 複製模型比下載慢 | 43 GB：Drive 複製 371–535 秒，HuggingFace 下載 172 秒 | `H3_MODEL_SOURCE=download`（影片照存 Drive）。這位使用者要求用下載 |
 | 說「鏡頭固定」但鏡頭還是推近 | 只寫 "The camera holds a steady shot." 時，Scene 4、6 的人物臉部愈拍愈近 | 使用者要固定鏡頭就加 `--constraint locked-camera`（規則 3：只有使用者要求時才加） |
