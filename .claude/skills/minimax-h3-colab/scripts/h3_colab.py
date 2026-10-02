@@ -57,6 +57,10 @@ GPUS = ("T4", "L4", "G4", "H100", "A100")
 # "consent": mount Google Drive on the VM (the user approves it in the browser, once per VM) so models and
 # clips are stored there. "off": nothing is stored on Drive - every session downloads the models again.
 DRIVE_MODES = ("consent", "off")
+# Where a session takes model files that are already in the Drive workspace: copy them from Drive, or download
+# them from the pinned revision anyway (measured 2026-10-03: staging 43 GB from Drive took 371-535 s, the
+# download 172 s). Clips are stored on Drive either way.
+MODEL_SOURCES = ("drive", "download")
 PERSIST_DRIVE, PERSIST_EPHEMERAL = "drive", "ephemeral"
 CONSENT_SIGNAL = "h3_drive_consent.signal"
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
@@ -164,6 +168,7 @@ ENV_OVERRIDES: dict[str, tuple[str, str, Callable[[str], Any]]] = {
     "H3_EXEC_IDLE_TIMEOUT_SECONDS": ("colab", "exec_idle_timeout_seconds", int),
     "H3_DRIVE": ("drive", "mode", str),
     "H3_DRIVE_WORKSPACE": ("drive", "workspace", str),
+    "H3_MODEL_SOURCE": ("drive", "model_source", str),
 }
 
 
@@ -238,6 +243,7 @@ def validate_config(config: dict) -> dict:
     final = d.get("finalize_timeout_seconds")
     _check(_is_int(final) and 60 <= final <= 7200, "drive.finalize_timeout_seconds must be an integer 60-7200")
     _check(isinstance(d.get("open_browser"), bool), "drive.open_browser must be true or false")
+    _check(d.get("model_source") in MODEL_SOURCES, f"drive.model_source must be one of {', '.join(MODEL_SOURCES)}")
     models = config.get("models")
     _check(isinstance(models, list) and len(models) >= 5, "models must list the pinned model files")
     for m in models:
@@ -1604,6 +1610,7 @@ class ColabSession:
             "persistence": self.persistence,
             "workspace": f"{d['mount']}/{d['workspace']}",
             "models": self.config["models"],
+            "model_source": d["model_source"],
             "drive_output": f"outputs/videos/{p.output.name}",
         }
 

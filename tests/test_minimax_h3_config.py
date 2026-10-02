@@ -118,3 +118,11 @@ def test_exec_idle_limit_defaults_to_fifteen_minutes_and_is_validated(tmp_path):
     local.write_text(json.dumps({"colab": {"exec_idle_timeout_seconds": 60}}), encoding="utf-8")
     with pytest.raises(h3.InputError):
         h3.load_config(local, env={})
+
+
+def test_model_source_defaults_to_drive_and_is_validated(tmp_path):
+    assert h3.load_config(tmp_path / "none.json", env={})["drive"]["model_source"] == "drive"
+    assert make_config(tmp_path, H3_MODEL_SOURCE="download")["drive"]["model_source"] == "download"
+    with pytest.raises(h3.InputError) as err:
+        make_config(tmp_path, H3_MODEL_SOURCE="copy")
+    assert err.value.code == "INVALID_CONFIG"

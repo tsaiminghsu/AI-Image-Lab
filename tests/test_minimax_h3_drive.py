@@ -465,3 +465,20 @@ def test_the_interactive_docker_command_gives_the_cli_a_terminal():
     )
     assert cmd[-3:] == ["-qfec", "colab --auth=oauth2 drivemount --session s1 /content/drive", "/dev/null"]
     assert "h3-colab-config:/root/.config/colab-cli" in cmd
+
+
+def test_model_source_download_ignores_a_full_drive_and_copies_nothing_back(vm, capsys):
+    """The user's choice after the first live runs (staging from Drive was slower than the download): the
+    files come from the pinned revision even though Drive holds them, are still verified, and Drive - which
+    already has them - gets no second copy."""
+    specs = small_specs()
+    remote.ensure_models(specs, vm.new_session())
+    wait_for_copies()
+    capsys.readouterr()
+
+    storage = dict(vm.new_session(), model_source="download")
+    remote.ensure_models(specs, storage)
+    assert set(actions(capsys).values()) == {"downloaded"} and len(vm.calls) == 5
+    assert remote.sync_threads() == []
+    for m in specs:
+        assert (remote.COMFY / "models" / m["folder"] / m["name"]).read_bytes() == blob(m["name"])

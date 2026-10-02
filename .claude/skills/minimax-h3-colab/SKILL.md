@@ -80,6 +80,8 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
    `AI-Workflow/models/` in the background; later sessions copy them from Drive instead (`model_actions`:
    `downloaded` / `staged` / `cached`). Before the session stops there is a "save to Drive" step that can
    take a while on that first run - the log shows it. `H3_DRIVE=off` skips Drive entirely.
+   `H3_MODEL_SOURCE=download` keeps Drive for the clips but downloads the models instead of copying them from
+   Drive (measured: copying took 371-535 s, downloading 172 s) - use it when the user asks for the download.
 6. **Result**: the last stdout line is JSON — the job record for one clip, the batch summary (records under
    `records`) for a batch. Report `status`, the output path(s), and from `ffprobe`: resolution, duration,
    fps, codecs; plus `gpu`, `elapsed_seconds`, `stage_seconds` (in a batch, `QUEUED` is the wait for

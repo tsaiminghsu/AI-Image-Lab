@@ -18,6 +18,7 @@
     "workspace": "MyDrive/AI-Workflow",
     "consent_wait_seconds": 90,
     "open_browser": true,
+    "model_source": "drive",
     "finalize_timeout_seconds": 3600
   },
   "output": {

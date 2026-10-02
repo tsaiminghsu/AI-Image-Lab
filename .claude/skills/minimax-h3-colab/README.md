@@ -42,6 +42,9 @@ Claude（SKILL.md、prompts/video_prompt.md）
   會自動開瀏覽器；按完後執行 `scripts\consent_done.py`（沒執行的話 `drive.consent_wait_seconds`，預設 90 秒後也會
   自動繼續）。**沒按同意**：這個 session 照樣出片，但模型重新下載、什麼都不存到 Drive，記錄的 `persistence` 是
   `ephemeral`。`drive.mode: "off"`（或 `H3_DRIVE=off`）則完全不掛 Drive。
+- **`drive.model_source: "download"`（或 `H3_MODEL_SOURCE=download`）**：Drive 照樣掛、影片照樣存 Drive，但模型一律從
+  釘選 revision 下載並驗 sha256，不從 Drive 複製（`model_actions` 會是 `downloaded`）。Drive 上已經有的檔不會再存一次。
+  理由是實測：從 Drive 複製 43 GB 花了 371–535 秒，直接下載是 172 秒。預設仍是 `drive`（複製）。
 - 本機 `output/` 仍然會下載一份 MP4：ffprobe 驗證和看畫面都靠它。Drive 那份是正本。
 - **Drive 路線「第一次 session」已實機跑過一次**（2026-10-03，見下面「Drive 路線實測」）：模型下載並存進 Drive、
   影片存進 Drive、session 照常關掉。**「第二個 session 從 Drive 複製、不重抓」還沒測**，那才是這條路的主要賣點，
@@ -203,7 +206,7 @@ CU 用三種方式記：
 `config/config.example.json` 是預設值；要改就建立 `config/config.json`（已 gitignore，只寫要改的鍵）。
 環境變數優先於設定檔：`H3_TRANSPORT`、`H3_DOCKER_IMAGE`、`H3_GPU`、`H3_HIGH_MEM`、`H3_TIMEOUT_SECONDS`、
 `H3_OUTPUT_DIR`、`H3_FFPROBE`、`H3_CU_SETTLE_SECONDS`、`H3_EXEC_IDLE_TIMEOUT_SECONDS`、`H3_DRIVE`（`consent`／`off`）、
-`H3_DRIVE_WORKSPACE`。命令列參數再優先於環境變數。
+`H3_DRIVE_WORKSPACE`、`H3_MODEL_SOURCE`（`drive`／`download`）。命令列參數再優先於環境變數。
 
 `drive` 區塊：`mode`、`mount`（`/content/drive`）、`workspace`（`MyDrive/AI-Workflow`）、`consent_wait_seconds`、
 `open_browser`、`finalize_timeout_seconds`。`models` 區塊是六個模型檔的釘選（repo、revision、size、sha256、Drive 上

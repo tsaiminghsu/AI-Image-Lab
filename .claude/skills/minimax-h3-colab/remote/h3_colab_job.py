@@ -369,6 +369,9 @@ def ensure_models(specs, storage):
     drive = storage.get("persistence") == "drive"
     workspace = Path(storage["workspace"]) if drive else None
     manifest = (read_json(workspace / MANIFEST, {}) or {}) if drive else {}
+    # model_source "download": take the files from the pinned revision even when Drive has them (copying
+    # 43 GB from Drive was measured slower than downloading it). Drive still receives whatever it lacks.
+    from_drive = storage.get("model_source", "drive") != "download"
 
     def fetch(spec):
         target = COMFY / "models" / spec["folder"] / spec["name"]
@@ -376,7 +379,7 @@ def ensure_models(specs, storage):
         t = time.monotonic()
         if target.is_file() and target.stat().st_size == spec["size"]:
             action = "cached"
-        elif drive and workspace_ok(spec, workspace, manifest):
+        elif drive and from_drive and workspace_ok(spec, workspace, manifest):
             copy_large(workspace / spec["store"] / spec["name"], target)
             action = "staged"
         else:
