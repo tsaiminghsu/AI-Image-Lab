@@ -171,6 +171,12 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   多支影片用 `--manifest`／`--segments` 共用一個 session（約 40 GB 模型只下載一次，實測三支 5 秒 1.51 CU，分開跑約
   2.55 CU）。Colab 帳號是幾個 Claude 工作階段共用的：開跑前會檢查帳號上有沒有別的 runtime（`COLAB_BUSY`），成本只看
   整批 settle 後的餘額差。實測數字見 CHANGELOG。
+  **儲存規則（2026-10-02，使用者定的）：下載的模型與生成的檔案都存 Google Drive，Colab 只放中間過程。**
+  skill 因此改成掛 Drive（`drive.mode: consent`，每台新 VM 要使用者按一次同意，按完跑 `scripts/consent_done.py`）：
+  模型 Drive 上有就複製到 VM、沒有才從釘選 revision 下載並背景存回 Drive，MP4 另存 `AI-Workflow/outputs/videos/`，
+  `colab stop` 之前多一次 exec 等複製完成並 flush。Drive 佈局與 manifest 跟 `ai_workflow/` 平台共用（43 GB 只有一份）。
+  存檔失敗或 kernel 卡住時**照樣關機**，只在記錄寫 warning。沒按同意＝`ephemeral`（跟以前一樣重抓、不存）。
+  **這條 Drive 路線只有離線測試，還沒實機跑過**；上面的 CU 數字都是改之前量的。
 - Z-Image Colab worker（2026-10-02）：Claude Code skill `.claude/skills/z-image-colab/`，文字 → Z-Image Turbo（官方
   bf16 權重）→ `output/zimage/<job_id>/result.png`。job 是本機檔案佇列（`submit.py`），`worker.py up` 開**一個**
   Colab L4 session 跑完整個佇列，閒置 `worker.idle_timeout_seconds` 後自動關。ComfyUI 原始碼、pip 套件、模型存在
@@ -189,6 +195,9 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `jobs/<狀態>/` 的 JSON；**單一寫入者規則**：建立之後只有 Colab 上的 worker 搬動 job 檔，本機只新增 pending 和
   cancel request（Drive 同步會把兩邊同時改的檔變成「(1)」複本）。Colab runtime 由使用者開 notebook 啟動，Agent 不會
   自己開、不花 CU。`scripts/deploy.py` 把程式部署到 Drive 電腦版的同步資料夾（路徑在已 gitignore 的
-  `configs/local.json`）。與兩個舊的 Colab skill 並存，沒有動它們。
-  **離線測試 167 個通過，但從未在真的 Colab 上跑過**，Google Drive 電腦版也還沒裝、還沒 deploy 過；實機驗收
+  `configs/local.json`）。與兩個舊的 Colab skill 並存（H3 skill 現在共用同一個 Drive 模型資料夾）。
+  儲存規則同上：模型與輸出在 Drive，VM 只有暫存。模型第一次下載後由背景複製到 Drive，所以 02／03 的最後一格是
+  「儲存並結束」（`nb.finish`：等複製完成 → flush Drive → 預設釋放 runtime），生成格會明講還有幾個檔沒存完；
+  `00_setup` 可以預先把模型下載到 Drive（一次一個檔，不需要 GPU）。job 結束後 VM 上不留它的檔案。
+  **離線測試 177 個通過，但從未在真的 Colab 上跑過**，Google Drive 電腦版也還沒裝、還沒 deploy 過；實機驗收
   （Phase 3–6、Test A／B／C／D、Session Restart）全部未做，時間／VRAM／CU／Drive 同步延遲都沒有數字。

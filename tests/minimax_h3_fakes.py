@@ -37,8 +37,9 @@ h3 = import_skill("h3_colab")
 
 
 def make_config(tmp_path, **env):
-    """Defaults from config.example.json, output under tmp_path, and no local config.json."""
-    env = {"H3_OUTPUT_DIR": str(tmp_path / "out"), "H3_CU_SETTLE_SECONDS": "0", **env}
+    """Defaults from config.example.json, output under tmp_path, and no local config.json. Google Drive is
+    off unless a test asks for it (H3_DRIVE="consent"): most tests are about the job state machine."""
+    env = {"H3_OUTPUT_DIR": str(tmp_path / "out"), "H3_CU_SETTLE_SECONDS": "0", "H3_DRIVE": "off", **env}
     return h3.load_config(tmp_path / "no-config.json", env=env)
 
 
@@ -121,10 +122,12 @@ class FakeTransport(h3.Transport):
 
     kind = "fake"
 
-    def __init__(self, **handlers):
+    def __init__(self, mount=None, **handlers):
         super().__init__("oauth2")
         self.calls = []
         self.idle_timeouts = []
+        self.mount = mount  # what `colab drivemount` answers; None = it must not be called
+        self.mount_calls = []
         self._usage = iter(
             [
                 "Current balance: 100.00 compute units\nUsage rate: 0.00/hr\nActive assignments: 0",
@@ -165,6 +168,17 @@ class FakeTransport(h3.Transport):
     def login_command(self):
         return "colab --auth=oauth2 usage"
 
+    def mount_drive(self, session, mount, *, wait_seconds, signal_path, on_url, on_line=None):
+        assert self.mount is not None, "drivemount was called although Drive is off"
+        self.calls.append(["drivemount", "--session", session, mount])
+        self.idle_timeouts.append(None)
+        self.mount_calls.append({"session": session, "mount": mount, "wait_seconds": wait_seconds})
+        if isinstance(self.mount, Exception):
+            raise self.mount
+        if self.mount.get("consent_asked"):
+            on_url("https://accounts.google.com/o/oauth2/auth?client_id=fake")
+        return dict(self.mount)
+
     def call(self, args, *, label, timeout, mount_dir=None, on_line=None, idle_timeout=None):
         self.calls.append(list(args))
         self.idle_timeouts.append(idle_timeout)
@@ -194,3 +208,37 @@ def raising(exc):
         raise exc
 
     return handler
+
+
+# --- model files (the Drive storage tests) -----------------------------------------------------------
+
+
+def blob(name):
+    return (name.encode() + b"|") * 30
+
+
+def small_specs(config=None, names=None):
+    """The skill's pinned model entries with the multi-GB size and sha256 replaced by those of a tiny blob."""
+    import hashlib
+
+    remote = import_remote()
+    names = names or [remote.DIFFUSION_FP8, remote.TEXT_ENCODER, remote.VIDEO_VAE, remote.AUDIO_VAE, remote.LORA]
+    config = config or json.loads((SKILL_DIR / "config" / "config.example.json").read_text(encoding="utf-8"))
+    by_name = {m["name"]: m for m in config["models"]}
+    return [dict(by_name[n], size=len(blob(n)), sha256=hashlib.sha256(blob(n)).hexdigest()) for n in names]
+
+
+def fake_hub(calls, fail=False, blobs=blob):
+    """A stand-in for the huggingface_hub module: writes the blob for the requested file under local_dir."""
+    import types
+
+    def hf_hub_download(repo_id, filename, revision, local_dir, token):
+        calls.append({"repo": repo_id, "file": filename, "revision": revision, "token": token})
+        if fail:
+            raise RuntimeError("HfHubHTTPError: 503 Service Unavailable")
+        target = Path(local_dir) / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(blobs(filename.rsplit("/", 1)[-1]))
+        return str(target)
+
+    return types.SimpleNamespace(hf_hub_download=hf_hub_download)

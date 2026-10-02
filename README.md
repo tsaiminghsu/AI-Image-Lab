@@ -2129,6 +2129,9 @@ $py = "ComfyUI\.venv\Scripts\python.exe"
 - 目前三個 workflow：`z-image-basic`、`minimax-h3-basic`（prompt → Z-Image 首幀 → H3 影片）、`test-generation`。
   新增模型＝一個 ComfyUI API 格式的 JSON＋`workflows/registry.json` 的一筆，不改 Core。
 - ComfyUI、pip 套件、模型（約 64 GB）第一次安裝後存在 Drive，之後的 session 只解壓和複製。
+- 儲存規則：下載的模型和生成的檔案都在 Google Drive，Colab 上只有運算過程的暫存。notebook 的最後一格
+  「儲存並結束」會等模型存完、flush Drive 再釋放 runtime；`00_setup` 可以預先把模型下載到 Drive。
+  MiniMax H3 skill 也照這個規則，而且跟平台共用同一份模型（`AI-Workflow/models/minimax-h3/`）。
 - 安全負面詞、cfg 下限 1.5、H3 的 prompt 過濾與首幀來源限制都在 Core 裡，表單和工具都關不掉。
 - **還沒有在真的 Colab 上跑過**，時間與 CU 都沒有數字。
 

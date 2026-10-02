@@ -6,12 +6,21 @@ import ast
 import json
 import os
 import sys
-import types
 from pathlib import Path
 
 import pytest
 
-from minimax_h3_fakes import REMOTE_PATH, FakeProber, h3, import_remote, make_config, make_image
+from minimax_h3_fakes import (
+    REMOTE_PATH,
+    FakeProber,
+    blob,
+    fake_hub,
+    h3,
+    import_remote,
+    make_config,
+    make_image,
+    small_specs,
+)
 
 remote = import_remote()
 
@@ -81,7 +90,8 @@ def test_pruned_base_is_paired_with_the_pruned_lora():
     assert remote.choose_diffusion("13.0") == remote.DIFFUSION_INT8
     assert remote.choose_diffusion("12.4") == remote.DIFFUSION_FP8
     assert remote.choose_diffusion(None) == remote.DIFFUSION_FP8
-    files = [f for _, f, _ in remote.model_files(remote.DIFFUSION_FP8)]
+    storage = {"models": make_config(Path("unused"))["models"]}
+    files = [m["path_in_repo"] for m in remote.needed_models(storage, remote.DIFFUSION_FP8)]
     assert files == [
         "diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
         "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
@@ -89,6 +99,7 @@ def test_pruned_base_is_paired_with_the_pruned_lora():
         "vae/minimax_h3_audio_vae_fp32.safetensors",
         "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
     ]
+    assert remote.needed_models(storage, remote.DIFFUSION_INT8)[0]["name"] == remote.DIFFUSION_INT8
 
 
 def object_info_for(graph, drop=None):
@@ -134,43 +145,38 @@ def test_markers_round_trip(capsys):
     assert h3.parse_marker("H3_GPU {not json}") is None
 
 
-def fake_hub(calls, fail=False):
-    def hf_hub_download(repo_id, filename, local_dir, token):
-        calls.append({"repo": repo_id, "file": filename, "token": token})
-        if fail:
-            raise RuntimeError("HfHubHTTPError: 503 Service Unavailable")
-        target = Path(local_dir) / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(b"\0" * 1024)
-        return str(target)
-
-    return types.SimpleNamespace(hf_hub_download=hf_hub_download)
-
-
 def test_models_download_in_parallel_with_xet_high_performance(tmp_path, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(remote, "COMFY", tmp_path / "ComfyUI")
+    monkeypatch.setattr(remote, "STAGE_DIR", tmp_path / "stage")
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub(calls))
     monkeypatch.delenv("HF_XET_HIGH_PERFORMANCE", raising=False)
-    sizes = remote.download_models(remote.DIFFUSION_FP8)
+    specs = small_specs()
+    sizes = remote.ensure_models(specs, {"persistence": "ephemeral"})
     assert os.environ["HF_XET_HIGH_PERFORMANCE"] == "1"
-    assert sorted(c["file"] for c in calls) == sorted(f for _, f, _ in remote.model_files(remote.DIFFUSION_FP8))
+    assert sorted(c["file"] for c in calls) == sorted(m["path_in_repo"] for m in specs)
     assert {c["token"] for c in calls} == {False}
+    assert {c["revision"] for c in calls} == {m["revision"] for m in specs}  # pinned, never "main"
     assert len(sizes) == 5
     models = [h3.parse_marker(line) for line in capsys.readouterr().out.splitlines()]
     assert [m[0] for m in models] == ["MODEL"] * 5 and not any(m[1]["cached"] for m in models)
+    assert {m[1]["action"] for m in models} == {"downloaded"}
+    for m in specs:
+        assert (tmp_path / "ComfyUI" / "models" / m["folder"] / m["name"]).read_bytes() == blob(m["name"])
 
 
 def test_models_already_on_the_vm_are_not_downloaded_again(tmp_path, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(remote, "COMFY", tmp_path / "ComfyUI")
+    monkeypatch.setattr(remote, "STAGE_DIR", tmp_path / "stage")
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub(calls))
     monkeypatch.delenv("HF_XET_HIGH_PERFORMANCE", raising=False)
-    for repo, name, folder in remote.model_files(remote.DIFFUSION_FP8):
-        target = tmp_path / "ComfyUI" / "models" / folder / Path(name).name
+    specs = small_specs()
+    for m in specs:
+        target = tmp_path / "ComfyUI" / "models" / m["folder"] / m["name"]
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(b"\0" * 10)
-    remote.download_models(remote.DIFFUSION_FP8)
+        target.write_bytes(blob(m["name"]))
+    remote.ensure_models(specs, {"persistence": "ephemeral"})
     assert calls == []
     models = [h3.parse_marker(line) for line in capsys.readouterr().out.splitlines()]
     assert all(m[1]["cached"] for m in models) and len(models) == 5
@@ -178,10 +184,11 @@ def test_models_already_on_the_vm_are_not_downloaded_again(tmp_path, monkeypatch
 
 def test_a_failed_model_download_propagates(tmp_path, monkeypatch):
     monkeypatch.setattr(remote, "COMFY", tmp_path / "ComfyUI")
+    monkeypatch.setattr(remote, "STAGE_DIR", tmp_path / "stage")
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub([], fail=True))
     monkeypatch.delenv("HF_XET_HIGH_PERFORMANCE", raising=False)
     with pytest.raises(RuntimeError, match="503"):
-        remote.download_models(remote.DIFFUSION_FP8)
+        remote.ensure_models(small_specs(), {"persistence": "ephemeral"})
 
 
 def test_job_file_names_where_the_last_frame_goes(tmp_path):

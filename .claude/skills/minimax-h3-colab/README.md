@@ -12,10 +12,39 @@
 Claude（SKILL.md、prompts/video_prompt.md）
   → scripts/run.py（本機，只用 Python 標準函式庫）
       → google-colab-cli 0.7.4（Windows 上跑在 Docker 容器裡）
+          → colab drivemount（掛 Google Drive；每台新 VM 要你按一次同意）
           → Colab A100：colab exec -f remote/h3_colab_job.py
+              → 模型：Drive 上有就複製到 VM，沒有才下載（下載後背景存回 Drive）
               → ComfyUI + MiniMax H3（pruned fp8 首幀模型 + turbo v4 LoRA，8 步）→ MP4
+              → MP4 複製到 Drive 的 AI-Workflow/outputs/videos/
+          → colab exec（H3_FINALIZE）：等模型存完 → flush Drive
+          → colab stop（一定會執行）
       ← colab download → ffprobe 驗證 → output/*.mp4 + 記錄
 ```
+
+## 存放位置（2026-10-02 起）
+
+規則：**下載的模型和生成的影片都存在 Google Drive，Colab 上只有運算過程中的暫存。**
+跟 `ai_workflow/` 平台共用同一個 Drive 資料夾與 manifest 格式，所以 43 GB 的模型只有一份：
+
+| Google Drive `AI-Workflow/` | Colab VM（session 結束就消失） |
+| --- | --- |
+| `models/minimax-h3/…`、`loras/`、`models/manifest.json` | ComfyUI、從 Drive 複製來的模型副本 |
+| `outputs/videos/<檔名>.mp4` | ComfyUI 的輸出暫存、最後一格 |
+
+- 每個模型檔三種結果，記在 job 記錄的 `model_actions`：`cached`（這台 VM 已經有）、`staged`（從 Drive 複製）、
+  `downloaded`（從 HuggingFace 的**釘選 revision** 下載並驗 sha256，之後背景複製到 Drive）。manifest 只在複製完成後才寫，
+  所以傳到一半的檔案下次不會被當成完整檔。複製失敗的檔，同一個 session 的下一支影片會再存一次，不會重抓。
+- session 結束前會多一步「存檔」：等背景複製做完、flush Drive，結果記在 `drive_saved`。這一步失敗或逾時
+  （`drive.finalize_timeout_seconds`，預設 3600 秒）**不會擋住關機**——只會在記錄的 `warnings` 寫明哪些可能沒存到。
+  kernel 卡住（exec 逾時、Ctrl+C）時這一步直接跳過，同樣先關機。
+- **每台新 VM 都要你在瀏覽器按一次 Drive 同意**（Colab 的限制，10-01 實測）。log 出現 `DRIVE_CONSENT_NEEDED` 時
+  會自動開瀏覽器；按完後執行 `scripts\consent_done.py`（沒執行的話 `drive.consent_wait_seconds`，預設 90 秒後也會
+  自動繼續）。**沒按同意**：這個 session 照樣出片，但模型重新下載、什麼都不存到 Drive，記錄的 `persistence` 是
+  `ephemeral`。`drive.mode: "off"`（或 `H3_DRIVE=off`）則完全不掛 Drive。
+- 本機 `output/` 仍然會下載一份 MP4：ffprobe 驗證和看畫面都靠它。Drive 那份是正本。
+- **還沒有實機跑過這條 Drive 路線**（下面的實測數字都是改之前、每次重新下載的）。43 GB 寫進 Drive 要多久、
+  從 Drive 複製回 VM 要多久、flush 要多久都還不知道。
 
 - **為什麼用 Docker**：google-colab-cli 官方只支援 Linux／macOS，它在啟動時就 `import termios`，
   Windows 上連 `colab version` 都跑不起來。每次呼叫都是一個用完即丟的容器，OAuth token 和 session
@@ -151,7 +180,7 @@ PENDING → PREPARING → CONNECTING_COLAB → UPLOADING → LOADING_MODEL → I
 
 ## 輸出與成本記錄
 
-- `output/<名稱>.mp4`：影片
+- `output/<名稱>.mp4`：影片（本機副本；正本在 Drive 的 `AI-Workflow/outputs/videos/`，路徑記在 `drive_output`）
 - `output/<名稱>.job.json`：完整記錄（prompt、設定、每個階段秒數、GPU、VRAM 峰值、ffprobe 摘要、CU）
 - `output/h3_jobs.jsonl`：成本總帳，每個 job 一行
 - `output/logs/<job_id>.log`：完整 log，每行都有 `[狀態]`
@@ -172,7 +201,12 @@ CU 用三種方式記：
 
 `config/config.example.json` 是預設值；要改就建立 `config/config.json`（已 gitignore，只寫要改的鍵）。
 環境變數優先於設定檔：`H3_TRANSPORT`、`H3_DOCKER_IMAGE`、`H3_GPU`、`H3_HIGH_MEM`、`H3_TIMEOUT_SECONDS`、
-`H3_OUTPUT_DIR`、`H3_FFPROBE`、`H3_CU_SETTLE_SECONDS`、`H3_EXEC_IDLE_TIMEOUT_SECONDS`。命令列參數再優先於環境變數。
+`H3_OUTPUT_DIR`、`H3_FFPROBE`、`H3_CU_SETTLE_SECONDS`、`H3_EXEC_IDLE_TIMEOUT_SECONDS`、`H3_DRIVE`（`consent`／`off`）、
+`H3_DRIVE_WORKSPACE`。命令列參數再優先於環境變數。
+
+`drive` 區塊：`mode`、`mount`（`/content/drive`）、`workspace`（`MyDrive/AI-Workflow`）、`consent_wait_seconds`、
+`open_browser`、`finalize_timeout_seconds`。`models` 區塊是六個模型檔的釘選（repo、revision、size、sha256、Drive 上
+的位置）；其中五個與 `ai_workflow/workflows/registry.json` 完全相同（測試會比對），第六個是 CUDA 13 用的 int8 版。
 
 設定檔**不能放任何機密**：鍵名含 key／token／secret／password／credential 會直接被拒絕。唯一的憑證是
 colab CLI 自己的 OAuth token，放在 Docker volume 裡。
@@ -191,7 +225,7 @@ H3 用不上，所以改用兩道補償控管（CLAUDE.md「年齡安全」有�
 
 | 層級 | 怎麼跑 | 需要 |
 | --- | --- | --- |
-| 單元（189 條） | `powershell -ExecutionPolicy Bypass -File check.ps1` | 什麼都不需要（CI 也跑） |
+| 單元（225 條） | `powershell -ExecutionPolicy Bypass -File check.ps1` | 什麼都不需要（CI 也跑） |
 | 整合（CPU runtime 來回） | `$env:H3_LIVE_COLAB="1"; .venv-dev\Scripts\python.exe -m pytest -m live tests/test_minimax_h3_live.py` | Docker、已登入；佔用 CPU runtime 一兩分鐘 |
 | 真實推論 | 上面的 `run.py` 指令 | A100 與 CU |
 
@@ -266,6 +300,8 @@ ffprobe 每一條規則、狀態機的每一條失敗路徑（壞圖／缺圖／
 ## 限制與下一階段
 
 - 一批只能用同一種 GPU，最多 20 支；不同 GPU 要分兩批。
+- 存 Drive 之後不再是完全無人值守：每台新 VM 要按一次 Drive 同意。ComfyUI 本身仍然每個 session 重新 clone
+  （那是中間過程，不在儲存規則內）。
 - 目前只有首幀模式。Ref2VA（1–9 張參照圖）和首尾幀模式，notebook 那邊已經有對應的節點，下一階段再開。
 - 還沒做的：多鏡頭／分鏡 → FFmpeg 串接、R2 上傳、音訊替換、Lip Sync、放大、補幀。
   `JobSpec` 的 `job_id`／`scene_id`／`input`／`prompt`／`settings`／`output` 結構就是為這些預留的。

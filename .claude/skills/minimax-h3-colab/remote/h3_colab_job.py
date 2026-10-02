@@ -1,8 +1,21 @@
 """Runs ON the Colab VM, sent by the local runner with `colab exec -f`. Keep this file ASCII-only.
 
-It installs ComfyUI, downloads MiniMax H3 (first-frame / I2VA mode), renders one clip and copies the
+It installs ComfyUI, makes MiniMax H3 (first-frame / I2VA mode) available, renders one clip and copies the
 MP4 to the path the local runner downloads. Parameters come from the JSON file named by H3_JOB_FILE
 (uploaded next to the first frame), so no value ever has to survive Windows -> Docker -> CLI quoting.
+
+Storage rule: the model files and the finished clip belong in Google Drive; this VM only holds work in
+progress. When the runner mounted Drive (job["storage"]["persistence"] == "drive"):
+- a model file that is in the workspace with the pinned size and a manifest entry for the pinned revision and
+  sha256 is copied to the VM ("staged") instead of downloaded;
+- a file that had to be downloaded is verified, used from the VM, and copied into the workspace by a
+  background thread; its manifest entry is written only after the copy is complete. The threads live in the
+  kernel (on the sys module), so they keep running between two `colab exec` calls of one session;
+- the finished MP4 is copied to <workspace>/outputs/videos/;
+- before the session is stopped the runner runs this file once more with H3_FINALIZE set: wait for the
+  copies, then flush the mount.
+The workspace layout and the manifest format are the ones of ai_workflow/ (controller/environment.py), so the
+skill and the platform share one copy of the 43 GB. Without Drive ("ephemeral") nothing is kept.
 
 Progress and results are single-line markers, `H3_<KIND> {json}`, parsed by the runner while it streams
 the output. `colab exec` exits 0 even when this code raises, so every failure path prints `H3_ERROR`
@@ -14,6 +27,7 @@ model pairing of the killkli/minimax-h3-colab-skill notebook's first-frame mode:
 the pruned base. No `from __future__` import here: `colab exec --env` prepends code to this file.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -26,7 +40,11 @@ import urllib.request
 from pathlib import Path
 
 JOB_FILE_ENV = "H3_JOB_FILE"
+FINALIZE_ENV = "H3_FINALIZE"
 COMFY = Path("/content/ComfyUI")
+STAGE_DIR = Path("/content/h3_stage")
+MANIFEST = "models/manifest.json"
+SYNC_ATTR = "_h3_model_sync"
 VHS = COMFY / "custom_nodes" / "ComfyUI-VideoHelperSuite"
 SETUP_MARKER = Path("/content/.h3_comfyui_setup_v1")
 COMFY_LOG = Path("/content/comfyui_h3.log")
@@ -97,15 +115,111 @@ def choose_diffusion(cuda_version):
     return DIFFUSION_INT8 if (cuda_version or "").startswith("13.") else DIFFUSION_FP8
 
 
-def model_files(diffusion):
-    """(repo, file in repo, ComfyUI models/ subfolder)."""
-    return [
-        (BASE_REPO, "diffusion_models/" + diffusion, "diffusion_models"),
-        (BASE_REPO, "text_encoders/" + TEXT_ENCODER, "text_encoders"),
-        (BASE_REPO, "vae/" + VIDEO_VAE, "vae"),
-        (BASE_REPO, "vae/" + AUDIO_VAE, "vae"),
-        (LORA_REPO, LORA, "loras"),
-    ]
+def needed_models(storage, diffusion):
+    """The pinned entries (repo, revision, size, sha256, where it lives in the workspace) of the five files
+    the graph loads, in a fixed order. The pins come from the runner's config; a file without one is refused."""
+    by_name = dict((m["name"], m) for m in storage.get("models", []))
+    names = [diffusion, TEXT_ENCODER, VIDEO_VAE, AUDIO_VAE, LORA]
+    missing = [n for n in names if n not in by_name]
+    if missing:
+        raise StageError("MODEL_DOWNLOAD_FAILED", "no pinned model entry for %s" % missing)
+    return [by_name[n] for n in names]
+
+
+def read_json(path, default=None):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def write_json_atomic(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=True) + chr(10), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def sha256_file(path, block=8 * 2**20):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(block)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def copy_large(src, dst, block=64 * 2**20):
+    """Copy to a .partial name, then rename: a half-copied file never carries the final name."""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    partial = dst.with_name(dst.name + ".partial")
+    with open(src, "rb") as fi, open(partial, "wb") as fo:
+        shutil.copyfileobj(fi, fo, block)
+    os.replace(partial, dst)
+
+
+def workspace_ok(spec, workspace, manifest):
+    """A complete, verified copy is in the workspace: the pinned size, and a manifest entry (written only
+    after a finished copy) for the pinned revision and sha256."""
+    path = Path(workspace) / spec["store"] / spec["name"]
+    entry = manifest.get("%s/%s" % (spec["store"], spec["name"])) or {}
+    return (
+        path.is_file()
+        and path.stat().st_size == spec["size"]
+        and entry.get("revision") == spec["revision"]
+        and entry.get("sha256") == spec["sha256"]
+    )
+
+
+def sync_threads():
+    """The model-copy threads of this kernel. Kept on the sys module so a later `colab exec` finds them."""
+    threads = getattr(sys, SYNC_ATTR, None)
+    if threads is None:
+        threads = []
+        setattr(sys, SYNC_ATTR, threads)
+    return threads
+
+
+def pending_sync():
+    return [spec["name"] for t in sync_threads() for spec, _ in t.results if spec["name"] not in t.report]
+
+
+class ModelSync(threading.Thread):
+    """Copies downloaded model files into the workspace while the clip renders from the VM's copy."""
+
+    lock = threading.Lock()
+
+    def __init__(self, results, workspace):
+        threading.Thread.__init__(self, name="h3-model-sync", daemon=True)
+        self.results = list(results)
+        self.workspace = Path(workspace)
+        self.report = {}
+
+    def run(self):
+        for spec, local in self.results:
+            t = time.monotonic()
+            try:
+                copy_large(local, self.workspace / spec["store"] / spec["name"])
+                with self.lock:
+                    manifest = read_json(self.workspace / MANIFEST, {}) or {}
+                    manifest["%s/%s" % (spec["store"], spec["name"])] = {
+                        "name": spec["name"],
+                        "revision": spec["revision"],
+                        "source": "https://huggingface.co/%s/resolve/%s/%s"
+                        % (spec["repo"], spec["revision"], spec["path_in_repo"]),
+                        "size": spec["size"],
+                        "sha256": spec["sha256"],
+                        "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    }
+                    write_json_atomic(self.workspace / MANIFEST, manifest)
+            except OSError as exc:
+                self.report[spec["name"]] = "failed: %s" % exc
+                continue
+            self.report[spec["name"]] = "copied in %.1f s" % (time.monotonic() - t)
 
 
 def build_graph(job, diffusion):
@@ -243,35 +357,129 @@ def setup_comfyui():
     marker("COMFYUI", commit=commit)
 
 
-def download_models(diffusion):
-    """Fetch the missing model files in parallel. Already-present files (a reused session) are skipped and
-    reported as cached; any failure surfaces as MODEL_DOWNLOAD_FAILED through main()."""
+def ensure_models(specs, storage):
+    """Make the model files available under ComfyUI/models, in parallel: already on this VM ("cached"), copied
+    from the Drive workspace ("staged"), or downloaded from the pinned revision and verified ("downloaded").
+    With Drive, whatever is not in the workspace yet is then copied there in the background. Any failure
+    surfaces as MODEL_DOWNLOAD_FAILED through main()."""
     # Official huggingface_hub switch for faster Xet transfers; it must be set before the import.
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     from concurrent.futures import ThreadPoolExecutor
 
-    from huggingface_hub import hf_hub_download
+    drive = storage.get("persistence") == "drive"
+    workspace = Path(storage["workspace"]) if drive else None
+    manifest = (read_json(workspace / MANIFEST, {}) or {}) if drive else {}
 
-    def fetch(item):
-        repo, remote_name, folder = item
-        target = COMFY / "models" / folder / Path(remote_name).name
+    def fetch(spec):
+        target = COMFY / "models" / spec["folder"] / spec["name"]
         target.parent.mkdir(parents=True, exist_ok=True)
         t = time.monotonic()
-        cached = target.is_file() and target.stat().st_size > 0
-        if not cached:
-            local_dir = COMFY / "models" if repo == BASE_REPO else COMFY / "models" / "loras"
+        if target.is_file() and target.stat().st_size == spec["size"]:
+            action = "cached"
+        elif drive and workspace_ok(spec, workspace, manifest):
+            copy_large(workspace / spec["store"] / spec["name"], target)
+            action = "staged"
+        else:
+            from huggingface_hub import hf_hub_download
+
             # token=False: the repos are public, and without it huggingface_hub asks the Colab secret
             # store for HF_TOKEN, which only answers inside the Colab UI (a 10 s timeout, measured).
-            got = Path(hf_hub_download(repo_id=repo, filename=remote_name, local_dir=str(local_dir), token=False))
-            if got.resolve() != target.resolve():
-                raise StageError("MODEL_DOWNLOAD_FAILED", "downloaded to %s, expected %s" % (got, target))
-        gib = round(target.stat().st_size / 2**30, 2)
-        marker("MODEL", name=target.name, gib=gib, seconds=round(time.monotonic() - t, 1), cached=cached)
-        return target.name, gib
+            got = Path(
+                hf_hub_download(
+                    repo_id=spec["repo"],
+                    filename=spec["path_in_repo"],
+                    revision=spec["revision"],
+                    local_dir=str(STAGE_DIR),
+                    token=False,
+                )
+            )
+            size = got.stat().st_size
+            digest = sha256_file(got) if size == spec["size"] else None
+            if digest != spec["sha256"]:
+                raise StageError(
+                    "MODEL_DOWNLOAD_FAILED",
+                    "%s: %d bytes, sha256 %s; the pin says %d bytes, %s"
+                    % (spec["name"], size, digest, spec["size"], spec["sha256"]),
+                )
+            os.replace(got, target)
+            action = "downloaded"
+        gib = round(spec["size"] / 2**30, 2)
+        marker(
+            "MODEL",
+            name=spec["name"],
+            gib=gib,
+            seconds=round(time.monotonic() - t, 1),
+            action=action,
+            cached=action == "cached",
+        )
+        return spec, target, gib
 
-    files = model_files(diffusion)
-    with ThreadPoolExecutor(max_workers=len(files)) as pool:
-        return dict(pool.map(fetch, files))
+    # Copying 20 GB from Drive or hashing it prints nothing for minutes, and the runner stops a session whose
+    # exec has been silent for too long (a lost connection looks the same). So: a heartbeat while this runs.
+    quiet = threading.Event()
+
+    def tick():
+        while not quiet.wait(60):
+            marker("HEARTBEAT", stage="models")
+
+    threading.Thread(target=tick, daemon=True).start()
+    try:
+        with ThreadPoolExecutor(max_workers=len(specs)) as pool:
+            results = list(pool.map(fetch, specs))
+    finally:
+        quiet.set()
+    if drive:
+        # Everything that is on this VM but not in the workspace and not already on its way there: the fresh
+        # downloads, and files whose earlier copy failed.
+        busy = pending_sync()
+        todo = [
+            (spec, target)
+            for spec, target, _ in results
+            if not workspace_ok(spec, workspace, manifest) and spec["name"] not in busy
+        ]
+        if todo:
+            thread = ModelSync(todo, workspace)
+            thread.start()
+            sync_threads().append(thread)
+            marker("MODEL_SYNC_STARTED", files=[spec["name"] for spec, _ in todo])
+    return dict((spec["name"], gib) for spec, _, gib in results)
+
+
+def save_output(video, storage):
+    """Copy the finished clip into the workspace. A failure is reported, not raised: the runner still
+    downloads its own copy, and the clip must not be lost over a Drive hiccup."""
+    if storage.get("persistence") != "drive":
+        return
+    rel = storage["drive_output"]
+    try:
+        copy_large(video, Path(storage["workspace"]) / rel)
+    except OSError as exc:
+        marker("DRIVE_OUTPUT_FAILED", path=rel, message=str(exc)[-500:])
+        return
+    marker("DRIVE_OUTPUT", path=rel, bytes=Path(video).stat().st_size)
+
+
+def finalize():
+    """Run by the runner right before it stops the session: wait until every model copy has ended, report
+    each one, then flush the mounted Drive so the files are really there. Prints a heartbeat while waiting -
+    the runner treats a silent exec as a lost connection."""
+    report = {}
+    for thread in sync_threads():
+        while thread.is_alive():
+            thread.join(30)
+            if thread.is_alive():
+                marker("HEARTBEAT", syncing=pending_sync())
+        report.update(thread.report)
+    marker("MODEL_SYNC", report=report)
+    t = time.monotonic()
+    try:
+        from google.colab import drive
+
+        drive.flush_and_unmount()
+    except Exception as exc:
+        marker("ERROR", code="DRIVE_FLUSH_FAILED", message=("%s: %s" % (type(exc).__name__, exc))[-1000:])
+        raise
+    marker("DRIVE_FLUSHED", seconds=round(time.monotonic() - t, 1))
 
 
 def save_last_frame(video, target):
@@ -429,8 +637,10 @@ def main():
         stage = "download"
         marker("STAGE", name="LOADING_MODEL")
         diffusion = choose_diffusion(gpu["cuda"])
+        storage = job.get("storage") or {}
+        marker("STORAGE", persistence=storage.get("persistence"), workspace=storage.get("workspace"))
         t = time.monotonic()
-        sizes = download_models(diffusion)
+        sizes = ensure_models(needed_models(storage, diffusion), storage)
         marker("TIMING", stage="download", seconds=round(time.monotonic() - t, 1))
 
         stage = "inference"
@@ -481,6 +691,7 @@ def main():
         out = Path(job["remote_output"])
         shutil.copy2(video, out)
         marker("OUTPUT", path=str(out), bytes=out.stat().st_size, streams=streams)
+        save_output(out, storage)
         if job.get("remote_last_frame") and save_last_frame(out, job["remote_last_frame"]):
             marker("LAST_FRAME", path=job["remote_last_frame"])
         marker("TIMING", stage="total", seconds=round(time.monotonic() - started, 1))
@@ -495,4 +706,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if os.environ.get(FINALIZE_ENV):
+        finalize()
+    else:
+        main()

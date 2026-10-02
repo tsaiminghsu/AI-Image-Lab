@@ -5,6 +5,36 @@
 
 ## 2026-10-02
 
+### 儲存規則：模型與生成結果存 Google Drive，Colab 只放中間過程（離線完成，尚未實機驗證）
+
+- **為什麼**：你定的規則——下載的模型存 Drive、生成的檔案存 Drive、Colab 上只有運算過程。平台本來就朝這個方向做，
+  但沒有保證到；H3 skill 則完全不符合（每個 session 重抓 43 GB，MP4 只回本機）。
+- **平台 `ai_workflow/` 補了三個洞**：
+  - 模型第一次下載是先落在 VM、再背景複製到 Drive，人工模式下沒有人等它、也不 flush。現在生成格會寫
+    「還有 N 個檔正在存入 Google Drive，請勿刪除 runtime」，02／03 的最後一格改成「儲存並結束」
+    （等複製完成 → flush → 預設釋放 runtime）；`serve()` 不釋放 runtime 時也會 flush。
+  - 複製到 Drive 失敗的檔以前在同一個 session 不會重試，現在下一個 job 會用 VM 上那份再存一次，不重新下載。
+  - ComfyUI 在 VM 上的輸出暫存與 `ComfyUI/input/` 的首幀以前不清，現在 job 結束（成功或失敗）就刪。
+  - 新增：`00_setup` 的「預先下載模型到 Google Drive」——一次一個檔（下載 → 驗 sha256 → 存 Drive → 刪 VM 副本），
+    不需要 GPU，磁碟只要放得下最大的單檔。
+  - `logs/worker_state.json` 多了 `model_sync`，工具的 `status` 也看得到還有哪些檔沒存完。
+- **H3 skill 改成存 Drive**，而且跟平台共用同一個資料夾（`AI-Workflow/models/minimax-h3/`、`loras/`、
+  `models/manifest.json`、`outputs/videos/`），43 GB 只有一份：
+  - 模型現在**釘選 revision 並驗 sha256**（以前抓的是當下的 main、不驗）。五個檔的釘選與平台 registry 相同，
+    另加 CUDA 13 用的 int8 版（20,970,379,616 bytes）。
+  - VM 上每個檔三選一：已經有（`cached`）／從 Drive 複製（`staged`）／下載後背景存回 Drive（`downloaded`）。
+  - `colab new` 之後掛 Drive（需要你按同意；`scripts/consent_done.py` 讓它不用等滿 90 秒）；`colab stop` 之前多一次
+    `colab exec` 等複製完成並 flush。
+  - **存檔永遠不會擋住關機**：finalize 失敗、逾時、或 kernel 卡住時都照樣 `colab stop`，只在記錄寫明哪些可能沒存到
+    （10-01 那次 exec 掛住空轉 6.6 CU 的教訓）。
+  - 本機 `output/` 仍然下載一份 MP4（ffprobe 驗證與看畫面要用）。
+  - 沒按同意或 `H3_DRIVE=off`：跟以前一樣，重新下載、不存。
+- **離線測試**：平台 177 個（新增 10）、H3 225 個（新增 36）。其中一條是交叉驗證：H3 skill 寫的 manifest 通過平台的
+  `model_status` 檢查，平台存的模型會被 H3 skill 判成 `staged`。
+- **還不知道的**：43 GB 寫進 Drive 與 `flush_and_unmount()` 各要多久；從 Drive 複製回 VM 比 HuggingFace 下載
+  （實測 5–6 分鐘）快還是慢；`colab exec` 結束後 kernel 裡的背景 thread 是否如預期繼續跑（H3 skill 靠這個邊算下一支
+  邊存模型，不行的話要退回「每支影片結束前等複製完成」）。模型放 Drive 已經定案，這些數字只影響每個 session 開頭要等多久。
+
 ### AI Workflow 平台：不綁 AI 供應商的 Drive＋Colab＋ComfyUI 工作流（離線完成，尚未實機驗證）
 
 - **為什麼**：兩個 Colab skill（Z-Image worker、MiniMax H3）都只有 Claude 能用、佇列在本機、workflow 寫死在程式裡，

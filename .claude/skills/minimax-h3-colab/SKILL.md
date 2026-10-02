@@ -30,6 +30,13 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
    them when you start and when you finish.
 6. You cannot complete Google sign-in. On `AUTH_REQUIRED`, give the user the login command from the
    `hint` and wait for them.
+7. **Models and clips are stored in Google Drive; the Colab VM only holds work in progress.** Every new VM
+   asks the user for Drive consent: when the log says `DRIVE_CONSENT_NEEDED`, a Google page opens in their
+   browser - tell them to approve it, and run `python scripts/consent_done.py` only after they say they did.
+   You cannot click it for them. If the record's `persistence` is `ephemeral`, say plainly that the models
+   were downloaded for this session only and nothing was stored on Drive. Report any warning that starts with
+   "Google Drive may not hold everything" or mentions the skipped save step. The session is stopped whether
+   or not the save worked - never keep a runtime alive to retry it.
 
 ## Workflow
 
@@ -68,10 +75,16 @@ repo root. Paths below are relative to `.claude/skills/minimax-h3-colab/`.
      `"chain": true` to continue the previous job).
    - a clip that fails is skipped and the batch carries on; a clip after a failed one that chains from it
      ends `CHAIN_SOURCE_FAILED`.
+
+   With Drive, the first session ever downloads the ~43 GB of models and copies them to
+   `AI-Workflow/models/` in the background; later sessions copy them from Drive instead (`model_actions`:
+   `downloaded` / `staged` / `cached`). Before the session stops there is a "save to Drive" step that can
+   take a while on that first run - the log shows it. `H3_DRIVE=off` skips Drive entirely.
 6. **Result**: the last stdout line is JSON — the job record for one clip, the batch summary (records under
    `records`) for a batch. Report `status`, the output path(s), and from `ffprobe`: resolution, duration,
    fps, codecs; plus `gpu`, `elapsed_seconds`, `stage_seconds` (in a batch, `QUEUED` is the wait for
-   earlier clips). For cost, quote `cu_used_settled` (read again `cu_settle_seconds`, default 120 s, after
+   earlier clips), and where it is stored: `drive_output` (the path under `AI-Workflow/` on Google Drive -
+   the copy of record), `persistence`, `model_actions` and `drive_saved`. For cost, quote `cu_used_settled` (read again `cu_settle_seconds`, default 120 s, after
    the session is stopped — Colab deducts late). Do not quote a batch clip's own `cu_used_measured`: late
    deductions land on the next clip (measured 0.95 / 0.00 / 0.56). After a success, it is worth extracting
    a few frames with ffmpeg to look at them (motion quality is not something ffprobe can judge).

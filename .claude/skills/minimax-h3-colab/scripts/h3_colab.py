@@ -25,6 +25,7 @@ import os
 import queue
 import random
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -53,8 +54,14 @@ MAX_PROMPT_CHARS = 4000
 # Beyond this the first frame is visibly stretched onto the video canvas.
 ASPECT_TOLERANCE = 0.02
 GPUS = ("T4", "L4", "G4", "H100", "A100")
+# "consent": mount Google Drive on the VM (the user approves it in the browser, once per VM) so models and
+# clips are stored there. "off": nothing is stored on Drive - every session downloads the models again.
+DRIVE_MODES = ("consent", "off")
+PERSIST_DRIVE, PERSIST_EPHEMERAL = "drive", "ephemeral"
+CONSENT_SIGNAL = "h3_drive_consent.signal"
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 IMAGE_CODECS = ("png", "mjpeg", "webp", "bmp")
+FINALIZE_ENV = "H3_FINALIZE"  # must match remote/h3_colab_job.py; tests assert it
 JOB_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 SESSION_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -155,6 +162,8 @@ ENV_OVERRIDES: dict[str, tuple[str, str, Callable[[str], Any]]] = {
     "H3_FFPROBE": ("tools", "ffprobe", str),
     "H3_CU_SETTLE_SECONDS": ("colab", "cu_settle_seconds", int),
     "H3_EXEC_IDLE_TIMEOUT_SECONDS": ("colab", "exec_idle_timeout_seconds", int),
+    "H3_DRIVE": ("drive", "mode", str),
+    "H3_DRIVE_WORKSPACE": ("drive", "workspace", str),
 }
 
 
@@ -213,6 +222,37 @@ def validate_config(config: dict) -> dict:
     _check(isinstance(mp, (int, float)) and 0.1 <= mp <= 4, "video.max_megapixels must be 0.1-4")
     _check(isinstance(config["output"].get("directory"), str) and config["output"]["directory"], "output.directory")
     _check(isinstance(config["tools"].get("ffprobe", ""), str), "tools.ffprobe must be a path string")
+    d = config["drive"]
+    _check(d.get("mode") in DRIVE_MODES, f"drive.mode must be one of {', '.join(DRIVE_MODES)}")
+    _check(
+        bool(re.fullmatch(r"/content/[A-Za-z0-9_\-]+", str(d.get("mount", "")))), "drive.mount must be /content/<name>"
+    )
+    workspace = str(d.get("workspace", ""))
+    _check(
+        bool(re.fullmatch(r"[A-Za-z0-9_\- ]+(/[A-Za-z0-9_\- ]+)*", workspace)) and ".." not in workspace,
+        "drive.workspace must be a relative path under the mount, e.g. MyDrive/AI-Workflow",
+    )
+    wait = d.get("consent_wait_seconds")
+    # drive.mount gives up after 120 s; Enter has to be sent before that.
+    _check(_is_int(wait) and 10 <= wait <= 110, "drive.consent_wait_seconds must be an integer 10-110")
+    final = d.get("finalize_timeout_seconds")
+    _check(_is_int(final) and 60 <= final <= 7200, "drive.finalize_timeout_seconds must be an integer 60-7200")
+    _check(isinstance(d.get("open_browser"), bool), "drive.open_browser must be true or false")
+    models = config.get("models")
+    _check(isinstance(models, list) and len(models) >= 5, "models must list the pinned model files")
+    for m in models:
+        _check(isinstance(m, dict), "each models entry must be an object")
+        for key in ("name", "folder", "store", "repo", "path_in_repo"):
+            _check(
+                isinstance(m.get(key), str) and m[key] and ".." not in m[key], f"models: {key} is missing or invalid"
+            )
+        _check(
+            bool(re.fullmatch(r"[0-9a-f]{40}", str(m.get("revision", "")))),
+            f"models: {m['name']} needs a pinned revision",
+        )
+        _check(bool(re.fullmatch(r"[0-9a-f]{64}", str(m.get("sha256", "")))), f"models: {m['name']} needs a sha256")
+        _check(_is_int(m.get("size")) and m["size"] > 0, f"models: {m['name']} needs a size in bytes")
+    _check(len({m["name"] for m in models}) == len(models), "models: a file name appears twice")
     return config
 
 
@@ -252,6 +292,11 @@ def project_path(value: str | Path) -> Path:
 
 def output_dir(config: dict) -> Path:
     return project_path(config["output"]["directory"])
+
+
+def consent_signal_path(config: dict) -> Path:
+    """scripts/consent_done.py creates this file; the runner then answers the CLI's "press Enter" at once."""
+    return output_dir(config) / CONSENT_SIGNAL
 
 
 def find_ffprobe(config: dict) -> str | None:
@@ -408,6 +453,25 @@ class Transport:
     def display(self, args: list[str], mount_dir: Path | None = None) -> str:
         return subprocess.list2cmdline(self.command(list(args), mount_dir=mount_dir, name="h3-manual"))
 
+    def interactive_command(self, args: list[str], *, name: str) -> list[str]:
+        """`colab <args>` with a pseudo-terminal whose input is our piped stdin (for `drivemount`)."""
+        raise NotImplementedError
+
+    def mount_drive(
+        self,
+        session: str,
+        mount: str,
+        *,
+        wait_seconds: float,
+        signal_path: Path,
+        on_url: Callable[[str], None],
+        on_line: Callable[[str], None] | None = None,
+    ) -> dict:
+        """Mount Google Drive on the VM. Tests replace this."""
+        return drive_consent_mount(
+            self, session, mount, wait_seconds=wait_seconds, signal_path=signal_path, on_url=on_url, on_line=on_line
+        )
+
     def call(
         self,
         args: list[str],
@@ -465,6 +529,13 @@ class DockerTransport(Transport):
         except (OSError, subprocess.SubprocessError):
             pass
 
+    def interactive_command(self, args: list[str], *, name: str) -> list[str]:
+        # util-linux `script` gives the CLI a /dev/tty; -i keeps our stdin attached to it.
+        inner = shlex.join(["colab", f"--auth={self.auth}", *args])
+        cmd = [self.docker, "run", "-i", "--rm", "--name", name, "-e", "PYTHONUNBUFFERED=1"]
+        cmd += ["-v", f"{self.volume}:{self.CONFIG_MOUNT}", "--entrypoint", "script"]
+        return cmd + [self.image, "-qfec", inner, "/dev/null"]
+
     def build_command(self) -> str:
         return subprocess.list2cmdline([self.docker, "build", "-t", self.image, str(DOCKERFILE_DIR)])
 
@@ -517,6 +588,9 @@ class NativeTransport(Transport):
 
     def cli_path(self, local: Path, mount_dir: Path) -> str:
         return str(Path(local).resolve())
+
+    def interactive_command(self, args: list[str], *, name: str) -> list[str]:
+        return ["script", "-qfec", shlex.join([self.colab, f"--auth={self.auth}", *args]), "/dev/null"]
 
     def login_command(self) -> str:
         return f"{self.colab} --auth={self.auth} usage"
@@ -631,6 +705,96 @@ def download_file(transport: Transport, session: str, remote: str, local: Path, 
         mount_dir=local.parent,
         on_line=on_line,
     )
+
+
+CONSENT_URL_RE = re.compile(r"^https://accounts\.google\.com/\S+$")
+
+
+def _open_in_browser(url: str) -> None:
+    import webbrowser
+
+    webbrowser.open(url)
+
+
+def drive_consent_mount(
+    transport: Transport,
+    session: str,
+    mount: str,
+    *,
+    wait_seconds: float,
+    signal_path: Path,
+    on_url: Callable[[str], None],
+    on_line: Callable[[str], None] | None = None,
+    timeout: float = 300,
+) -> dict:
+    """Mount Drive the way Colab allows it from a CLI (the same procedure as the z-image-colab skill):
+    Google asks for consent on every new VM (measured 2026-10-01) and drive.mount waits only 120 s for it.
+    The CLI prints the consent URL and then reads Enter from /dev/tty, so it runs under a pseudo-terminal
+    with our stdin piped in. Enter goes in when the user confirmed (signal_path appears, see
+    scripts/consent_done.py) or after wait_seconds, whichever is first. The URL is handed to on_url and is
+    never written to the log."""
+    name = f"h3-{uuid.uuid4().hex[:12]}"
+    cmd = transport.interactive_command(["drivemount", "--session", session, mount], name=name)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    lines: list[str] = []
+
+    def read() -> None:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = clean_line(raw.decode("utf-8", "replace"))
+            lines.append(line)
+            if on_line and line and not CONSENT_URL_RE.match(line):
+                on_line(line)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    t0 = time.monotonic()
+    url = None
+    t_url = 0.0
+    enter_sent = confirmed = timed_out = False
+    try:
+        while proc.poll() is None:
+            if url is None:
+                url = next((ln for ln in lines if CONSENT_URL_RE.match(ln)), None)
+                if url:
+                    t_url = time.monotonic()
+                    on_url(url)
+            if url and not enter_sent:
+                confirmed = signal_path.exists()
+                if confirmed or time.monotonic() - t_url >= wait_seconds:
+                    assert proc.stdin is not None
+                    proc.stdin.write(b"\n")
+                    proc.stdin.flush()
+                    enter_sent = True
+            if time.monotonic() - t0 > timeout:
+                timed_out = True
+                break
+            time.sleep(0.25)
+    finally:
+        if proc.poll() is None:
+            transport.abort(name)
+            _kill(proc)
+        reader.join(timeout=5)
+    text = "\n".join(lines)
+    mounted = "Mounted at" in text or "already mounted" in text
+    reason = None
+    if not mounted:
+        if timed_out:
+            reason = "timeout"
+        elif "Error propagating" in text:
+            reason = "consent_not_given"
+        elif "mount failed" in text:
+            reason = "mount_failed"
+        else:
+            reason = "unknown"
+    return {
+        "mounted": mounted,
+        "consent_asked": url is not None,
+        "confirmed_by_user": confirmed,
+        "seconds": round(time.monotonic() - t0, 1),
+        "reason": reason,
+        "tail": text[-600:] if not mounted else None,
+    }
 
 
 def stop_session(transport: Transport, session: str, *, timeout: float = 300, on_line=None) -> str:
@@ -1376,6 +1540,12 @@ class RemoteProgress:
             rec.setdefault("remote_seconds", {})[data.get("stage")] = data.get("seconds")
         elif kind == "MODEL":
             rec.setdefault("remote_models", []).append(data)
+            rec.setdefault("model_actions", {})[data.get("name")] = data.get("action")
+        elif kind == "DRIVE_OUTPUT":
+            rec["drive_output"] = data.get("path")
+        elif kind == "DRIVE_OUTPUT_FAILED":
+            warning = f"the clip was not copied to Google Drive ({data.get('path')}): {data.get('message')}"
+            rec["warnings"].append(warning)
         elif kind == "VRAM_PEAK":
             rec["vram_peak_mib"] = data.get("mib")
         elif kind == "ERROR":
@@ -1417,10 +1587,112 @@ class ColabSession:
         self.cli_version: str | None = None
         self.status: str | None = None
         self.warning: str | None = None
+        self.drive_warning: str | None = None
+        self.persistence = PERSIST_EPHEMERAL
+        self.drive: dict | None = None  # how the mount went
+        self.saved: dict | None = None  # what the finalize step reported
+        self.kernel_busy = False  # an exec did not return cleanly: no further exec may be sent
 
     @property
     def alive(self) -> bool:
         return self.open_ok and not self.closed
+
+    def storage(self, p: "Prepared") -> dict:
+        """What the remote script needs to follow the storage rule (see remote/h3_colab_job.py)."""
+        d = self.config["drive"]
+        return {
+            "persistence": self.persistence,
+            "workspace": f"{d['mount']}/{d['workspace']}",
+            "models": self.config["models"],
+            "drive_output": f"outputs/videos/{p.output.name}",
+        }
+
+    def _mount_drive(self, run: JobRun) -> None:
+        d = self.config["drive"]
+        if d["mode"] != "consent":
+            run.log("drive.mode is off: models are downloaded for this session only and nothing is stored on Drive")
+            return
+        signal_path = consent_signal_path(self.config)
+        signal_path.parent.mkdir(parents=True, exist_ok=True)
+        signal_path.unlink(missing_ok=True)
+
+        def on_url(url: str) -> None:
+            run.log(
+                "DRIVE_CONSENT_NEEDED: approve Google Drive access for this VM in the browser, then run "
+                f"scripts/consent_done.py (Enter is sent by itself after {d['consent_wait_seconds']} s)"
+            )
+            if d["open_browser"]:
+                _open_in_browser(url)
+
+        try:
+            self.drive = self.transport.mount_drive(
+                self.name,
+                d["mount"],
+                wait_seconds=d["consent_wait_seconds"],
+                signal_path=signal_path,
+                on_url=on_url,
+                on_line=run.log_remote,
+            )
+        except (OSError, subprocess.SubprocessError, NotImplementedError) as exc:
+            self.drive = {"mounted": False, "reason": f"{type(exc).__name__}: {exc}"}
+        finally:
+            signal_path.unlink(missing_ok=True)
+        if self.drive.get("mounted"):
+            self.persistence = PERSIST_DRIVE
+            run.log(f"Google Drive mounted in {self.drive.get('seconds')} s: models and clips are stored there")
+        else:
+            run.log(
+                f"WARNING: Google Drive was not mounted ({self.drive.get('reason')}). This session is ephemeral: "
+                "the models are downloaded again and nothing is stored on Drive."
+            )
+
+    def _finalize(self, run: JobRun) -> None:
+        """Before the VM goes away: wait for the model copies and flush the mount. Never raises - a session
+        that cannot be saved is still stopped, it must not keep an A100 running."""
+        d = self.config["drive"]
+        saved: dict = {"flushed": False, "model_sync": None, "error": None}
+        self.saved = saved
+
+        def on_line(line: str) -> None:
+            run.log_remote(line)
+            parsed = parse_marker(line)
+            if not parsed:
+                return
+            kind, data = parsed
+            if kind == "MODEL_SYNC":
+                saved["model_sync"] = data.get("report")
+            elif kind == "DRIVE_FLUSHED":
+                saved["flushed"] = True
+                saved["flush_seconds"] = data.get("seconds")
+            elif kind == "ERROR":
+                saved["error"] = f"{data.get('code')}: {data.get('message')}"
+
+        t0 = time.monotonic()
+        run.log("saving to Google Drive: waiting for the model copies, then flushing the mount")
+        try:
+            self.transport.call(
+                ["exec", "--session", self.name, "--timeout", str(d["finalize_timeout_seconds"])]
+                + ["--env", f"{FINALIZE_ENV}=1"]
+                + ["--file", self.transport.cli_path(REMOTE_SCRIPT, REMOTE_SCRIPT.parent)],
+                label="colab exec (save to Drive)",
+                timeout=d["finalize_timeout_seconds"] + 120,
+                mount_dir=REMOTE_SCRIPT.parent,
+                on_line=on_line,
+                idle_timeout=self.config["colab"]["exec_idle_timeout_seconds"],
+            )
+        except (ColabCommandError, ColabTimeout) as exc:
+            saved["error"] = saved["error"] or str(exc)[-500:]
+        except KeyboardInterrupt:
+            saved["error"] = "cancelled by the user"
+        saved["seconds"] = round(time.monotonic() - t0, 1)
+        failed = sorted(k for k, v in (saved["model_sync"] or {}).items() if str(v).startswith("failed"))
+        if saved["error"] or not saved["flushed"] or failed:
+            self.drive_warning = (
+                "Google Drive may not hold everything from this session "
+                f"(flushed: {saved['flushed']}, failed copies: {failed or 'none'}, error: {saved['error']}). "
+                "Files that did not arrive are downloaded again next time."
+            )
+            run.log("WARNING: " + self.drive_warning)
 
     def open(self, run: JobRun) -> None:
         t = self.transport
@@ -1459,11 +1731,21 @@ class ColabSession:
                 run.log(f"session compute-unit rate: {self.rate_per_hour}/hr")
         except H3Error as exc:
             run.log(f"could not read the usage rate after `colab new`: {exc}")
+        self._mount_drive(run)
 
     def close(self, run: JobRun) -> None:
         if self.closed or not self.attempted:
             return
         self.closed = True
+        if self.open_ok and self.persistence == PERSIST_DRIVE:
+            if self.kernel_busy:
+                self.drive_warning = (
+                    "The session ended with its kernel busy, so the save-to-Drive step was skipped: model files "
+                    "that were still being copied are not on Google Drive and are downloaded again next time."
+                )
+                run.log("WARNING: " + self.drive_warning)
+            else:
+                self._finalize(run)
         try:
             stop_session(self.transport, self.name, on_line=run.log_remote)
             self.status = "stopped"
@@ -1485,7 +1767,7 @@ LEDGER_FIELDS = (
     "duration", "frames", "actual_seconds", "resolution", "seed", "gpu", "vram_peak_mib", "session",
     "session_reused", "output", "bytes", "elapsed_seconds", "session_seconds", "stage_seconds", "remote_seconds",
     "cu_balance_before", "cu_balance_after", "cu_used_measured", "cu_rate_per_hour", "cu_estimated",
-    "comfyui_commit", "cli_version", "transport",
+    "comfyui_commit", "cli_version", "transport", "persistence", "drive_output", "model_actions",
 )  # fmt: skip
 
 
@@ -1564,10 +1846,16 @@ def _run_in_session(
     else:
         run.log(f"first frame: the last frame of {p.chained_from}, already on the VM at {remote['remote_image']}")
     remote_job_path = f"{p.remote_prefix}_job.json"
+    # Known only now: whether this session has Drive. The staged job file gets the storage block added.
+    f["job"].write_text(
+        json.dumps(dict(remote, storage=session.storage(p)), ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+    )
+    rec["persistence"] = session.persistence
     upload_file(transport, session.name, f["job"], remote_job_path, timeout=transfer, on_line=run.log_remote)
 
     run.advance(LOADING_MODEL)
     progress = RemoteProgress(run)
+    session.kernel_busy = True  # until the exec returns: a timeout or Ctrl-C leaves the remote cell running
     try:
         transport.call(
             ["exec", "--session", session.name, "--timeout", str(p.timeout)]
@@ -1582,6 +1870,7 @@ def _run_in_session(
     except ColabCommandError as exc:
         progress.raise_if_error()
         raise SessionLost("INFERENCE_FAILED", f"`colab exec` failed: {exc}") from exc
+    session.kernel_busy = False
     progress.raise_if_error()
     if not progress.output:
         raise H3Error("OUTPUT_NOT_FOUND", "Inference ended but the remote script reported no MP4 (no H3_OUTPUT).")
@@ -1628,16 +1917,37 @@ def _run_in_session(
         raise H3Error("FAILED_VALIDATION", "; ".join(problems), status=FAILED_VALIDATION)
 
 
-def _dry_run_commands(transport: Transport, session_name: str, p: Prepared) -> list[str]:
-    return [
+def _dry_run_commands(transport: Transport, session_name: str, p: Prepared, config: dict) -> list[str]:
+    drive = config["drive"]["mode"] == "consent"
+    commands = [
         transport.display(["usage"]),
         transport.display(["new", "--session", session_name, "--gpu", p.gpu] + (["--high-mem"] if p.high_mem else [])),
+    ]
+    if drive:
+        commands.append(transport.display(["drivemount", "--session", session_name, config["drive"]["mount"]]))
+    commands.append(
         transport.display(
             ["exec", "--session", session_name, "--timeout", str(p.timeout), "--env"]
             + [f"H3_JOB_FILE={p.remote_prefix}_job.json", "--file", "/work/" + REMOTE_SCRIPT.name],
             p.work_dir,
-        ),
-    ]
+        )
+    )
+    if drive:
+        commands.append(
+            transport.display(
+                [
+                    "exec",
+                    "--session",
+                    session_name,
+                    "--env",
+                    f"{FINALIZE_ENV}=1",
+                    "--file",
+                    "/work/" + REMOTE_SCRIPT.name,
+                ],
+                REMOTE_SCRIPT.parent,
+            )
+        )
+    return commands
 
 
 def run_batch(
@@ -1726,7 +2036,7 @@ def run_batch(
             rec["dry_run"] = {
                 "prompt": p.prompt,
                 "remote_job": p.remote_job(),
-                "commands": _dry_run_commands(transport, session_base, p),
+                "commands": _dry_run_commands(transport, session_base, p, config),
                 "preflight": checks,
             }
             rec["status"] = DRY_RUN
@@ -1863,6 +2173,10 @@ def run_batch(
                 rec["session_status"] = s.status
                 if s.warning:
                     rec["warnings"].append(s.warning)
+                rec["persistence"] = s.persistence
+                rec["drive_saved"] = s.saved
+                if s.drive_warning:
+                    rec["warnings"].append(s.drive_warning)
             if rec["status"] not in TERMINAL:
                 run.fail(CANCELLED, "CANCELLED", "Not started: the batch stopped early.")
         summary = _batch_summary(batch_id, runs, sessions, started, started_at, after, settled, settle)
