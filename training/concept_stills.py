@@ -132,6 +132,40 @@ def validate_story(story):
         for letter in FIRST_ROUND:
             if not s["compositions"].get(letter):
                 raise gc.UsageError(f"{where}: compositions 缺少 {letter}")
+        if "video" in s:
+            problem = video_problem(s["video"])
+            if problem:
+                raise gc.UsageError(f"{where}: video {problem}")
+
+
+VIDEO_CONSTRAINTS = ("locked-camera", "static-subject")
+VIDEO_MIN_SECONDS, VIDEO_MAX_SECONDS, VIDEO_DEFAULT_SECONDS = 4, 15, 8
+
+
+def video_problem(video):
+    """Why a scene's optional `video` block (the H3 shot description) is unusable, or None. The block is what
+    make-video sends to H3; a scene without one cannot be turned into a clip."""
+    if not isinstance(video, dict):
+        return "要是物件"
+    if not isinstance(video.get("description"), str) or not video["description"].strip():
+        return "缺少 description（英文的鏡頭描述）"
+    if len(video["description"]) > gc.MAX_PROMPT_CHARS:
+        return f"description 超過 {gc.MAX_PROMPT_CHARS} 字元"
+    if not isinstance(video.get("soundscape", ""), str):
+        return "soundscape 要是文字"
+    d = video.get("duration", VIDEO_DEFAULT_SECONDS)
+    if isinstance(d, bool) or not isinstance(d, (int, float)) or not VIDEO_MIN_SECONDS <= d <= VIDEO_MAX_SECONDS:
+        return f"duration 要在 {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS} 秒"
+    bad = [c for c in video.get("constraints", []) if c not in VIDEO_CONSTRAINTS]
+    if bad or not isinstance(video.get("constraints", []), list):
+        return f"constraints 只能是 {', '.join(VIDEO_CONSTRAINTS)}"
+    if not isinstance(video.get("ambience", False), bool):
+        return "ambience 要是 true/false"
+    return None
+
+
+def save_story(story):
+    _write_json(os.path.join(story.dir, "story.json"), story.data)
 
 
 # ---------------------------------------------------------------- prompts
@@ -248,11 +282,10 @@ def existing_letters(story, scene_number):
 
 # ---------------------------------------------------------------- generation
 
-def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=False, dry_run=False,
-             submit=None, server_up=client.is_server_running):
-    """Render candidates. Skips existing images (unless force). Letters C/D are refused for a scene whose
-    review is not REGENERATE, so the first round can never silently grow to four per scene."""
-    submit = submit or client.submit_txt2img_generation_zimage
+def pending(stories, letters=FIRST_ROUND, *, scene_numbers=None, force=False):
+    """The (story, scene, letter) images a generate call would render, after the same refusals: C/D only for a
+    REGENERATE scene, no --force over an APPROVED one. Shared by generate and by callers that quote an estimate
+    before any GPU time is spent."""
     letters = tuple(letters)
     todo = []
     for story in stories:
@@ -273,6 +306,16 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
                         raise gc.UsageError(f"{story.id} scene {n} 已 APPROVED，--force 會讓 master.png 對不上候選；"
                                             "先 review --regenerate")
                 todo.append((story, n, letter))
+    return todo
+
+
+def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=False, dry_run=False,
+             submit=None, server_up=client.is_server_running,
+             before_each=None, should_stop=None):
+    """Render candidates. Skips existing images (unless force). Letters C/D are refused for a scene whose
+    review is not REGENERATE, so the first round can never silently grow to four per scene."""
+    submit = submit or client.submit_txt2img_generation_zimage
+    todo = pending(stories, letters, scene_numbers=scene_numbers, force=force)
     if dry_run:
         for story, n, letter in todo:
             print(f"[dry-run] {story.id} scene_{n:02d} candidate {letter} seed {candidate_seed(story, n, letter)}")
@@ -283,6 +326,10 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
     made = 0
     touched = []
     for story, n, letter in todo:
+        if should_stop and should_stop():
+            break
+        if before_each:
+            before_each(story, n, letter)   # e.g. gpu_guard.before_image; may raise to end the batch
         req = build_request(bible, story, n, letter)
         paths = candidate_paths(story, n, letter)
         os.makedirs(os.path.dirname(paths["png"]), exist_ok=True)
@@ -327,7 +374,7 @@ def _mark_ready(story, scene_number):
 
 # ---------------------------------------------------------------- review
 
-def review(story, scene_number, *, approve=None, regenerate=False, notes=""):
+def review(story, scene_number, *, approve=None, regenerate=False, notes="", decided_via="cli"):
     """Record a human decision. approve = candidate number or letter; copies it to master.png."""
     if bool(approve) == bool(regenerate):
         raise gc.UsageError("review 要二選一：--approve <候選> 或 --regenerate")
@@ -335,7 +382,8 @@ def review(story, scene_number, *, approve=None, regenerate=False, notes=""):
     if regenerate:
         if not existing_letters(story, scene_number):
             raise gc.UsageError("這個 scene 還沒有候選圖，沒有東西可以判定 REGENERATE")
-        return _set_status(story, scene_number, REGENERATE, approved_candidate=None, notes=notes)
+        return _set_status(story, scene_number, REGENERATE, approved_candidate=None, notes=notes,
+                           decided_via=decided_via)
     letter = str(approve).upper()
     if letter.isdigit():
         letter = LETTERS[int(letter) - 1] if 1 <= int(letter) <= len(LETTERS) else ""
@@ -348,7 +396,7 @@ def review(story, scene_number, *, approve=None, regenerate=False, notes=""):
     shutil.copy2(paths["png"], master)
     shutil.copy2(paths["meta"], os.path.join(story.scene_dir(scene_number), "master.json"))
     return _set_status(story, scene_number, APPROVED, approved_candidate=os.path.basename(paths["png"]),
-                       notes=notes)
+                       notes=notes, decided_via=decided_via)
 
 
 # ---------------------------------------------------------------- index, sheet, status

@@ -2630,3 +2630,12 @@ curl 指令手動下載。
   （生成到第 37 張左右 exit code 1）。改用本 repo 現在的 ComfyUI + API 架構後
   未再重現（100+ 張連續生成、benchmark 皆無異常），但當時沒有做根因診斷，
   記錄在此供之後參考
+
+## 短劇概念片與 Open WebUI
+
+五個短劇故事的候選圖、審核、H3 影片與成片流程在 `projects/ai_short_drama/`（說明見該資料夾的 `README.md`）。
+要從 Open WebUI 的聊天直接操作，啟動工具伺服器後照 `projects/ai_short_drama/OPEN_WEBUI.md` 註冊：
+
+```powershell
+ComfyUI\.venv\Scripts\python.exe training\concept_api.py
+```

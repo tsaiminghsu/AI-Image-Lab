@@ -5,6 +5,34 @@
 
 ## 2026-10-03
 
+### 短劇概念片流程可以從 Open WebUI 操作（工具伺服器 `training/concept_api.py`；離線測試完成，聊天端尚未實機驗收）
+
+- **為什麼**：使用者要在本機的 Open WebUI（0.11.4，Docker，聊天模型是主機 Ollama 的 `qwen3.5:9b`）裡直接做完全流程：
+  候選圖 → 審核 → H3 影片 → 成片。之前只能由 Claude Code 在終端機操作。
+- **做法**：FastAPI 的 OpenAPI 工具伺服器（`127.0.0.1:7863`），11 個工具：`list_stories`、`list_scenes`、
+  `generate_candidates`、`review_scene`、`set_video_prompt`、`make_videos`、`make_cut`、`get_job`、`list_jobs`、
+  `cancel_job`、`consent_done`；`/files/...` 只讀地提供專案圖片與 `output/story*/` 的影片給聊天顯示。
+  長工作都是排入佇列的 job（`outputs/concept_jobs/`），一次只跑一個，重啟後不自動重跑。
+- **沒有放寬的規則**：
+  - 動 GPU 或花 CU 的兩個工具不帶 `confirm=true` 只回預估。
+  - H3 只接受 `APPROVED` 的 Scene（首幀 `master.png`），prompt 過濾仍是 `run.py` 的，模型固定用下載，每個 session 最多 4 支。
+  - 審核只記錄使用者的決定，`review.json` 記 `decided_via: open-webui`。**伺服器驗不了是誰決定的**，這點寫在文件裡。
+- **故事 3 這次 0 張的原因與對策**：第一張卡在 0/8「Model Initializing」到 1200 秒逾時，是已知的 VRAM 溢出症狀。
+  事後 Ollama 沒有載入模型，所以**不能證明**是聊天模型造成的；但聊天模型與 ComfyUI 共用 8 GB 是確定的風險。
+  新增 `training/gpu_guard.py`：整批開始前與每張圖之前請 Ollama 卸載模型（`keep_alive: 0`）並等到 `/api/ps` 清空；
+  開始前另外等 VRAM ≤ 2.5 GB、溫度低於批次門檻（55°C）。等不到就讓那個工作失敗並說明原因，不硬跑。
+  溫度門檻只在整批開始前檢查：批次中顯示卡長時間在 83–84°C，每張都等降到 55°C 會讓 30 分鐘的批次變成數小時。
+- **順手收進程式的兩件事**：
+  - `training/concept_cut.py`：把《23:47》手動做的剪接做法變成函式。用同一批片段重跑，成片 −14.2 LUFS，與手動版一致
+    （各段 −20.1／−14.6／−17.7／−15.2／−24.2／−10.7／−35.2 LUFS，混音 −24.1）。
+  - `story.json` 的 Scene 多一個選填的 `video` 區塊（H3 鏡頭描述、音效、長度、鏡頭限制、是否只有環境聲）；
+    故事 1 放進這次實際用過的描述（Scene 5、7 是修正版）。`concept_stills.pending()` 從 `generate` 抽出來給預估用。
+- **實測**：伺服器啟動後 `openapi.json` 有 11 個工具；從 Open WebUI 容器 `curl http://host.docker.internal:7863/stories`
+  回 200；圖片路由回 `image/png`。
+- **測試**：`tests/test_concept_api.py` 27 個（確認閘門、H3 規則、4＋3 分批、檔案路由不出界、重啟不重跑、GPU 守門、剪接指令）。
+- **還沒做**：在 Open WebUI 註冊工具要用管理員帳號，由使用者操作（步驟在 `projects/ai_short_drama/OPEN_WEBUI.md`）；
+  9B 模型呼叫這 11 個工具的成功率、從聊天觸發的生圖與 H3 都還沒實機跑過。0.11.4 的選單名稱沒有在畫面上核對。
+
 ### H3：`colab exec` 一印出 `Connection was lost` 就直接結束並關機
 
 - **為什麼**：《23:47》Scene 2–7 那批在第 4 支做完後掉線，程式看到 `RuntimeError: Connection was lost.` 之後仍空等滿 900 秒

@@ -34,7 +34,18 @@ chosen first frame, and a first frame the user picked only for a trial is not `A
    Copying a result to Google Drive needs Drive for desktop (not installed on this machine as of 2026-10-03)
    or a Colab session; ask the user which.
 
+## Open WebUI
+
+The same flow is exposed to Open WebUI through `training/concept_api.py` (an OpenAPI tool server on
+`127.0.0.1:7863`; setup and behaviour in `projects/ai_short_drama/OPEN_WEBUI.md`). It queues jobs, quotes an
+estimate until `confirm=true`, sends only APPROVED scenes to H3, and unloads Ollama's chat model before each
+image (`training/gpu_guard.py`). When working from Claude Code while that server has a job running, do not start
+ComfyUI or H3 yourself: check `GET /jobs` first.
+
 ## Problems seen (2026-10-02/03) and what to do
+
+- **The chat model shares the 8 GB card.** Story 3's first image sat at step 0/8 for 1200 s and timed out; unload
+  Ollama (`gpu_guard.before_batch`) before a batch and do not chat during one.
 
 - **Text in the frame** ("ME" on a phone, wall rules) is often illegible in the Z-Image candidate and H3 will not
   fix it. Check the "畫面文字要核對" line in the sheet, regenerate, or overlay the text in post.

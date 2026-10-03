@@ -787,14 +787,15 @@ def _reset_if_zimage_prompt_changed(wf: dict) -> bool:
     return True
 
 
-def start_server(startup_timeout: float = 120) -> subprocess.Popen:
+def start_server(startup_timeout: float = 120, extra_args=None) -> subprocess.Popen:
     """Launch the ComfyUI server as a background process and block until it
     responds. Assumes this repo's local layout (COMFYUI_DIR) - not used by
     the cloud worker, which manages its own already-running ComfyUI process
-    via COMFYUI_URL instead."""
+    via COMFYUI_URL instead. extra_args are appended to ComfyUI's command line: batch callers pass
+    --disable-smart-memory, without which a long Z-Image batch can stall in the VAE decode on this card."""
     python_exe = os.path.join(COMFYUI_DIR, ".venv", "Scripts", "python.exe")
     process = subprocess.Popen(
-        [python_exe, "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+        [python_exe, "main.py", "--listen", "127.0.0.1", "--port", "8188", *(extra_args or [])],
         cwd=COMFYUI_DIR,
     )
     deadline = time.time() + startup_timeout

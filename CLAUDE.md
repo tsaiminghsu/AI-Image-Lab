@@ -188,6 +188,12 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `_build_prompt_and_negative`，所以年齡安全詞與 cfg 下限跟本機一樣，VM 上的 worker 會再檢查一次。
   **離線測試 210 個通過，但從未在真的 Colab GPU 上跑過**——首次安裝、重啟不重裝、連續 3 張、閒置關機四項實機
   驗收都還沒做，時間與 CU 都沒有數字。
+- 短劇概念片（2026-10-03）：`projects/ai_short_drama/`（五個故事的規格）＋`training/concept_stills.py`（Z-Image 候選
+  A/B → 人工審核 → `master.png`）＋`concept_cut.py`（接片與音量調平）＋`concept_api.py`（給 Open WebUI 的 OpenAPI
+  工具伺服器，`127.0.0.1:7863`，說明在 `projects/ai_short_drama/OPEN_WEBUI.md`）。規則：工具不選圖；H3 只吃
+  `APPROVED` 的 Scene；花 GPU／CU 的工具要 `confirm=true`。`gpu_guard.py` 在生圖前卸載 Ollama 的聊天模型（同一張 8 GB 卡）。
+  故事 1 生圖、H3、成片都實跑過（報告在 `outputs/reports/`）；故事 2 只有候選圖；故事 3–5 還沒生。
+  **Open WebUI 這條路只有離線測試與連線測試，聊天端還沒實機驗收。**
 - AI Workflow 平台（2026-10-02）：`ai_workflow/`，不綁 AI 供應商的 Drive＋Colab＋ComfyUI 工作流。兩個入口共用一套
   Core（`controller/`，純 stdlib）：notebook（`notebooks/00–03、99`，由 `scripts/build_notebooks.py` 從 registry 產生，
   不要手改）和六個工具（`scripts/aiwf.py`：list-workflows／create-job／status／list-jobs／cancel／result，給任何

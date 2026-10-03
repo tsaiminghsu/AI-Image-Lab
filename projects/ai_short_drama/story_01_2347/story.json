@@ -18,7 +18,9 @@
       "scene": 1,
       "title": "深夜房間，23:46，手機響起",
       "beat_zh": "深夜房間。年輕亞洲男性獨自坐在床邊。手機放在桌上。時間 23:46。手機突然響起，來電顯示：ME。",
-      "characters": ["lead"],
+      "characters": [
+        "lead"
+      ],
       "action": "The man sits alone on the edge of an unmade bed late at night, staring at a smartphone lying on the wooden desk beside him. The phone screen is lit up with an incoming call. A small digital alarm clock on the desk is clearly visible next to the phone.",
       "setting": "small modern apartment bedroom, wooden desk, bed with grey sheets, closed curtains, a few books and a mug on the desk, an old cardigan on the chair",
       "lighting": "warm desk lamp pool of light on the desk and the man's face, soft blue glow from the phone screen, faint city light through the curtains, the whole room and its details readable",
@@ -28,14 +30,28 @@
         "A": "medium wide shot from across the room, the man sitting at the left third of the frame, the desk with the glowing phone on the right",
         "B": "over-the-shoulder shot from behind the man, the glowing phone with the caller name legible in the foreground and the alarm clock beside it"
       },
-      "video_note": "Phone rings; subtle vibration of the phone and the man's reaction."
+      "video_note": "Phone rings; subtle vibration of the phone and the man's reaction.",
+      "video": {
+        "description": "The man in the first frame sits on the same edge of the bed in his dark charcoal jacket, beside the wooden desk with the phone, the digital clock and the warm desk lamp, keeping the same room and lighting. The phone screen flashes with an incoming call and the phone vibrates slightly on the desk. He slowly lifts his tired eyes toward it and his expression tightens with tension. The camera holds a steady shot.",
+        "soundscape": "Quiet night room tone with a faint city hum, then the phone's buzzing ring and a soft rustle of his jacket.",
+        "duration": 5,
+        "constraints": [
+          "locked-camera"
+        ]
+      }
     },
     {
       "scene": 2,
       "title": "接起電話：不要去車站",
       "beat_zh": "男主接起電話。電話另一端是與他完全相同的聲音。",
-      "dialogue": ["對方：不要去車站。", "男主：你是誰？", "對方：我就是你。"],
-      "characters": ["lead"],
+      "dialogue": [
+        "對方：不要去車站。",
+        "男主：你是誰？",
+        "對方：我就是你。"
+      ],
+      "characters": [
+        "lead"
+      ],
       "action": "The man holds the phone to his ear, his eyes wide with shock and disbelief, lips slightly parted as if about to speak. He is still sitting on the edge of the bed.",
       "setting": "the same small modern apartment bedroom, wooden desk and bed with grey sheets in the background",
       "lighting": "warm desk lamp light from one side, soft blue phone-screen glow on his cheek, background details still visible",
@@ -44,13 +60,20 @@
       "compositions": {
         "A": "medium close-up in profile, the man with the phone at his ear, the lit desk lamp and bed softly visible behind him",
         "B": "close-up of his face from the front, eyes wide, the glowing call screen visible at the edge of the frame"
+      },
+      "video": {
+        "description": "The man in the first frame sits on the same bed in his dark charcoal jacket and black shirt, holding the phone to his ear, with the warm desk lamp and the bedside table behind him. His eyes are wide with shock and disbelief. A muffled male voice from the phone (S2) says: <d>[Chinese] 不要去車站。</d> The man (S1) answers with a trembling voice: <d>[Chinese] 你是誰？</d> The voice from the phone (S2), identical to his own, replies: <d>[Chinese] 我就是你。</d> The camera holds a steady shot.",
+        "soundscape": "Quiet night room tone with a faint city hum and the thin, muffled sound of a voice coming through a phone speaker.",
+        "duration": 8
       }
     },
     {
       "scene": 3,
       "title": "第二天，月台，通話紀錄消失",
       "beat_zh": "第二天。男主站在現代城市地鐵月台。查看手機。昨晚的通話紀錄消失。",
-      "characters": ["lead"],
+      "characters": [
+        "lead"
+      ],
       "action": "The man stands on a modern city subway platform in the daytime, looking down at the phone in his hand with a confused frown, scrolling its empty call history. A few commuters stand out of focus along the platform behind him.",
       "setting": "modern city subway platform, tiled floor, yellow safety line, tracks and tunnel entrance, a few blurred commuters in the background",
       "lighting": "bright even fluorescent station lighting with cool daylight spilling in from a stairwell, clear readable detail everywhere",
@@ -59,14 +82,23 @@
       "compositions": {
         "A": "medium shot from the front, the man at the left third looking down at his phone, the platform and tunnel receding behind him",
         "B": "close-up over the man's shoulder showing the phone screen with an empty call-history list, his troubled face just visible"
+      },
+      "video": {
+        "description": "The man in the first frame stands on the same bright subway platform in his dark charcoal jacket and black shirt, looking down at the phone in his hand. His thumb scrolls the screen and he frowns in confusion, while a few commuters move slowly in the blurred background. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience with distant footsteps, a faint echoing announcement and a train rumbling somewhere in the tunnel.",
+        "duration": 8
       }
     },
     {
       "scene": 4,
       "title": "再次來電：你已經死過十七次了",
       "beat_zh": "手機再次響起。來電：ME。電話中的自己：你已經死過十七次了。",
-      "dialogue": ["電話中的自己：你已經死過十七次了。"],
-      "characters": ["lead"],
+      "dialogue": [
+        "電話中的自己：你已經死過十七次了。"
+      ],
+      "characters": [
+        "lead"
+      ],
       "action": "On the subway platform the man holds his ringing phone in front of him and stares at it with fear, the screen showing an incoming call.",
       "setting": "the same modern city subway platform in the daytime, tiled floor, yellow safety line, tunnel entrance, blurred commuters far behind",
       "lighting": "bright even fluorescent station lighting, cool daylight from the stairwell, clear detail",
@@ -75,13 +107,20 @@
       "compositions": {
         "A": "medium shot, the man centred, holding the lit phone at chest height, the platform behind him",
         "B": "tight close-up from over the shoulder, the phone screen with the caller name sharp in the foreground and his frightened face softly out of focus behind it"
+      },
+      "video": {
+        "description": "The man in the first frame stands on the same subway platform in his dark charcoal jacket and black shirt, holding the phone whose screen shows an incoming call from ME. The phone rings and he stares at it with fear, then lifts it to his ear. The voice from the phone (S2), identical to his own, says: <d>[Chinese] 你已經死過十七次了。</d> His face drains of colour. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience, a phone ringing and then a thin voice through the phone speaker.",
+        "duration": 8
       }
     },
     {
       "scene": 5,
       "title": "月台另一端：一個完全一樣的人",
       "beat_zh": "月台另一端。男主看見一個與自己完全一樣的人。兩人隔著人群對視。",
-      "characters": ["lead"],
+      "characters": [
+        "lead"
+      ],
       "action": "Two identical men stare at each other across a busy subway platform: the man stands in the foreground at the left, and at the far end of the platform stands his exact double, the same man twice with the same face, the same haircut and the same dark charcoal jacket over a black shirt. Commuters pass between them.",
       "setting": "modern city subway platform in the daytime, tiled floor, yellow safety line, a stream of commuters walking between the two men",
       "lighting": "bright even fluorescent station lighting, clear detail, both men's faces readable",
@@ -91,14 +130,23 @@
         "A": "wide shot along the length of the platform, the man in the left foreground, his double small but sharp at the far end, commuters between them",
         "B": "the man's point of view: blurred commuter silhouettes in the foreground and his double standing in the centre of the frame, sharp, staring straight at the camera"
       },
-      "video_note": "Two identical faces in one frame is the hardest case for identity drift."
+      "video_note": "Two identical faces in one frame is the hardest case for identity drift.",
+      "video": {
+        "description": "The two identical men in the first frame stand on the same busy subway platform in his dark charcoal jacket and black shirt, staring at each other with tense expressions. They stay where they are and slowly turn their heads toward each other. The commuters around them remain in their places, each keeping the same appearance and clothing, with only slight natural movement, and the space between the two men stays clear. The camera holds a steady shot.",
+        "soundscape": "Subway platform murmur of a crowd, many footsteps and a distant train rumble.",
+        "duration": 8
+      }
     },
     {
       "scene": 6,
       "title": "不要讓他看見你，另一個自己消失",
       "beat_zh": "男主再次接到電話。電話中的自己：不要讓他看見你。男主抬頭。另一個自己突然消失。",
-      "dialogue": ["電話中的自己：不要讓他看見你。"],
-      "characters": ["lead"],
+      "dialogue": [
+        "電話中的自己：不要讓他看見你。"
+      ],
+      "characters": [
+        "lead"
+      ],
       "action": "The man holds the phone to his ear and looks up with alarm toward the far end of the platform, where his double still stands, small and slightly out of focus, between commuters.",
       "setting": "modern city subway platform in the daytime, tiled floor, yellow safety line, commuters in the middle distance",
       "lighting": "bright even fluorescent station lighting, clear detail",
@@ -108,7 +156,12 @@
         "A": "medium close-up of the man at the right of the frame, phone at his ear, looking up and to the left, the platform and his tiny double in the background",
         "B": "close-up on his alarmed face and upturned eyes, the far platform end with the standing double blurred behind him"
       },
-      "video_note": "First frame keeps the double visible; the vanishing is the motion H3 has to make."
+      "video_note": "First frame keeps the double visible; the vanishing is the motion H3 has to make.",
+      "video": {
+        "description": "The man in the first frame holds the phone to his ear on the same subway platform in his dark charcoal jacket and black shirt, wide-eyed. The voice from the phone (S2), identical to his own, says urgently: <d>[Chinese] 不要讓他看見你。</d> He looks up and to the side with alarm, scanning the platform. The camera holds a steady shot.",
+        "soundscape": "Subway station ambience with a crowd murmur and a thin voice through the phone speaker.",
+        "duration": 8
+      }
     },
     {
       "scene": 7,
@@ -126,7 +179,13 @@
         "A": "wide symmetrical shot down the empty platform, the clock sign at the top centre, the tunnel mouth at the far end",
         "B": "low angle looking up at the glowing clock sign with the lit platform ceiling and tracks around it"
       },
-      "video_note": "The master shows 23:46; the jump to 23:47 happens in the video (or as a clock overlay)."
+      "video_note": "The master shows 23:46; the jump to 23:47 happens in the video (or as a clock overlay).",
+      "video": {
+        "description": "The same empty subway platform at night, with the glowing red electronic clock sign above the polished tiles and the yellow safety line. Nobody is on the platform. The clock sign reads 23:46 and holds that reading steadily for most of the shot. Near the end the last digit changes once, from 6 to 7, so the sign reads 23:47 and stays that way. The lights stay on and the platform stays still. The camera holds a steady shot.",
+        "soundscape": "Empty station ambience with a low electrical hum, a faint distant train rumble in the tunnel and a soft click as the clock changes.",
+        "duration": 8,
+        "ambience": true
+      }
     }
   ]
 }
