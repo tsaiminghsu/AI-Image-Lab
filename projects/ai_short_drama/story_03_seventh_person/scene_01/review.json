@@ -1,9 +1,9 @@
 {
   "story_id": "story_03_seventh_person",
   "scene_id": "scene_01",
-  "status": "HUMAN_REVIEW",
+  "status": "REGENERATE",
   "approved_candidate": null,
-  "notes": "",
+  "notes": "牆上中文「只有一個人可以離開」字跡有錯，重生",
   "history": [
     {
       "status": "CANDIDATES_READY",
@@ -12,6 +12,11 @@
     {
       "status": "HUMAN_REVIEW",
       "at": "2026-10-04T10:48:35+08:00"
+    },
+    {
+      "status": "REGENERATE",
+      "at": "2026-10-04T10:52:32+08:00"
     }
-  ]
+  ],
+  "decided_via": "open-webui"
 }

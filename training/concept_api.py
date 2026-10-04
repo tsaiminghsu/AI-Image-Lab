@@ -481,8 +481,10 @@ def list_scenes(story: int):
 
 class GenerateBody(BaseModel):
     scenes: list[int] | None = Field(default=None, description="Scene numbers 1-7; omit for all seven.")
-    extra_candidates: bool = Field(default=False, description="true = candidates 3 and 4, only for scenes the user "
-                                                              "marked for regeneration; false = candidates 1 and 2.")
+    candidates: list[int] = Field(default=[1], description="Which candidate numbers to render: [1] first (the "
+                                                       "default - one image per scene), [2] or [1, 2] when the user "
+                                                       "wants a second option, [3, 4] only for scenes the user marked "
+                                                       "for regeneration.")
     confirm: bool = Field(default=False, description="false returns the estimate only. Set true only after the "
                                                      "user has seen the estimate and said yes.")
 
@@ -492,7 +494,10 @@ class GenerateBody(BaseModel):
                   "the estimate (number of images, minutes); nothing is generated.")
 def generate_candidates(story: int, body: GenerateBody):
     st = _story(story)
-    letters = cs.EXTRA_ROUND if body.extra_candidates else cs.FIRST_ROUND
+    numbers = sorted(set(body.candidates))
+    if not numbers or any(n < 1 or n > len(cs.LETTERS) for n in numbers):
+        raise HTTPException(status_code=422, detail="candidates 要是 1-4 的編號")
+    letters = tuple(cs.LETTERS[n - 1] for n in numbers)
     try:
         todo = cs.pending([st], letters, scene_numbers=set(body.scenes) if body.scenes else None)
     except gc.UsageError as exc:

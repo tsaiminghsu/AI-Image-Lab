@@ -104,7 +104,7 @@ def web(env):
 
 
 def approve_all(web, runner, story=1):
-    assert web.post(f"/stories/{story}/candidates", json={"confirm": True}).json()["queued"]
+    assert web.post(f"/stories/{story}/candidates", json={"candidates": [1, 2], "confirm": True}).json()["queued"]
     assert runner.run_next()["status"] == api.COMPLETED
     for scene in range(1, 8):
         r = web.post(f"/stories/{story}/scenes/{scene}/review", json={"decision": "approve", "candidate": 2})
@@ -124,7 +124,7 @@ def test_the_openapi_document_offers_exactly_these_tools(web):
 def test_stories_and_scenes_are_listed_with_images_as_markdown(web, env):
     stories = web.get("/stories").json()["stories"]
     assert [s["story"] for s in stories] == [1, 2, 3, 4, 5] and stories[0]["images"] == 0
-    web.post("/stories/1/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     env.run_next()
     scene = web.get("/stories/1/scenes").json()["scenes"][0]
     assert scene["status"] == cs.HUMAN_REVIEW and [c["candidate"] for c in scene["candidates"]] == [1, 2]
@@ -139,12 +139,17 @@ def test_stories_and_scenes_are_listed_with_images_as_markdown(web, env):
 def test_generation_without_confirm_only_quotes_an_estimate(web, env):
     r = web.post("/stories/3/candidates", json={}).json()
     assert r["queued"] is False and r["needs_confirmation"] is True
-    assert r["estimate"]["images"] == 14 and r["estimate"]["minutes"] == round(14 * api.SECONDS_PER_IMAGE / 60)
+    # the default is one image per scene: look first, then decide which scenes need a second
+    assert r["estimate"]["images"] == 7 and r["estimate"]["minutes"] == round(7 * api.SECONDS_PER_IMAGE / 60)
+    assert web.post("/stories/3/candidates", json={"candidates": [1, 2]}).json()["estimate"]["images"] == 14
+    assert web.post("/stories/3/candidates", json={"candidates": [5]}).status_code == 422
     assert api.store.all() == [] and env.run_next() is None and env.submitted == []
 
 
 def test_confirmed_generation_unloads_the_chat_model_before_the_batch_and_every_image(web, env):
-    job_id = web.post("/stories/2/candidates", json={"scenes": [3], "confirm": True}).json()["job_id"]
+    job_id = web.post("/stories/2/candidates", json={"candidates": [1, 2], "scenes": [3], "confirm": True}).json()[
+        "job_id"
+    ]
     job = env.run_next()
     assert job["status"] == api.COMPLETED and job["result"]["images"] == 2 and len(env.submitted) == 2
     assert [c[0] for c in env.guard.calls] == ["batch", "image", "image"]
@@ -156,41 +161,40 @@ def test_confirmed_generation_unloads_the_chat_model_before_the_batch_and_every_
 
 def test_a_comfyui_someone_else_started_is_left_running(web, env):
     env.server_state["up"] = True
-    web.post("/stories/2/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/2/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     assert env.run_next()["status"] == api.COMPLETED
     assert env.comfy.terminated is False
 
 
 def test_a_busy_card_fails_the_job_without_starting_comfyui(web, env):
     env.guard = FakeGuard(busy="VRAM 已用 7000 MiB")
-    web.post("/stories/2/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/2/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     job = env.run_next()
     assert job["status"] == api.FAILED and "7000" in job["error"]
     assert env.submitted == [] and env.server_state["up"] is False
 
 
 def test_extra_candidates_need_the_users_regenerate_decision(web, env):
-    web.post("/stories/1/candidates", json={"scenes": [4], "confirm": True})
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [4], "confirm": True})
     env.run_next()
-    r = web.post("/stories/1/candidates", json={"scenes": [4], "extra_candidates": True, "confirm": True})
+    r = web.post("/stories/1/candidates", json={"candidates": [3, 4], "scenes": [4], "confirm": True})
     assert r.status_code == 409 and "REGENERATE" in r.json()["detail"]
     web.post("/stories/1/scenes/4/review", json={"decision": "regenerate", "notes": "手機看不清楚"})
     assert (
-        web.post("/stories/1/candidates", json={"scenes": [4], "extra_candidates": True}).json()["estimate"]["images"]
-        == 2
+        web.post("/stories/1/candidates", json={"candidates": [3, 4], "scenes": [4]}).json()["estimate"]["images"] == 2
     )
 
 
 def test_only_one_job_at_a_time(web, env):
-    assert web.post("/stories/1/candidates", json={"confirm": True}).json()["queued"]
-    assert web.post("/stories/2/candidates", json={"confirm": True}).status_code == 409
+    assert web.post("/stories/1/candidates", json={"candidates": [1, 2], "confirm": True}).json()["queued"]
+    assert web.post("/stories/2/candidates", json={"candidates": [1, 2], "confirm": True}).status_code == 409
 
 
 # --- review -------------------------------------------------------------------------------------------------
 
 
 def test_approval_needs_the_candidate_number_and_is_tagged_as_coming_from_the_chat(web, env):
-    web.post("/stories/1/candidates", json={"scenes": [2], "confirm": True})
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [2], "confirm": True})
     env.run_next()
     assert web.post("/stories/1/scenes/2/review", json={"decision": "approve"}).status_code == 422
     assert web.post("/stories/1/scenes/2/review", json={"decision": "pick the best"}).status_code == 422
@@ -251,7 +255,7 @@ def ok_run(calls):
 
 def test_unapproved_scenes_and_scenes_without_a_shot_description_cannot_go_to_h3(web, env):
     assert web.post("/stories/1/videos", json={"confirm": True}).status_code == 409  # nothing approved yet
-    web.post("/stories/1/candidates", json={"scenes": [1, 2], "confirm": True})
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [1, 2], "confirm": True})
     env.run_next()
     web.post("/stories/1/scenes/1/review", json={"decision": "approve", "candidate": 2})
     r = web.post("/stories/1/videos", json={"scenes": [1, 2], "confirm": True})
@@ -297,7 +301,7 @@ def test_a_failed_preflight_spends_nothing(web, env, tmp_path):
 
 
 def test_consent_done_is_refused_unless_a_job_is_waiting_for_it(web, env):
-    web.post("/stories/1/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     job_id = api.store.all()[0]["job_id"]
     assert web.post(f"/jobs/{job_id}/consent-done").status_code == 409
     calls = []
@@ -349,7 +353,7 @@ def test_the_cut_needs_every_scene_and_keeps_story_order_ambience_and_the_script
 
 
 def test_the_file_route_serves_project_images_and_story_output_only(web, env, tmp_path):
-    web.post("/stories/1/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     env.run_next()
     ok = "/files/projects/ai_short_drama/story_01_2347/scene_01/candidate_01.png"
     assert web.get(ok).status_code == 200
@@ -369,18 +373,20 @@ def test_the_file_route_serves_project_images_and_story_output_only(web, env, tm
 
 
 def test_a_restart_marks_unfinished_jobs_interrupted_and_resumes_nothing(web, env):
-    job_id = web.post("/stories/1/candidates", json={"confirm": True}).json()["job_id"]
+    job_id = web.post("/stories/1/candidates", json={"candidates": [1, 2], "confirm": True}).json()["job_id"]
     assert api.store.mark_interrupted() == [job_id]
     assert web.get(f"/jobs/{job_id}").json()["status"] == api.INTERRUPTED
     assert env.run_next()["status"] == api.INTERRUPTED and env.submitted == []  # the queued id is not run
-    assert web.post("/stories/2/candidates", json={"confirm": True}).json()["queued"]  # and nothing is blocked
+    assert web.post("/stories/2/candidates", json={"candidates": [1, 2], "confirm": True}).json()[
+        "queued"
+    ]  # and nothing is blocked
 
 
 def test_a_queued_job_can_be_cancelled_and_a_running_image_job_stops_after_the_current_image(web, env):
-    job_id = web.post("/stories/1/candidates", json={"confirm": True}).json()["job_id"]
+    job_id = web.post("/stories/1/candidates", json={"candidates": [1, 2], "confirm": True}).json()["job_id"]
     assert web.post(f"/jobs/{job_id}/cancel").json()["status"] == api.CANCELLED
     assert env.run_next()["status"] == api.CANCELLED and env.submitted == []
-    job_id = web.post("/stories/1/candidates", json={"confirm": True}).json()["job_id"]
+    job_id = web.post("/stories/1/candidates", json={"candidates": [1, 2], "confirm": True}).json()["job_id"]
     real = env.submit
 
     def submit_then_cancel(**kw):
@@ -607,11 +613,11 @@ def test_a_hung_comfyui_is_restarted_and_the_batch_resumes_where_it_stopped(web,
 
     env.submit, env.start_comfyui = flaky, start
     before = client.POLL_TIMEOUT_SECONDS_ZIMAGE
-    web.post("/stories/2/candidates", json={"scenes": [1, 2], "confirm": True})
+    web.post("/stories/2/candidates", json={"candidates": [1, 2], "scenes": [1, 2], "confirm": True})
     job = env.run_next()
     assert job["status"] == api.COMPLETED, job["error"]
     assert job["result"]["images"] == 4 and job["result"]["comfyui_restarts"] == 1 and starts["n"] == 2
-    assert [c["seed"] for c in env.submitted] == sorted({c["seed"] for c in env.submitted})  # nothing rendered twice
+    assert len({c["seed"] for c in env.submitted}) == len(env.submitted) == 4  # nothing rendered twice
     assert set(limits) == {api.IMAGE_STALL_SECONDS} and client.POLL_TIMEOUT_SECONDS_ZIMAGE == before
     assert [c[0] for c in env.guard.calls].count("batch") == 2  # the card is checked again before the restart
 
@@ -624,10 +630,28 @@ def test_a_comfyui_the_job_did_not_start_is_never_restarted_and_restarts_are_cap
 
     env.submit = hang
     env.server_state["up"] = True  # someone else's ComfyUI
-    web.post("/stories/2/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/2/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     job = env.run_next()
     assert job["status"] == api.FAILED and "no answer" in job["error"] and env.comfy.terminated is False
     env.server_state["up"] = False  # now it is the job's own, but it never recovers
-    web.post("/stories/2/candidates", json={"scenes": [1], "confirm": True})
+    web.post("/stories/2/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     job = env.run_next()
     assert job["status"] == api.FAILED and env.comfy.terminated is True
+
+
+def test_the_first_batch_is_one_image_per_scene_and_that_is_enough_to_review(web, env):
+    """The card throttles after about three images and a batch can die part-way, so the default batch covers
+    every scene once. A scene with one candidate can be approved, or given a second one on request."""
+    web.post("/stories/4/candidates", json={"confirm": True})
+    job = env.run_next()
+    assert job["status"] == api.COMPLETED and job["result"]["images"] == 7
+    scenes = web.get("/stories/4/scenes").json()["scenes"]
+    assert [len(s["candidates"]) for s in scenes] == [1] * 7 and {s["status"] for s in scenes} == {cs.HUMAN_REVIEW}
+    assert web.post("/stories/4/scenes/1/review", json={"decision": "approve", "candidate": 1}).status_code == 200
+    # the second batch skips the approved scene: it already has its master
+    r = web.post("/stories/4/candidates", json={"candidates": [2], "scenes": [1, 2, 3]}).json()
+    assert r["estimate"]["images"] == 2
+    web.post("/stories/4/candidates", json={"candidates": [2], "scenes": [1, 2, 3], "confirm": True})
+    env.run_next()
+    scenes = web.get("/stories/4/scenes").json()["scenes"]
+    assert [len(s["candidates"]) for s in scenes[:3]] == [1, 2, 2] and scenes[0]["status"] == cs.APPROVED

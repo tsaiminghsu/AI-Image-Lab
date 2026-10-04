@@ -334,13 +334,28 @@ def test_a_run_that_dies_midway_still_hands_the_finished_scenes_to_review(work, 
 
     with pytest.raises(TimeoutError):
         cs.generate(bible, [story], scene_numbers={1, 2, 3}, submit=dies_on_the_fifth, server_up=lambda: True)
-    assert [cs.load_review(story, n)["status"] for n in (1, 2, 3)] == [
-        cs.HUMAN_REVIEW,
-        cs.HUMAN_REVIEW,
-        cs.NO_CANDIDATES,
-    ]
+    # candidate-first order: 1A 2A 3A 1B were rendered, so every scene already has something to look at
+    assert [cs.existing_letters(story, n) for n in (1, 2, 3)] == [["A", "B"], ["A"], ["A"]]
+    assert [cs.load_review(story, n)["status"] for n in (1, 2, 3)] == [cs.HUMAN_REVIEW] * 3
     cs.generate(bible, [story], scene_numbers={1, 2, 3}, submit=inner, server_up=lambda: True)
     assert cs.load_review(story, 3)["status"] == cs.HUMAN_REVIEW and len(inner.calls) == 6
     cs.review(story, 1, approve="1")
     cs.mark_ready_scenes([story])
     assert cs.load_review(story, 1)["status"] == cs.APPROVED  # a decided scene is never reset
+
+
+def test_candidates_are_rendered_one_per_scene_first(work, tmp_path):
+    _, _, stories = work
+    order = [(n, letter) for _, n, letter in cs.pending([stories[0]], ("A", "B"))]
+    assert order == [(n, "A") for n in range(1, 8)] + [(n, "B") for n in range(1, 8)]
+
+
+def test_an_approved_scene_gets_no_more_candidates_and_is_never_reopened(work, tmp_path):
+    _, bible, stories = work
+    story, submit = stories[0], fake_submit(tmp_path)
+    cs.generate(bible, [story], letters=("A",), scene_numbers={1, 2}, submit=submit, server_up=lambda: True)
+    assert cs.load_review(story, 1)["status"] == cs.HUMAN_REVIEW  # one candidate is enough to review
+    cs.review(story, 1, approve="A")
+    assert [(n, x) for _, n, x in cs.pending([story], ("B",), scene_numbers={1, 2})] == [(2, "B")]
+    cs.generate(bible, [story], letters=("B",), scene_numbers={1, 2}, submit=submit, server_up=lambda: True)
+    assert cs.load_review(story, 1)["status"] == cs.APPROVED and cs.existing_letters(story, 1) == ["A"]

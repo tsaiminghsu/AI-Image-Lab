@@ -285,26 +285,34 @@ def existing_letters(story, scene_number):
 def pending(stories, letters=FIRST_ROUND, *, scene_numbers=None, force=False):
     """The (story, scene, letter) images a generate call would render, after the same refusals: C/D only for a
     REGENERATE scene, no --force over an APPROVED one. Shared by generate and by callers that quote an estimate
-    before any GPU time is spent."""
+    before any GPU time is spent.
+
+    Order is candidate-first: every scene's A, then every scene's B. The card throttles after about three
+    images and a long batch can die part-way (story 3 hung at image 10), so the images that exist when a batch
+    stops should cover every scene once rather than half the scenes twice. An APPROVED scene gets no further
+    candidates: it has its master."""
     letters = tuple(letters)
     todo = []
     for story in stories:
         validate_story(story)
-        for s in story.data["scenes"]:
-            n = s["scene"]
-            if scene_numbers and n not in scene_numbers:
-                continue
-            for letter in letters:
-                if letter in EXTRA_ROUND and load_review(story, n)["status"] != REGENERATE:
+        for letter in letters:
+            for s in story.data["scenes"]:
+                n = s["scene"]
+                if scene_numbers and n not in scene_numbers:
+                    continue
+                status = load_review(story, n)["status"]
+                if letter in EXTRA_ROUND and status != REGENERATE:
                     raise gc.UsageError(
                         f"{story.id} scene {n}: 候選 {letter} 只在人工審核判定 REGENERATE 之後才生成"
-                        f"（目前 {load_review(story, n)['status']}）。先跑 review --regenerate")
+                        f"（目前 {status}）。先跑 review --regenerate")
                 if os.path.isfile(candidate_paths(story, n, letter)["png"]):
                     if not force:
                         continue
-                    if load_review(story, n)["status"] == APPROVED:
+                    if status == APPROVED:
                         raise gc.UsageError(f"{story.id} scene {n} 已 APPROVED，--force 會讓 master.png 對不上候選；"
                                             "先 review --regenerate")
+                elif status == APPROVED:
+                    continue
                 todo.append((story, n, letter))
     return todo
 
@@ -371,7 +379,7 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
 
 
 def mark_ready_scenes(stories):
-    """Every scene that holds its first-round candidates but was never handed to review (status NO_CANDIDATES)
+    """Every scene that holds a candidate but was never handed to review (status NO_CANDIDATES)
     goes CANDIDATES_READY -> HUMAN_REVIEW. Safe to call at any time: a decided scene is left alone."""
     for story in stories:
         for s in story.data["scenes"]:
@@ -380,8 +388,10 @@ def mark_ready_scenes(stories):
 
 
 def _mark_ready(story, scene_number):
-    """A scene holding its first-round candidates goes CANDIDATES_READY -> HUMAN_REVIEW: a person decides."""
-    if all(x in existing_letters(story, scene_number) for x in FIRST_ROUND):
+    """A scene holding at least one candidate goes CANDIDATES_READY -> HUMAN_REVIEW: a person decides - approve
+    it, ask for the second candidate, or mark it for regeneration. One image is enough to be looked at; the
+    first batch deliberately renders only one per scene. An APPROVED scene is never reopened from here."""
+    if existing_letters(story, scene_number) and load_review(story, scene_number)["status"] != APPROVED:
         _set_status(story, scene_number, CANDIDATES_READY)
         _set_status(story, scene_number, HUMAN_REVIEW)
 
@@ -523,7 +533,8 @@ def main(argv=None):
     g = sub.add_parser("generate", help="render candidates through ComfyUI (GPU) - ComfyUI must already be running")
     g.add_argument("--story")
     g.add_argument("--scene")
-    g.add_argument("--candidates", default="A,B")
+    g.add_argument("--candidates", default="A",
+                   help="A (default: one image per scene first), A,B, or C,D for a REGENERATE scene")
     g.add_argument("--force", action="store_true")
     g.add_argument("--dry-run", action="store_true")
     sub.add_parser("index", help="rebuild candidate_index.json")

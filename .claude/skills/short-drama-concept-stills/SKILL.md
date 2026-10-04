@@ -19,7 +19,9 @@ chosen first frame, and a first frame the user picked only for a trial is not `A
    141 s (every new prompt reloads the model), 83-84 C after ~10 min, VRAM peak 7.8 GB. 14 images = 33 min;
    all 70 = ~2.5 h. A yes covers that batch only.
 3. Start ComfyUI yourself with `--disable-smart-memory` (cwd `ComfyUI`, `.venv\Scripts\python.exe main.py
-   --listen 127.0.0.1 --port 8188`), check nothing else holds the card, run `generate --story N`, stop it with
+   --listen 127.0.0.1 --port 8188`), check nothing else holds the card, run `generate --story N` (default: candidate
+   A only, one image per scene, ~15 min; add the second with `--scene 2,5 --candidates B` for the scenes the user
+   wants - the card throttles after ~3 images, so look before rendering more), stop it with
    `training\stop_comfyui.ps1`. `generate` refuses when ComfyUI is down.
 4. `sheet` writes `review_sheet.html`; the user decides: `review --story N --scene M --approve 1|2|3|4` (copies
    `master.png`) or `--regenerate --notes "..."`. Candidates C/D only after `REGENERATE`; `--force` on an

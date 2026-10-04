@@ -22,7 +22,9 @@
 ## 流程
 
 1. 讀 `prompts.json`，不滿意就改 `story.json` 再 `prompts`（還沒花任何 GPU）。
-2. 啟動 ComfyUI 後 `generate`（預設每個 Scene 兩張 A/B，共 70 張）；可用 `--story 1 --scene 3` 縮小範圍。
+2. 啟動 ComfyUI 後 `generate --story N`：預設只生每個 Scene 的候選 A（一個故事 7 張，約 15 分鐘）。看過之後對需要的
+   Scene 補第二張：`generate --story N --scene 2,5 --candidates B`。要一次兩張就 `--candidates A,B`
+   （順序是所有 Scene 的 A，再所有 Scene 的 B）。
 3. `sheet` 產生 `review_sheet.html`，逐 Scene 看：劇情資訊、角色一致、場景、構圖、光線看得清細節、
    適不適合 Image→Video（人物會不會變形、手、背景複雜度、動作好不好描述、鏡頭好不好動）、有沒有明顯瑕疵。
    有畫面文字的 Scene（手機「ME」、時鐘、牆上規則）要逐字核對。

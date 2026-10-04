@@ -41,7 +41,8 @@ ComfyUI\.venv\Scripts\python.exe training\concept_api.py
       使用者說好之後才帶 confirm=true 再呼叫。
    3. 工作排入後用 get_job 查進度；needs_user_action 有內容時，原文告訴使用者要做什麼。
    4. 給使用者看候選圖時，直接貼出 list_scenes 回傳的 markdown。
-   5. 工具回傳錯誤時，照實轉述，不要自己猜原因。
+   5. 生候選圖時先只生每個 Scene 的第 1 張（預設值）；使用者看過、指名要第二張的 Scene 才用 candidates=[2] 補。
+   6. 工具回傳錯誤時，照實轉述，不要自己猜原因。
    ```
 
 ## 三、工具
@@ -50,7 +51,7 @@ ComfyUI\.venv\Scripts\python.exe training\concept_api.py
 | --- | --- | --- |
 | `list_stories` | 五個故事的狀態、圖片數、影片數 | 不會 |
 | `list_scenes` | 一個故事的 7 個 Scene：劇情、狀態、候選圖、要核對的畫面文字 | 不會 |
-| `generate_candidates` | 排入本機生圖（候選 1、2；`extra_candidates` 是 3、4，只給判定重生的 Scene） | **本機 GPU**，每張約 2.3 分鐘 |
+| `generate_candidates` | 排入本機生圖。預設只生每個 Scene 的候選 1（7 張）；`candidates: [2]` 補第二張，`[3, 4]` 只給判定重生的 Scene | **本機 GPU**，每張約 2.3 分鐘 |
 | `review_scene` | 記錄你的決定：核准第幾張（變成 `master.png`）或判定重生 | 不會 |
 | `set_video_prompt` | 存一個 Scene 的 H3 鏡頭描述（英文） | 不會 |
 | `make_videos` | 把**已核准**的 Scene 送 H3，每個 session 最多 4 支 | **Colab CU**，要 Docker、要按 Drive 同意 |
@@ -61,6 +62,9 @@ ComfyUI\.venv\Scripts\python.exe training\concept_api.py
 
 ## 四、要知道的行為
 
+- **一批先生每個 Scene 一張**：顯示卡大約第 3 張之後就升到 83–84°C、每張慢約 30 秒，批次也可能中途卡死，所以預設一批
+  只生候選 1（7 張，約 15 分鐘）。看過之後再對需要的 Scene 補候選 2；已核准的 Scene 不會再補。只有一張候選的 Scene 就可以審核。
+  生圖順序是「所有 Scene 的候選 1，再所有 Scene 的候選 2」，批次中途停掉時每個 Scene 至少有一張。
 - **兩段式確認**：`generate_candidates`、`make_videos` 不帶 `confirm=true` 只回預估，什麼都不會開始。
 - **一次只跑一個工作**。有工作在跑時再排新的會被拒絕（409）。
 - **聊天模型和生圖共用同一張 8 GB 顯示卡**。生圖開始前與每一張之前，伺服器會請 Ollama 卸載模型；你在生圖期間聊天會把模型
