@@ -65,6 +65,8 @@ ComfyUI\.venv\Scripts\python.exe training\concept_api.py
 - **一批先生每個 Scene 一張**：顯示卡大約第 3 張之後就升到 83–84°C、每張慢約 30 秒，批次也可能中途卡死，所以預設一批
   只生候選 1（7 張，約 15 分鐘）。看過之後再對需要的 Scene 補候選 2；已核准的 Scene 不會再補。只有一張候選的 Scene 就可以審核。
   生圖順序是「所有 Scene 的候選 1，再所有 Scene 的候選 2」，批次中途停掉時每個 Scene 至少有一張。
+- **圖片和短片分開**：圖在 `story_*/images/scene_NN/`，短片在 `story_*/videos/scene_NN/clip_vN.mp4`，成片在
+  `story_*/videos/cut/`。重做的短片與成片是新的版本號，不覆蓋舊的；成片用每個 Scene 最新的那支。
 - **兩段式確認**：`generate_candidates`、`make_videos` 不帶 `confirm=true` 只回預估，什麼都不會開始。
 - **一次只跑一個工作**。有工作在跑時再排新的會被拒絕（409）。
 - **聊天模型和生圖共用同一張 8 GB 顯示卡**。生圖開始前與每一張之前，伺服器會請 Ollama 卸載模型；你在生圖期間聊天會把模型

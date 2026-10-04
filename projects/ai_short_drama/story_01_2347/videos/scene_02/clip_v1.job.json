@@ -1,0 +1,179 @@
+{
+  "job_id": "s01_sc02_B",
+  "scene_id": "story_01_2347/scene_02",
+  "status": "COMPLETED",
+  "started_at": "2026-10-03T00:21:06+0800",
+  "finished_at": "2026-10-03T00:38:48+0800",
+  "elapsed_seconds": 1062.5,
+  "stage_seconds": {
+    "PENDING": 0.0,
+    "PREPARING": 0.3,
+    "CONNECTING_COLAB": 99.1,
+    "UPLOADING": 3.4,
+    "LOADING_MODEL": 598.9,
+    "INFERENCE": 354.0,
+    "DOWNLOADING": 4.5,
+    "VALIDATING": 0.0,
+    "COMPLETED": 2.3
+  },
+  "error_code": null,
+  "error": null,
+  "hint": null,
+  "failed_stage": null,
+  "warnings": [
+    "The session ended with its kernel busy, so the save-to-Drive step was skipped: model files that were still being copied are not on Google Drive and are downloaded again next time."
+  ],
+  "log": "D:\\AI-Image-Lab\\output\\logs\\s01_sc02_B.log",
+  "batch_id": "story01-scenes02-07-B",
+  "image": "D:\\AI-Image-Lab\\projects\\ai_short_drama\\story_01_2347\\scene_02\\candidate_02.png",
+  "chained_from": null,
+  "image_size": [
+    720,
+    1280
+  ],
+  "duration": 8.0,
+  "frames": 192,
+  "actual_seconds": 8.0,
+  "resolution": "768x1376",
+  "seed": 124824807012542,
+  "gpu_requested": "A100",
+  "high_mem": true,
+  "timeout_seconds": 3600,
+  "output": "D:\\AI-Image-Lab\\output\\story01\\s01_scene02_B_h3.mp4",
+  "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] The man in the first frame sits on the same bed in his dark charcoal jacket and black shirt, holding the phone to his ear, with the warm desk lamp and the bedside table behind him. His eyes are wide with shock and disbelief. A muffled male voice from the phone (S2) says: <d>[Chinese] 不要去車站。</d> The man (S1) answers with a trembling voice: <d>[Chinese] 你是誰？</d> The voice from the phone (S2), identical to his own, replies: <d>[Chinese] 我就是你。</d> The camera holds a steady shot.\n\noverall_soundscape: Quiet night room tone with a faint city hum and the thin, muffled sound of a voice coming through a phone speaker.\n\nnon_diegetic_music: N/A",
+  "spec": {
+    "job_id": "s01_sc02_B",
+    "scene_id": "story_01_2347/scene_02",
+    "chain": false,
+    "input": {
+      "image": "projects/ai_short_drama/story_01_2347/scene_02/candidate_02.png"
+    },
+    "prompt": {
+      "description": "The man in the first frame sits on the same bed in his dark charcoal jacket and black shirt, holding the phone to his ear, with the warm desk lamp and the bedside table behind him. His eyes are wide with shock and disbelief. A muffled male voice from the phone (S2) says: <d>[Chinese] 不要去車站。</d> The man (S1) answers with a trembling voice: <d>[Chinese] 你是誰？</d> The voice from the phone (S2), identical to his own, replies: <d>[Chinese] 我就是你。</d> The camera holds a steady shot.",
+      "soundscape": "Quiet night room tone with a faint city hum and the thin, muffled sound of a voice coming through a phone speaker.",
+      "music": "",
+      "prompt_file": null,
+      "constraints": []
+    },
+    "settings": {
+      "mode": "first_frame",
+      "duration": 8,
+      "resolution": "auto",
+      "seed": null,
+      "gpu": null,
+      "high_mem": null,
+      "timeout": null,
+      "overwrite": false
+    },
+    "output": "output/story01/s01_scene02_B_h3.mp4"
+  },
+  "transport": "docker",
+  "session": "h3-story01-scenes02-07-B",
+  "session_reused": false,
+  "cli_version": "Version: 0.7.4",
+  "cu_rate_per_hour": 6.77,
+  "cu_balance_before": 59.12,
+  "persistence": "drive",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_info": {
+    "capability": "8.0",
+    "cuda": "13.0",
+    "free_disk_gib": 193.2,
+    "name": "NVIDIA A100-SXM4-80GB",
+    "torch": "2.11.0+cu130",
+    "vram_gib": 79.3
+  },
+  "comfyui_commit": "65787d668397d230bf5839d69a0a7239e2dad378",
+  "remote_seconds": {
+    "setup": 28.8,
+    "download": 535.5,
+    "comfyui_start": 28.0,
+    "inference": 352.6,
+    "total": 950.0
+  },
+  "remote_models": [
+    {
+      "action": "staged",
+      "cached": false,
+      "gib": 0.56,
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "seconds": 11.3
+    },
+    {
+      "action": "staged",
+      "cached": false,
+      "gib": 0.58,
+      "name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "seconds": 23.5
+    },
+    {
+      "action": "staged",
+      "cached": false,
+      "gib": 4.85,
+      "name": "minimax_h3_video_vae_fp16.safetensors",
+      "seconds": 131.6
+    },
+    {
+      "action": "staged",
+      "cached": false,
+      "gib": 14.61,
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "seconds": 374.2
+    },
+    {
+      "action": "staged",
+      "cached": false,
+      "gib": 19.53,
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "seconds": 533.2
+    }
+  ],
+  "model_actions": {
+    "minimax_h3_audio_vae_fp32.safetensors": "staged",
+    "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": "staged",
+    "minimax_h3_video_vae_fp16.safetensors": "staged",
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "staged",
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors": "staged"
+  },
+  "remote_config": {
+    "diffusion": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "lora": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    "lowvram": false,
+    "model_gib": {
+      "minimax_h3_audio_vae_fp32.safetensors": 0.56,
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors": 19.53,
+      "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": 0.58,
+      "minimax_h3_video_vae_fp16.safetensors": 4.85,
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": 14.61
+    },
+    "sampler": "euler",
+    "scheduler": "beta",
+    "steps": 8,
+    "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+  },
+  "vram_peak_mib": 43282,
+  "drive_output": "outputs/videos/s01_scene02_B_h3.mp4",
+  "remote_last_frame": "/content/h3_s01_sc02_B_last_frame.png",
+  "bytes": 1440473,
+  "last_frame": "D:\\AI-Image-Lab\\output\\story01\\s01_scene02_B_h3.last_frame.png",
+  "ffprobe": {
+    "video_codec": "h264",
+    "width": 768,
+    "height": 1376,
+    "pix_fmt": "yuv420p",
+    "fps": 24.0,
+    "nb_frames": 192,
+    "video_duration": 8.0,
+    "audio_codec": "aac",
+    "audio_sample_rate": 32000,
+    "audio_channels": 2,
+    "format_duration": 8.0,
+    "size": 1440473
+  },
+  "cu_balance_after": 57.29,
+  "cu_used_measured": 1.83,
+  "session_seconds": 1059.4,
+  "cu_estimated": 1.992,
+  "session_status": "stopped",
+  "drive_saved": null
+}

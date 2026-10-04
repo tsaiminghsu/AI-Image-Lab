@@ -1,0 +1,184 @@
+{
+  "job_id": "s01_sc07_B_v2",
+  "scene_id": "story_01_2347/scene_07",
+  "status": "COMPLETED",
+  "started_at": "2026-10-03T01:37:07+0800",
+  "finished_at": "2026-10-03T01:59:38+0800",
+  "elapsed_seconds": 341.9,
+  "stage_seconds": {
+    "PENDING": 0.1,
+    "PREPARING": 0.1,
+    "QUEUED": 1009.1,
+    "CONNECTING_COLAB": 0.0,
+    "UPLOADING": 3.3,
+    "LOADING_MODEL": 2.3,
+    "INFERENCE": 318.6,
+    "DOWNLOADING": 4.6,
+    "VALIDATING": 0.0,
+    "COMPLETED": 12.8
+  },
+  "error_code": null,
+  "error": null,
+  "hint": null,
+  "failed_stage": null,
+  "warnings": [],
+  "log": "D:\\AI-Image-Lab\\output\\logs\\s01_sc07_B_v2.log",
+  "batch_id": "story01-fix-sc06-sc05-sc07",
+  "image": "D:\\AI-Image-Lab\\projects\\ai_short_drama\\story_01_2347\\scene_07\\candidate_02.png",
+  "chained_from": null,
+  "image_size": [
+    720,
+    1280
+  ],
+  "duration": 8.0,
+  "frames": 192,
+  "actual_seconds": 8.0,
+  "resolution": "768x1376",
+  "seed": 166116353944297,
+  "gpu_requested": "A100",
+  "high_mem": true,
+  "timeout_seconds": 3600,
+  "output": "D:\\AI-Image-Lab\\output\\story01\\s01_scene07_B_h3_v2.mp4",
+  "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] The same empty subway platform at night, with the glowing red electronic clock sign above the polished tiles and the yellow safety line. Nobody is on the platform. The clock sign reads 23:46 and holds that reading steadily for most of the shot. Near the end the last digit changes once, from 6 to 7, so the sign reads 23:47 and stays that way. The lights stay on and the platform stays still. The camera holds a steady shot.\n\noverall_soundscape: Empty station ambience with a low electrical hum, a faint distant train rumble in the tunnel and a soft click as the clock changes.\n\nnon_diegetic_music: N/A",
+  "spec": {
+    "job_id": "s01_sc07_B_v2",
+    "scene_id": "story_01_2347/scene_07",
+    "chain": false,
+    "input": {
+      "image": "projects/ai_short_drama/story_01_2347/scene_07/candidate_02.png"
+    },
+    "prompt": {
+      "description": "The same empty subway platform at night, with the glowing red electronic clock sign above the polished tiles and the yellow safety line. Nobody is on the platform. The clock sign reads 23:46 and holds that reading steadily for most of the shot. Near the end the last digit changes once, from 6 to 7, so the sign reads 23:47 and stays that way. The lights stay on and the platform stays still. The camera holds a steady shot.",
+      "soundscape": "Empty station ambience with a low electrical hum, a faint distant train rumble in the tunnel and a soft click as the clock changes.",
+      "music": "",
+      "prompt_file": null,
+      "constraints": []
+    },
+    "settings": {
+      "mode": "first_frame",
+      "duration": 8,
+      "resolution": "auto",
+      "seed": null,
+      "gpu": null,
+      "high_mem": null,
+      "timeout": null,
+      "overwrite": false
+    },
+    "output": "output/story01/s01_scene07_B_h3_v2.mp4"
+  },
+  "transport": "docker",
+  "session_reused": true,
+  "session": "h3-story01-fix-sc06-sc05-sc07",
+  "cli_version": "Version: 0.7.4",
+  "cu_rate_per_hour": 6.77,
+  "cu_balance_before": 52.0,
+  "persistence": "drive",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_info": {
+    "capability": "8.0",
+    "cuda": "13.0",
+    "free_disk_gib": 151.3,
+    "name": "NVIDIA A100-SXM4-80GB",
+    "torch": "2.11.0+cu130",
+    "vram_gib": 79.3
+  },
+  "comfyui_commit": "65787d668397d230bf5839d69a0a7239e2dad378",
+  "remote_seconds": {
+    "setup": 0.0,
+    "download": 0.0,
+    "comfyui_start": 0.0,
+    "inference": 317.5,
+    "total": 318.4
+  },
+  "remote_models": [
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 4.85,
+      "name": "minimax_h3_video_vae_fp16.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 14.61,
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 0.58,
+      "name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 19.53,
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 0.56,
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "seconds": 0.0
+    }
+  ],
+  "model_actions": {
+    "minimax_h3_video_vae_fp16.safetensors": "cached",
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "cached",
+    "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": "cached",
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors": "cached",
+    "minimax_h3_audio_vae_fp32.safetensors": "cached"
+  },
+  "remote_config": {
+    "diffusion": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "lora": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    "lowvram": false,
+    "model_gib": {
+      "minimax_h3_audio_vae_fp32.safetensors": 0.56,
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors": 19.53,
+      "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": 0.58,
+      "minimax_h3_video_vae_fp16.safetensors": 4.85,
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": 14.61
+    },
+    "sampler": "euler",
+    "scheduler": "beta",
+    "steps": 8,
+    "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+  },
+  "vram_peak_mib": 47690,
+  "drive_output": "outputs/videos/s01_scene07_B_h3_v2.mp4",
+  "remote_last_frame": "/content/h3_s01_sc07_B_v2_last_frame.png",
+  "bytes": 1506374,
+  "last_frame": "D:\\AI-Image-Lab\\output\\story01\\s01_scene07_B_h3_v2.last_frame.png",
+  "ffprobe": {
+    "video_codec": "h264",
+    "width": 768,
+    "height": 1376,
+    "pix_fmt": "yuv420p",
+    "fps": 24.0,
+    "nb_frames": 192,
+    "video_duration": 8.0,
+    "audio_codec": "aac",
+    "audio_sample_rate": 32000,
+    "audio_channels": 2,
+    "format_duration": 8.0,
+    "size": 1506374
+  },
+  "cu_balance_after": 51.43,
+  "cu_used_measured": 0.57,
+  "session_seconds": 341.7,
+  "cu_estimated": 0.643,
+  "session_status": "stopped",
+  "drive_saved": {
+    "flushed": true,
+    "model_sync": {},
+    "error": null,
+    "flush_seconds": 3.9,
+    "seconds": 8.2
+  }
+}

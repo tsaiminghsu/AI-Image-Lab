@@ -10,12 +10,15 @@ through generate_character._build_prompt_and_negative like every other path, so 
 and the cfg floor cannot be dropped. The graph is the fixed Z-Image template (comfyui_client.
 build_zimage_txt2img_workflow); only prompt, negative, seed, size, steps and cfg change.
 
-Layout per scene (matches the brief):
-    story_01_2347/scene_01/candidate_01.png   the image
-                           candidate_01.json  metadata (prompt, negative, seed, size, steps, model, ...)
-                           candidate_01.workflow.json   the filled graph, for exact re-generation
-                           review.json        status history + decision
-                           master.png         only after `review --approve`
+Layout per story - stills and clips are kept apart:
+    story_01_2347/story.json
+                  images/scene_01/candidate_01.png   the image
+                                  candidate_01.json  metadata (prompt, negative, seed, size, steps, model, ...)
+                                  candidate_01.workflow.json   the filled graph, for exact re-generation
+                                  review.json        status history + decision
+                                  master.png         only after `review --approve`
+                  videos/scene_01/clip_v1.mp4        H3 clips (concept_api / the H3 skill), newest = highest v
+                  videos/cut/                        joined cuts
 
 Scene status: NO_CANDIDATES -> (CANDIDATES_READY ->) HUMAN_REVIEW -> APPROVED | REGENERATE. Candidates C/D
 are generated only for a scene whose decision is REGENERATE.
@@ -83,7 +86,15 @@ class Story:
         raise gc.UsageError(f"{self.id} 沒有 scene {number}")
 
     def scene_dir(self, number):
-        return os.path.join(self.dir, f"scene_{number:02d}")
+        """Where a scene's stills live: candidates, their records, review.json, master.png."""
+        return os.path.join(self.dir, "images", f"scene_{number:02d}")
+
+    def clip_dir(self, number):
+        """Where a scene's H3 clips live (clip_v1.mp4, clip_v2.mp4, ...), apart from the stills."""
+        return os.path.join(self.dir, "videos", f"scene_{number:02d}")
+
+    def cut_dir(self):
+        return os.path.join(self.dir, "videos", "cut")
 
 
 def load_bible(root=PROJECT_ROOT):
@@ -116,8 +127,12 @@ def validate_story(story):
         if key not in d:
             raise gc.UsageError(f"{story.id}: story.json 缺少 {key}")
     scenes = d["scenes"]
-    if [s.get("scene") for s in scenes] != list(range(1, SCENES_PER_STORY + 1)):
-        raise gc.UsageError(f"{story.id}: 需要 scene 1..{SCENES_PER_STORY}，依序")
+    # The short-drama brief is 7 scenes; another project under --root (the 4-shot activity promos) says so itself.
+    count = d.get("scene_count", SCENES_PER_STORY)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise gc.UsageError(f"{story.id}: scene_count 要是正整數")
+    if [s.get("scene") for s in scenes] != list(range(1, count + 1)):
+        raise gc.UsageError(f"{story.id}: 需要 scene 1..{count}，依序")
     for s in scenes:
         where = f"{story.id} scene {s.get('scene')}"
         for key in ("title", "beat_zh", "characters", "action", "setting", "lighting", "on_screen_text", "solo",

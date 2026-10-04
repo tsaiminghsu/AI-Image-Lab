@@ -1,0 +1,10 @@
+[0:a]volume=-2.90dB[a0];
+[1:a]volume=-8.40dB[a1];
+[2:a]volume=-5.30dB[a2];
+[3:a]volume=-7.90dB[a3];
+[4:a]volume=1.20dB[a4];
+[5:a]volume=-12.40dB[a5];
+[6:a]volume=4.10dB[a6];
+[0:v][a0][1:v][a1][2:v][a2][3:v][a3][4:v][a4][5:v][a5][6:v][a6]concat=n=7:v=1:a=1[v0][amix];
+[v0]drawtext=fontfile='C\:/Windows/Fonts/msjhbd.ttc':textfile='output/story01/_work/subtitle.txt':fontsize=44:fontcolor=white:borderw=4:bordercolor=black@0.85:x=(w-text_w)/2:y=988:enable='gte(t,51.9)'[v];
+[amix]volume=10.10dB,alimiter=limit=0.84:level=false[a]

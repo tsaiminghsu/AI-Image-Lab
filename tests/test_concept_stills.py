@@ -38,7 +38,9 @@ def stories():
 def work(tmp_path):
     """A scratch copy of the project (specs only) so generate/review can write freely."""
     root = tmp_path / "ai_short_drama"
-    shutil.copytree(cs.PROJECT_ROOT, root, ignore=shutil.ignore_patterns("*.png", "review.json", "master.json"))
+    shutil.copytree(
+        cs.PROJECT_ROOT, root, ignore=shutil.ignore_patterns("*.png", "*.mp4", "videos", "review.json", "master.json")
+    )
     return str(root), cs.load_bible(str(root)), cs.load_stories(str(root))
 
 
@@ -201,7 +203,9 @@ def test_generate_writes_image_metadata_workflow_and_hands_off_to_review(work, t
     assert made == 2 and len(submit.calls) == 2
     for letter, num in (("A", "01"), ("B", "02")):
         paths = cs.candidate_paths(story, 2, letter)
-        assert paths["png"].endswith(f"scene_02{os.sep}candidate_{num}.png") and os.path.isfile(paths["png"])
+        assert paths["png"].endswith(os.path.join("images", "scene_02", f"candidate_{num}.png")) and os.path.isfile(
+            paths["png"]
+        )
         meta = cs._read_json(paths["meta"])
         for key in (
             "story_id",
@@ -303,7 +307,7 @@ def test_index_sheet_and_status_reflect_what_exists(work, tmp_path):
     index = cs.build_index(stories, root)
     row = next(r for r in index["scenes"] if (r["story_id"], r["scene_id"]) == ("story_01_2347", "scene_01"))
     assert row["status"] == cs.HUMAN_REVIEW and len(row["candidates"]) == 2
-    assert row["candidates"][0]["image"] == "story_01_2347/scene_01/candidate_01.png"
+    assert row["candidates"][0]["image"] == "story_01_2347/images/scene_01/candidate_01.png"
     assert len(index["scenes"]) == 35
     sheet = cs.build_sheet(bible, stories, root)
     html = open(sheet, encoding="utf-8").read()
@@ -316,7 +320,7 @@ def test_init_creates_scene_folders_and_prompt_files(work):
     cs.main(["--root", root, "init"])
     for folder in FOLDERS:
         assert os.path.isfile(os.path.join(root, folder, "prompts.json"))
-        assert len([d for d in os.listdir(os.path.join(root, folder)) if d.startswith("scene_")]) == 7
+        assert len([d for d in os.listdir(os.path.join(root, folder, "images")) if d.startswith("scene_")]) == 7
     assert len(cs._read_json(os.path.join(root, FOLDERS[0], "prompts.json"))["candidates"]) == 14
 
 

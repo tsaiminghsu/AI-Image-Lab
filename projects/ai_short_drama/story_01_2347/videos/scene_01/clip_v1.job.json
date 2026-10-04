@@ -1,0 +1,193 @@
+{
+  "job_id": "20261002-235649-66b7e4",
+  "scene_id": null,
+  "status": "COMPLETED",
+  "started_at": "2026-10-02T23:56:49+0800",
+  "finished_at": "2026-10-03T00:11:10+0800",
+  "elapsed_seconds": 861.3,
+  "stage_seconds": {
+    "PENDING": 0.0,
+    "PREPARING": 0.0,
+    "CONNECTING_COLAB": 116.6,
+    "UPLOADING": 5.1,
+    "LOADING_MODEL": 273.2,
+    "INFERENCE": 172.0,
+    "DOWNLOADING": 35.6,
+    "VALIDATING": 0.1,
+    "COMPLETED": 258.7
+  },
+  "error_code": null,
+  "error": null,
+  "hint": null,
+  "failed_stage": null,
+  "warnings": [],
+  "log": "D:\\AI-Image-Lab\\output\\logs\\20261002-235649-66b7e4.log",
+  "batch_id": "20261002-235649-66b7e4",
+  "image": "D:\\AI-Image-Lab\\input\\s01_scene01_B.png",
+  "chained_from": null,
+  "image_size": [
+    720,
+    1280
+  ],
+  "duration": 5.0,
+  "frames": 124,
+  "actual_seconds": 5.167,
+  "resolution": "768x1376",
+  "seed": 254468702385058,
+  "gpu_requested": "A100",
+  "high_mem": true,
+  "timeout_seconds": 3600,
+  "output": "D:\\AI-Image-Lab\\output\\s01_scene01_B_h3.mp4",
+  "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] The man in the first frame sits on the same edge of the bed in his dark charcoal jacket, beside the wooden desk with the phone, the digital clock and the warm desk lamp, keeping the same room and lighting. The phone screen flashes with an incoming call and the phone vibrates slightly on the desk. He slowly lifts his tired eyes toward it and his expression tightens with tension. The camera holds a steady shot. The camera remains static in a locked-off shot.\n\noverall_soundscape: Quiet night room tone with a faint city hum, then the phone's buzzing ring and a soft rustle of his jacket.\n\nnon_diegetic_music: N/A",
+  "spec": {
+    "job_id": null,
+    "scene_id": null,
+    "chain": false,
+    "input": {
+      "image": "input/s01_scene01_B.png"
+    },
+    "prompt": {
+      "description": "The man in the first frame sits on the same edge of the bed in his dark charcoal jacket, beside the wooden desk with the phone, the digital clock and the warm desk lamp, keeping the same room and lighting. The phone screen flashes with an incoming call and the phone vibrates slightly on the desk. He slowly lifts his tired eyes toward it and his expression tightens with tension. The camera holds a steady shot.",
+      "soundscape": "Quiet night room tone with a faint city hum, then the phone's buzzing ring and a soft rustle of his jacket.",
+      "music": "",
+      "prompt_file": null,
+      "constraints": [
+        "locked-camera"
+      ]
+    },
+    "settings": {
+      "mode": "first_frame",
+      "duration": 5.0,
+      "resolution": "auto",
+      "seed": null,
+      "gpu": null,
+      "high_mem": null,
+      "timeout": null,
+      "overwrite": false
+    },
+    "output": "output/s01_scene01_B_h3.mp4"
+  },
+  "transport": "docker",
+  "session": "h3-20261002-235649-66b7e4",
+  "session_reused": false,
+  "cli_version": "Version: 0.7.4",
+  "cu_rate_per_hour": 6.77,
+  "cu_balance_before": 60.25,
+  "persistence": "drive",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_info": {
+    "capability": "8.0",
+    "cuda": "13.0",
+    "free_disk_gib": 193.2,
+    "name": "NVIDIA A100-SXM4-80GB",
+    "torch": "2.11.0+cu130",
+    "vram_gib": 79.3
+  },
+  "comfyui_commit": "65787d668397d230bf5839d69a0a7239e2dad378",
+  "remote_seconds": {
+    "setup": 28.7,
+    "download": 171.9,
+    "comfyui_start": 64.1,
+    "inference": 170.6,
+    "total": 440.1
+  },
+  "remote_models": [
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 0.56,
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "seconds": 6.8
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 0.58,
+      "name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "seconds": 24.1
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 4.85,
+      "name": "minimax_h3_video_vae_fp16.safetensors",
+      "seconds": 56.3
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 14.61,
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "seconds": 137.0
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 19.53,
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "seconds": 171.3
+    }
+  ],
+  "model_actions": {
+    "minimax_h3_audio_vae_fp32.safetensors": "downloaded",
+    "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": "downloaded",
+    "minimax_h3_video_vae_fp16.safetensors": "downloaded",
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "downloaded",
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors": "downloaded"
+  },
+  "remote_config": {
+    "diffusion": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "lora": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    "lowvram": false,
+    "model_gib": {
+      "minimax_h3_audio_vae_fp32.safetensors": 0.56,
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors": 19.53,
+      "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": 0.58,
+      "minimax_h3_video_vae_fp16.safetensors": 4.85,
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": 14.61
+    },
+    "sampler": "euler",
+    "scheduler": "beta",
+    "steps": 8,
+    "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+  },
+  "vram_peak_mib": 42106,
+  "drive_output": "outputs/videos/s01_scene01_B_h3.mp4",
+  "remote_last_frame": "/content/h3_20261002-235649-66b7e4_last_frame.png",
+  "bytes": 744621,
+  "last_frame": "D:\\AI-Image-Lab\\output\\s01_scene01_B_h3.last_frame.png",
+  "ffprobe": {
+    "video_codec": "h264",
+    "width": 768,
+    "height": 1376,
+    "pix_fmt": "yuv420p",
+    "fps": 24.0,
+    "nb_frames": 124,
+    "video_duration": 5.166667,
+    "audio_codec": "aac",
+    "audio_sample_rate": 32000,
+    "audio_channels": 2,
+    "format_duration": 5.166667,
+    "size": 744621
+  },
+  "cu_balance_after": 59.12,
+  "cu_used_measured": 1.13,
+  "session_seconds": 857.5,
+  "cu_estimated": 1.613,
+  "session_status": "stopped",
+  "drive_saved": {
+    "flushed": true,
+    "model_sync": {
+      "minimax_h3_audio_vae_fp32.safetensors": "copied in 2.5 s",
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors": "copied in 61.3 s",
+      "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": "copied in 2.6 s",
+      "minimax_h3_video_vae_fp16.safetensors": "copied in 29.0 s",
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "copied in 48.4 s"
+    },
+    "error": null,
+    "flush_seconds": 238.2,
+    "seconds": 253.2
+  },
+  "cu_balance_settled": 59.12,
+  "cu_used_settled": 1.13
+}

@@ -5,6 +5,19 @@
 
 ## 2026-10-04
 
+### 概念片的圖片與短片分開放：每個故事 `images/` 與 `videos/`
+
+- **為什麼**：使用者要把 Z-Image 的圖和 Scene 的短片分開。原本圖在 `story_*/scene_NN/`，短片攤平堆在 `output/story01/`
+  （片段、記錄、最後一格、成片混在一起），Scene 1 的那支還在 `output/` 最上層，兩邊結構不一致。
+- **新結構**（使用者選的）：`story_*/images/scene_NN/`（候選圖＋metadata＋節點圖＋`review.json`＋`master.png`，記錄跟著圖）、
+  `story_*/videos/scene_NN/clip_vN.mp4`、`story_*/videos/cut/<故事>_cut_vN.mp4`、`story_*/videos/_batches/`（送給 H3 的清單）。
+- **程式**：`Story.scene_dir` 指到 `images/`，新增 `clip_dir`／`cut_dir`；`concept_api` 的短片與成片用 `next_version`
+  取下一個版本號，**不覆蓋舊檔**；`.gitignore` 加上專案資料夾裡的 `*.mp4`。
+- **搬動**：三個故事 35 個 Scene 資料夾搬進 `images/`；故事 1 的 9 支片段改名成 `clip_v1`／`clip_v2`（Scene 5、7 有兩版），
+  兩支成片改名成 `_cut_v1`／`_cut_v2`，`clips.json` 指到新位置。刪掉兩個我自己做的重複檔（Scene 1 片段的複本，比對過內容相同；
+  剪接測試輸出）。`clip_vN.job.json` 是 H3 當時的記錄，裡面的 `output` 欄位仍是舊路徑，沒有改寫。
+- **驗證**：審核頁 43 張圖都連得到，`clips.json` 的 7 支都存在；+1 個測試（圖與短片分開、重做是新版本）。
+
 ### 生圖改成「每個 Scene 先一張」，看過再補第二張
 
 - **為什麼**：三個故事的逐張秒數顯示，顯示卡大約第 3 張之後就在 83–84°C，之後每張慢約 30 秒

@@ -25,6 +25,7 @@ import json
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -253,8 +254,8 @@ class Runner:
     def _run_videos(self, job):
         job_id, params = job["job_id"], job["params"]
         story = self._story(job)
-        out_dir = os.path.join(OUTPUT_ROOT, story.id)
-        os.makedirs(out_dir, exist_ok=True)
+        batch_dir = os.path.join(story.dir, "videos", "_batches")   # the manifests sent to run.py
+        os.makedirs(batch_dir, exist_ok=True)
         env = dict(os.environ, H3_MODEL_SOURCE="download", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
         check = self.run([sys.executable, os.path.join(H3_SCRIPTS, "check.py")], capture_output=True, text=True,
                          encoding="utf-8", errors="replace", env=env, cwd=REPO_ROOT)
@@ -266,8 +267,8 @@ class Runner:
         for index, batch in enumerate(batches, 1):
             if job_id in self.cancel_requested:
                 break
-            manifest = os.path.join(out_dir, f"h3_manifest_{job_id}_{index}.json")
-            cs._write_json(manifest, video_manifest(story, batch, f"{job_id}-{index}", out_dir))
+            manifest = os.path.join(batch_dir, f"{job_id}_{index}.json")
+            cs._write_json(manifest, video_manifest(story, batch, f"{job_id}-{index}"))
             self._update(job_id, status=RUNNING, message=f"H3 第 {index}/{len(batches)} 個 session",
                          progress={"current": f"session {index}"})
             summary = self._h3_session(job_id, manifest, env)
@@ -314,7 +315,7 @@ class Runner:
         clips = load_clips(story)
         ordered = [{"path": os.path.join(REPO_ROOT, clips[f"scene_{s['scene']:02d}"]["path"]),
                     "ambience": bool(s.get("video", {}).get("ambience"))} for s in story.data["scenes"]]
-        out = os.path.join(OUTPUT_ROOT, story.id, f"{story.id}_cut_{job['job_id']}.mp4")
+        out = next_version(story.cut_dir(), f"{story.id}_cut")
         result = self.assemble(ordered, out, subtitle=job["params"].get("subtitle"))
         return dict(result, url=file_url(out))
 
@@ -335,7 +336,15 @@ def record_clip(story, scene_number, output, job_id):
     cs._write_json(clips_path(story), clips)
 
 
-def video_manifest(story, scene_numbers, batch_id, out_dir):
+def next_version(directory, stem, extension=".mp4"):
+    """directory/<stem>_vN.mp4 with N one above the highest that exists: clips and cuts are never overwritten."""
+    os.makedirs(directory, exist_ok=True)
+    taken = [int(m.group(1)) for name in os.listdir(directory)
+             if (m := re.fullmatch(re.escape(stem) + r"_v(\d+)" + re.escape(extension), name))]
+    return os.path.join(directory, f"{stem}_v{max(taken, default=0) + 1}{extension}")
+
+
+def video_manifest(story, scene_numbers, batch_id):
     """The run.py manifest for these scenes: first frame = the scene's approved master.png."""
     jobs = []
     for n in scene_numbers:
@@ -346,7 +355,7 @@ def video_manifest(story, scene_numbers, batch_id, out_dir):
             "prompt": {"description": video["description"], "soundscape": video.get("soundscape", ""),
                        "constraints": list(video.get("constraints", []))},
             "settings": {"duration": video.get("duration", cs.VIDEO_DEFAULT_SECONDS)},
-            "output": os.path.join(out_dir, f"scene_{n:02d}_h3_{batch_id}.mp4"),
+            "output": next_version(story.clip_dir(n), "clip"),
         })
     return {"batch_id": batch_id, "jobs": jobs}
 

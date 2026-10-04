@@ -77,5 +77,11 @@ secrets/
 # Concept stills for the AI short-drama pitches (training/concept_stills.py): the specs, prompts and
 # review records are tracked, the rendered images and the review sheet are regenerable.
 /projects/ai_short_drama/**/*.png
+/projects/ai_short_drama/**/*.mp4
 /projects/ai_short_drama/review_sheet.html
 /projects/ai_short_drama/candidate_index.json
+# Same pipeline, second project: social promos of ai-companion outings (training/activity_promo.py).
+/projects/activity_promo/**/*.png
+/projects/activity_promo/**/*.mp4
+/projects/activity_promo/review_sheet.html
+/projects/activity_promo/candidate_index.json

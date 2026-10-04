@@ -1,0 +1,180 @@
+{
+  "job_id": "s01_sc03_B",
+  "scene_id": "story_01_2347/scene_03",
+  "status": "COMPLETED",
+  "started_at": "2026-10-03T00:21:06+0800",
+  "finished_at": "2026-10-03T00:44:19+0800",
+  "elapsed_seconds": 331.7,
+  "stage_seconds": {
+    "PENDING": 0.1,
+    "PREPARING": 0.3,
+    "QUEUED": 1062.2,
+    "CONNECTING_COLAB": 0.0,
+    "UPLOADING": 3.4,
+    "LOADING_MODEL": 3.1,
+    "INFERENCE": 316.9,
+    "DOWNLOADING": 5.6,
+    "VALIDATING": 0.0,
+    "COMPLETED": 2.3
+  },
+  "error_code": null,
+  "error": null,
+  "hint": null,
+  "failed_stage": null,
+  "warnings": [
+    "The session ended with its kernel busy, so the save-to-Drive step was skipped: model files that were still being copied are not on Google Drive and are downloaded again next time."
+  ],
+  "log": "D:\\AI-Image-Lab\\output\\logs\\s01_sc03_B.log",
+  "batch_id": "story01-scenes02-07-B",
+  "image": "D:\\AI-Image-Lab\\projects\\ai_short_drama\\story_01_2347\\scene_03\\candidate_02.png",
+  "chained_from": null,
+  "image_size": [
+    720,
+    1280
+  ],
+  "duration": 8.0,
+  "frames": 192,
+  "actual_seconds": 8.0,
+  "resolution": "768x1376",
+  "seed": 211357913080052,
+  "gpu_requested": "A100",
+  "high_mem": true,
+  "timeout_seconds": 3600,
+  "output": "D:\\AI-Image-Lab\\output\\story01\\s01_scene03_B_h3.mp4",
+  "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] The man in the first frame stands on the same bright subway platform in his dark charcoal jacket and black shirt, looking down at the phone in his hand. His thumb scrolls the screen and he frowns in confusion, while a few commuters move slowly in the blurred background. The camera holds a steady shot.\n\noverall_soundscape: Subway station ambience with distant footsteps, a faint echoing announcement and a train rumbling somewhere in the tunnel.\n\nnon_diegetic_music: N/A",
+  "spec": {
+    "job_id": "s01_sc03_B",
+    "scene_id": "story_01_2347/scene_03",
+    "chain": false,
+    "input": {
+      "image": "projects/ai_short_drama/story_01_2347/scene_03/candidate_02.png"
+    },
+    "prompt": {
+      "description": "The man in the first frame stands on the same bright subway platform in his dark charcoal jacket and black shirt, looking down at the phone in his hand. His thumb scrolls the screen and he frowns in confusion, while a few commuters move slowly in the blurred background. The camera holds a steady shot.",
+      "soundscape": "Subway station ambience with distant footsteps, a faint echoing announcement and a train rumbling somewhere in the tunnel.",
+      "music": "",
+      "prompt_file": null,
+      "constraints": []
+    },
+    "settings": {
+      "mode": "first_frame",
+      "duration": 8,
+      "resolution": "auto",
+      "seed": null,
+      "gpu": null,
+      "high_mem": null,
+      "timeout": null,
+      "overwrite": false
+    },
+    "output": "output/story01/s01_scene03_B_h3.mp4"
+  },
+  "transport": "docker",
+  "session_reused": true,
+  "session": "h3-story01-scenes02-07-B",
+  "cli_version": "Version: 0.7.4",
+  "cu_rate_per_hour": 6.77,
+  "cu_balance_before": 57.29,
+  "persistence": "drive",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_info": {
+    "capability": "8.0",
+    "cuda": "13.0",
+    "free_disk_gib": 131.8,
+    "name": "NVIDIA A100-SXM4-80GB",
+    "torch": "2.11.0+cu130",
+    "vram_gib": 79.3
+  },
+  "comfyui_commit": "65787d668397d230bf5839d69a0a7239e2dad378",
+  "remote_seconds": {
+    "setup": 0.0,
+    "download": 0.9,
+    "comfyui_start": 0.0,
+    "inference": 315.8,
+    "total": 317.6
+  },
+  "remote_models": [
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 19.53,
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 14.61,
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 0.58,
+      "name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 0.56,
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "seconds": 0.0
+    },
+    {
+      "action": "cached",
+      "cached": true,
+      "gib": 4.85,
+      "name": "minimax_h3_video_vae_fp16.safetensors",
+      "seconds": 0.0
+    }
+  ],
+  "model_actions": {
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors": "cached",
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "cached",
+    "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": "cached",
+    "minimax_h3_audio_vae_fp32.safetensors": "cached",
+    "minimax_h3_video_vae_fp16.safetensors": "cached"
+  },
+  "remote_config": {
+    "diffusion": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "lora": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    "lowvram": false,
+    "model_gib": {
+      "minimax_h3_audio_vae_fp32.safetensors": 0.56,
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors": 19.53,
+      "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": 0.58,
+      "minimax_h3_video_vae_fp16.safetensors": 4.85,
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": 14.61
+    },
+    "sampler": "euler",
+    "scheduler": "beta",
+    "steps": 8,
+    "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+  },
+  "vram_peak_mib": 47690,
+  "drive_output": "outputs/videos/s01_scene03_B_h3.mp4",
+  "remote_last_frame": "/content/h3_s01_sc03_B_last_frame.png",
+  "bytes": 2632028,
+  "last_frame": "D:\\AI-Image-Lab\\output\\story01\\s01_scene03_B_h3.last_frame.png",
+  "ffprobe": {
+    "video_codec": "h264",
+    "width": 768,
+    "height": 1376,
+    "pix_fmt": "yuv420p",
+    "fps": 24.0,
+    "nb_frames": 192,
+    "video_duration": 8.0,
+    "audio_codec": "aac",
+    "audio_sample_rate": 32000,
+    "audio_channels": 2,
+    "format_duration": 8.0,
+    "size": 2632028
+  },
+  "cu_balance_after": 56.73,
+  "cu_used_measured": 0.56,
+  "session_seconds": 331.4,
+  "cu_estimated": 0.623,
+  "session_status": "stopped",
+  "drive_saved": null
+}

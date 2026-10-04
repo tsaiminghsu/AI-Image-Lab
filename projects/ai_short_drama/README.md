@@ -15,8 +15,11 @@
 | `visual_bible.json` | 統一風格、9:16 720×1280、steps／cfg、A/B/C/D 構圖規則、審核清單、seed 規則 |
 | `story_*/story.json` | Character Bible ＋ 7 個 Scene（劇情、台詞、字幕、畫面文字、光線、A/B 構圖） |
 | `story_*/prompts.json` | 展開後的最終 prompt／negative／seed（改 story.json 後跑 `prompts` 重生） |
-| `story_*/scene_NN/candidate_NN.png/.json/.workflow.json` | 圖、metadata、填好的節點圖（可原樣重生） |
-| `story_*/scene_NN/review.json`、`master.png` | 審核狀態與歷史、核准的母圖 |
+| `story_*/images/scene_NN/candidate_NN.png/.json/.workflow.json` | 圖、metadata、填好的節點圖（可原樣重生） |
+| `story_*/images/scene_NN/review.json`、`master.png` | 審核狀態與歷史、核准的母圖 |
+| `story_*/videos/scene_NN/clip_vN.mp4` | H3 短片；重做的會是 `clip_v2`、`clip_v3`，不覆蓋舊的。旁邊的 `.job.json`、`.last_frame.png` 是 H3 的記錄 |
+| `story_*/videos/cut/<故事>_cut_vN.mp4` | 接好的成片 |
+| `story_*/clips.json` | 每個 Scene 的成片要用哪一支短片（最新的那支） |
 | `candidate_index.json`、`review_sheet.html` | 全部候選的索引、人工審核用的並排頁面（都是產生物，不進 git） |
 
 ## 流程
@@ -36,4 +39,5 @@
 - 劇本沒給外觀的角色是補的設定，story.json 的 `label` 標了「請確認」。
 - 《另一個我》與《23:47》月台雙人、《不要回答》窗戶倒影、《第七個人》玻璃七人，對模型都是高難度，預期要補抽。
 - 年齡安全負面詞與 cfg ≥ 1.5 由共用的 prompt 組裝保證，關不掉。
-- 圖片與 `review_sheet.html` 不進 git（`.gitignore`），規格、prompt 與審核紀錄進。
+- **圖片和短片分開放**：每個故事裡 `images/` 只放 Z-Image 的圖與它們的記錄，`videos/` 只放 H3 短片與成片。
+- 圖片、影片與 `review_sheet.html` 不進 git（`.gitignore`），規格、prompt、審核紀錄與 H3 的 job 記錄進。

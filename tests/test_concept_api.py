@@ -65,7 +65,15 @@ def env(tmp_path, monkeypatch):
         cs.PROJECT_ROOT,
         root,
         ignore=shutil.ignore_patterns(
-            "*.png", "review.json", "master.json", "candidate_*.json", "clips.json", "candidate_index.json", "*.html"
+            "*.png",
+            "*.mp4",
+            "videos",
+            "review.json",
+            "master.json",
+            "candidate_*.json",
+            "clips.json",
+            "candidate_index.json",
+            "*.html",
         ),
     )
     monkeypatch.setattr(api, "REPO_ROOT", str(tmp_path))
@@ -282,7 +290,7 @@ def test_videos_quote_cost_first_then_run_in_sessions_of_four_with_downloaded_mo
     assert [len(c["manifest"]["jobs"]) for c in calls] == [4, 3]
     assert all(c["env"]["H3_MODEL_SOURCE"] == "download" for c in calls)
     first = calls[0]["manifest"]["jobs"][0]
-    assert first["input"]["image"].endswith(os.path.join("scene_01", "master.png"))
+    assert first["input"]["image"].endswith(os.path.join("images", "scene_01", "master.png"))
     assert first["settings"]["duration"] == 5 and first["prompt"]["constraints"] == ["locked-camera"]
     assert env.popen.statuses[:2] == [api.WAITING, api.RUNNING]  # consent asked, then cleared by the mount line
     assert job["result"]["clips_completed"] == 7 and job["result"]["cu_used"] == 2.5
@@ -340,8 +348,13 @@ def test_the_cut_needs_every_scene_and_keeps_story_order_ambience_and_the_script
     env.assemble = assemble
     web.post("/stories/1/cut", json={})
     job = env.run_next()
-    assert job["status"] == api.COMPLETED and job["result"]["url"].startswith("http://localhost:7863/files/output/")
-    assert [os.path.basename(c["path"])[:8] for c in seen["clips"]] == [f"scene_0{i}" for i in range(1, 8)]
+    assert job["status"] == api.COMPLETED and job["result"]["url"].startswith(
+        "http://localhost:7863/files/projects/ai_short_drama/story_01_2347/videos/cut/"
+    )
+    assert [c["path"].replace("\\", "/").split("/")[-3:] for c in seen["clips"]] == [
+        ["videos", f"scene_0{i}", "clip_v1.mp4"] for i in range(1, 8)
+    ]
+    assert os.path.basename(seen["out"]) == "story_01_2347_cut_v1.mp4"
     assert [c["ambience"] for c in seen["clips"]] == [False] * 6 + [True]
     assert seen["subtitle"] == "第十八次，開始。"
     web.post("/stories/1/cut", json={"subtitle": ""})
@@ -355,7 +368,7 @@ def test_the_cut_needs_every_scene_and_keeps_story_order_ambience_and_the_script
 def test_the_file_route_serves_project_images_and_story_output_only(web, env, tmp_path):
     web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [1], "confirm": True})
     env.run_next()
-    ok = "/files/projects/ai_short_drama/story_01_2347/scene_01/candidate_01.png"
+    ok = "/files/projects/ai_short_drama/story_01_2347/images/scene_01/candidate_01.png"
     assert web.get(ok).status_code == 200
     (tmp_path / "output" / "story_x").mkdir(parents=True)
     (tmp_path / "output" / "story_x" / "a.mp4").write_bytes(b"x")
@@ -655,3 +668,20 @@ def test_the_first_batch_is_one_image_per_scene_and_that_is_enough_to_review(web
     env.run_next()
     scenes = web.get("/stories/4/scenes").json()["scenes"]
     assert [len(s["candidates"]) for s in scenes[:3]] == [1, 2, 2] and scenes[0]["status"] == cs.APPROVED
+
+
+def test_stills_and_clips_live_apart_and_new_clips_never_overwrite_old_ones(web, env, tmp_path):
+    """One story folder, two sides: images/scene_NN for stills and their records, videos/scene_NN for clips,
+    videos/cut for cuts. A redone clip becomes clip_v2 next to clip_v1."""
+    approve_all(web, env)
+    env.run = ok_run([])
+    env.popen = FakeH3(env, tmp_path)
+    for _ in range(2):
+        web.post("/stories/1/videos", json={"scenes": [5], "confirm": True})
+        assert env.run_next()["status"] == api.COMPLETED
+    story = cs.load_stories(env.root)[0]
+    assert sorted(os.listdir(story.clip_dir(5))) == ["clip_v1.mp4", "clip_v2.mp4"]
+    assert api.load_clips(story)["scene_05"]["path"].endswith("videos/scene_05/clip_v2.mp4")  # the cut uses the newest
+    assert not [f for f in os.listdir(story.scene_dir(5)) if f.endswith(".mp4")]
+    assert os.path.isfile(os.path.join(story.scene_dir(5), "master.png"))
+    assert os.listdir(os.path.join(story.dir, "videos", "_batches"))  # the manifests that were sent

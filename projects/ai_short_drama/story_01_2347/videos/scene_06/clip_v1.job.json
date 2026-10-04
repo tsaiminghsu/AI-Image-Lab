@@ -1,0 +1,183 @@
+{
+  "job_id": "s01_sc06_B",
+  "scene_id": "story_01_2347/scene_06",
+  "status": "COMPLETED",
+  "started_at": "2026-10-03T01:37:07+0800",
+  "finished_at": "2026-10-03T01:48:34+0800",
+  "elapsed_seconds": 686.2,
+  "stage_seconds": {
+    "PENDING": 0.0,
+    "PREPARING": 0.2,
+    "CONNECTING_COLAB": 97.4,
+    "UPLOADING": 19.1,
+    "LOADING_MODEL": 235.9,
+    "INFERENCE": 327.5,
+    "DOWNLOADING": 4.7,
+    "VALIDATING": 0.0,
+    "COMPLETED": 1.4
+  },
+  "error_code": null,
+  "error": null,
+  "hint": null,
+  "failed_stage": null,
+  "warnings": [],
+  "log": "D:\\AI-Image-Lab\\output\\logs\\s01_sc06_B.log",
+  "batch_id": "story01-fix-sc06-sc05-sc07",
+  "image": "D:\\AI-Image-Lab\\projects\\ai_short_drama\\story_01_2347\\scene_06\\candidate_02.png",
+  "chained_from": null,
+  "image_size": [
+    720,
+    1280
+  ],
+  "duration": 8.0,
+  "frames": 192,
+  "actual_seconds": 8.0,
+  "resolution": "768x1376",
+  "seed": 65484423178847,
+  "gpu_requested": "A100",
+  "high_mem": true,
+  "timeout_seconds": 3600,
+  "output": "D:\\AI-Image-Lab\\output\\story01\\s01_scene06_B_h3.mp4",
+  "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] The man in the first frame holds the phone to his ear on the same subway platform in his dark charcoal jacket and black shirt, wide-eyed. The voice from the phone (S2), identical to his own, says urgently: <d>[Chinese] 不要讓他看見你。</d> He looks up and to the side with alarm, scanning the platform. The camera holds a steady shot.\n\noverall_soundscape: Subway station ambience with a crowd murmur and a thin voice through the phone speaker.\n\nnon_diegetic_music: N/A",
+  "spec": {
+    "job_id": "s01_sc06_B",
+    "scene_id": "story_01_2347/scene_06",
+    "chain": false,
+    "input": {
+      "image": "projects/ai_short_drama/story_01_2347/scene_06/candidate_02.png"
+    },
+    "prompt": {
+      "description": "The man in the first frame holds the phone to his ear on the same subway platform in his dark charcoal jacket and black shirt, wide-eyed. The voice from the phone (S2), identical to his own, says urgently: <d>[Chinese] 不要讓他看見你。</d> He looks up and to the side with alarm, scanning the platform. The camera holds a steady shot.",
+      "soundscape": "Subway station ambience with a crowd murmur and a thin voice through the phone speaker.",
+      "music": "",
+      "prompt_file": null,
+      "constraints": []
+    },
+    "settings": {
+      "mode": "first_frame",
+      "duration": 8,
+      "resolution": "auto",
+      "seed": null,
+      "gpu": null,
+      "high_mem": null,
+      "timeout": null,
+      "overwrite": false
+    },
+    "output": "output/story01/s01_scene06_B_h3.mp4"
+  },
+  "transport": "docker",
+  "session": "h3-story01-fix-sc06-sc05-sc07",
+  "session_reused": false,
+  "cli_version": "Version: 0.7.4",
+  "cu_rate_per_hour": 6.77,
+  "cu_balance_before": 52.58,
+  "persistence": "drive",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_info": {
+    "capability": "8.0",
+    "cuda": "13.0",
+    "free_disk_gib": 193.2,
+    "name": "NVIDIA A100-SXM4-80GB",
+    "torch": "2.11.0+cu130",
+    "vram_gib": 79.3
+  },
+  "comfyui_commit": "65787d668397d230bf5839d69a0a7239e2dad378",
+  "remote_seconds": {
+    "setup": 29.4,
+    "download": 176.1,
+    "comfyui_start": 24.0,
+    "inference": 325.4,
+    "total": 560.5
+  },
+  "remote_models": [
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 0.56,
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "seconds": 7.9
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 0.58,
+      "name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "seconds": 9.3
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 4.85,
+      "name": "minimax_h3_video_vae_fp16.safetensors",
+      "seconds": 57.1
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 14.61,
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "seconds": 142.5
+    },
+    {
+      "action": "downloaded",
+      "cached": false,
+      "gib": 19.53,
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "seconds": 172.6
+    }
+  ],
+  "model_actions": {
+    "minimax_h3_audio_vae_fp32.safetensors": "downloaded",
+    "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": "downloaded",
+    "minimax_h3_video_vae_fp16.safetensors": "downloaded",
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "downloaded",
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors": "downloaded"
+  },
+  "remote_config": {
+    "diffusion": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "lora": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    "lowvram": false,
+    "model_gib": {
+      "minimax_h3_audio_vae_fp32.safetensors": 0.56,
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors": 19.53,
+      "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": 0.58,
+      "minimax_h3_video_vae_fp16.safetensors": 4.85,
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": 14.61
+    },
+    "sampler": "euler",
+    "scheduler": "beta",
+    "steps": 8,
+    "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+  },
+  "vram_peak_mib": 43338,
+  "drive_output": "outputs/videos/s01_scene06_B_h3.mp4",
+  "remote_last_frame": "/content/h3_s01_sc06_B_last_frame.png",
+  "bytes": 3034545,
+  "last_frame": "D:\\AI-Image-Lab\\output\\story01\\s01_scene06_B_h3.last_frame.png",
+  "ffprobe": {
+    "video_codec": "h264",
+    "width": 768,
+    "height": 1376,
+    "pix_fmt": "yuv420p",
+    "fps": 24.0,
+    "nb_frames": 192,
+    "video_duration": 8.0,
+    "audio_codec": "aac",
+    "audio_sample_rate": 32000,
+    "audio_channels": 2,
+    "format_duration": 8.0,
+    "size": 3034545
+  },
+  "cu_balance_after": 52.0,
+  "cu_used_measured": 0.58,
+  "session_seconds": 682.6,
+  "cu_estimated": 1.284,
+  "session_status": "stopped",
+  "drive_saved": {
+    "flushed": true,
+    "model_sync": {},
+    "error": null,
+    "flush_seconds": 3.9,
+    "seconds": 8.2
+  }
+}

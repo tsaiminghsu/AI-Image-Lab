@@ -11,6 +11,10 @@ The project's rule: **people choose, the tool does not.** Never call a candidate
 observations (legibility, identity, artifacts) and let the user decide. No H3/video before a scene has a
 chosen first frame, and a first frame the user picked only for a trial is not `APPROVED`.
 
+Layout: one folder per story, stills and clips apart - `images/scene_NN/` (candidates, their records,
+`review.json`, `master.png`), `videos/scene_NN/clip_vN.mp4` (H3 clips, a redo is the next `vN`), `videos/cut/`
+(cuts), `clips.json` (which clip each scene's cut uses). Nothing for this project belongs in `output/`.
+
 ## Steps
 
 1. Free, no GPU: `concept_stills.py init|prompts|status|generate --dry-run|sheet`. Read `story_*/prompts.json`
