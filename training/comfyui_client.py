@@ -787,6 +787,15 @@ def _reset_if_zimage_prompt_changed(wf: dict) -> bool:
     return True
 
 
+def server_port() -> int:
+    """The port of COMFYUI_URL (8188 by default). start_server listens on the same port the client talks to:
+    on 2026-10-04 Windows reserved 8181-8280 after a restart, so ComfyUI could not bind 8188 and the only
+    way out without touching system settings was COMFYUI_URL=http://127.0.0.1:<free port>."""
+    from urllib.parse import urlparse
+
+    return urlparse(COMFYUI_URL).port or 8188
+
+
 def start_server(startup_timeout: float = 120, extra_args=None) -> subprocess.Popen:
     """Launch the ComfyUI server as a background process and block until it
     responds. Assumes this repo's local layout (COMFYUI_DIR) - not used by
@@ -795,7 +804,7 @@ def start_server(startup_timeout: float = 120, extra_args=None) -> subprocess.Po
     --disable-smart-memory, without which a long Z-Image batch can stall in the VAE decode on this card."""
     python_exe = os.path.join(COMFYUI_DIR, ".venv", "Scripts", "python.exe")
     process = subprocess.Popen(
-        [python_exe, "main.py", "--listen", "127.0.0.1", "--port", "8188", *(extra_args or [])],
+        [python_exe, "main.py", "--listen", "127.0.0.1", "--port", str(server_port()), *(extra_args or [])],
         cwd=COMFYUI_DIR,
     )
     deadline = time.time() + startup_timeout

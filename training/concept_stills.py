@@ -325,44 +325,58 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
         raise gc.UsageError("ComfyUI 沒有在跑。先啟動它（見 CLAUDE.md），再 generate")
     made = 0
     touched = []
-    for story, n, letter in todo:
-        if should_stop and should_stop():
-            break
-        if before_each:
-            before_each(story, n, letter)   # e.g. gpu_guard.before_image; may raise to end the batch
-        req = build_request(bible, story, n, letter)
-        paths = candidate_paths(story, n, letter)
-        os.makedirs(os.path.dirname(paths["png"]), exist_ok=True)
-        prefix = f"{story.id}_s{n:02d}_{letter}"
-        print(f"{story.id} scene_{n:02d} {letter}: seed {req['seed']} {req['width']}x{req['height']}", flush=True)
-        graph = client.build_zimage_txt2img_workflow(
-            req["prompt"], req["negative_prompt"], req["seed"], prefix, client.ZIMAGE_MODELS[MODEL_KEY],
-            req["width"], req["height"], req["steps"], req["cfg"])
-        started = time.time()
-        raw = submit(prompt=req["prompt"], negative_prompt=req["negative_prompt"], seed=req["seed"],
-                     filename_prefix=prefix, model=MODEL_KEY, width=req["width"], height=req["height"],
-                     steps=req["steps"], cfg=req["cfg"])
-        elapsed = round(time.time() - started, 1)
-        shutil.move(raw, paths["png"])
-        meta = {k: req[k] for k in ("story_id", "scene_id", "candidate_id", "prompt", "negative_prompt", "seed",
-                                    "width", "height", "steps", "model", "workflow")}
-        meta.update({
-            "cfg": req["cfg"], "composition": req["composition"], "candidate_letter": letter,
-            "sampler": client.ZIMAGE_SAMPLER, "scheduler": client.ZIMAGE_SCHEDULER, "shift": client.ZIMAGE_SHIFT,
-            "workflow_graph": os.path.basename(paths["workflow"]),
-            "workflow_template_sha256": _sha256(client.WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH),
-            "image_sha256": _sha256(paths["png"]), "generation_seconds": elapsed, "created_at": _now(),
-        })
-        _write_json(paths["meta"], meta)
-        _write_json(paths["workflow"], graph)
-        print(f"  saved {paths['png']} ({elapsed}s)", flush=True)
-        made += 1
-        if (story.id, n) not in touched:
-            touched.append((story.id, n))
-    by_id = {s.id: s for s in stories}
-    for story_id, n in touched:
-        _mark_ready(by_id[story_id], n)
+    try:
+        for story, n, letter in todo:
+            if should_stop and should_stop():
+                break
+            if before_each:
+                before_each(story, n, letter)   # e.g. gpu_guard.before_image; may raise to end the batch
+            req = build_request(bible, story, n, letter)
+            paths = candidate_paths(story, n, letter)
+            os.makedirs(os.path.dirname(paths["png"]), exist_ok=True)
+            prefix = f"{story.id}_s{n:02d}_{letter}"
+            print(f"{story.id} scene_{n:02d} {letter}: seed {req['seed']} {req['width']}x{req['height']}", flush=True)
+            graph = client.build_zimage_txt2img_workflow(
+                req["prompt"], req["negative_prompt"], req["seed"], prefix, client.ZIMAGE_MODELS[MODEL_KEY],
+                req["width"], req["height"], req["steps"], req["cfg"])
+            started = time.time()
+            raw = submit(prompt=req["prompt"], negative_prompt=req["negative_prompt"], seed=req["seed"],
+                         filename_prefix=prefix, model=MODEL_KEY, width=req["width"], height=req["height"],
+                         steps=req["steps"], cfg=req["cfg"])
+            elapsed = round(time.time() - started, 1)
+            shutil.move(raw, paths["png"])
+            meta = {k: req[k] for k in ("story_id", "scene_id", "candidate_id", "prompt", "negative_prompt", "seed",
+                                        "width", "height", "steps", "model", "workflow")}
+            meta.update({
+                "cfg": req["cfg"], "composition": req["composition"], "candidate_letter": letter,
+                "sampler": client.ZIMAGE_SAMPLER, "scheduler": client.ZIMAGE_SCHEDULER, "shift": client.ZIMAGE_SHIFT,
+                "workflow_graph": os.path.basename(paths["workflow"]),
+                "workflow_template_sha256": _sha256(client.WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH),
+                "image_sha256": _sha256(paths["png"]), "generation_seconds": elapsed, "created_at": _now(),
+            })
+            _write_json(paths["meta"], meta)
+            _write_json(paths["workflow"], graph)
+            print(f"  saved {paths['png']} ({elapsed}s)", flush=True)
+            made += 1
+            if (story.id, n) not in touched:
+                touched.append((story.id, n))
+    finally:
+        # A run that dies part-way (a hung ComfyUI, a cancelled job) still leaves finished images behind, and
+        # a later run skips them, so the scene must be marked from what is on disk, not from what this call made.
+        by_id = {s.id: s for s in stories}
+        for story_id, n in touched:     # also a REGENERATE scene that just received C/D goes back to review
+            _mark_ready(by_id[story_id], n)
+        mark_ready_scenes(stories)
     return made
+
+
+def mark_ready_scenes(stories):
+    """Every scene that holds its first-round candidates but was never handed to review (status NO_CANDIDATES)
+    goes CANDIDATES_READY -> HUMAN_REVIEW. Safe to call at any time: a decided scene is left alone."""
+    for story in stories:
+        for s in story.data["scenes"]:
+            if load_review(story, s["scene"])["status"] == NO_CANDIDATES:
+                _mark_ready(story, s["scene"])
 
 
 def _mark_ready(story, scene_number):

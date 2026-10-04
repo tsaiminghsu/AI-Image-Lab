@@ -562,3 +562,72 @@ def test_assemble_measures_each_clip_then_the_mix_and_refuses_a_missing_clip(tmp
     assert open(os.path.splitext(out)[0] + ".subtitle.txt", encoding="utf-8").read() == "完"
     with pytest.raises(api.gc.UsageError, match="找不到片段"):
         cc.assemble([{"path": str(tmp_path / "nope.mp4")}], out, ffmpeg="ffmpeg", run=run)
+
+
+def test_start_server_listens_on_the_port_of_comfyui_url(monkeypatch):
+    """Windows can reserve 8188 after a restart (2026-10-04); COMFYUI_URL then moves both the client and the
+    server it starts."""
+    import comfyui_client as client
+
+    seen = []
+    monkeypatch.setattr(
+        client.subprocess, "Popen", lambda cmd, **kw: seen.append(cmd) or type("P", (), {"poll": lambda s: None})()
+    )
+    monkeypatch.setattr(client, "is_server_running", lambda *a, **k: True)
+    for url, port in (
+        ("http://127.0.0.1:9188", "9188"),
+        ("http://127.0.0.1:8188", "8188"),
+        ("http://localhost", "8188"),
+    ):
+        monkeypatch.setattr(client, "COMFYUI_URL", url)
+        client.start_server(extra_args=["--disable-smart-memory"])
+        cmd = seen[-1]
+        assert cmd[cmd.index("--port") + 1] == port and cmd[-1] == "--disable-smart-memory"
+
+
+def test_a_hung_comfyui_is_restarted_and_the_batch_resumes_where_it_stopped(web, env):
+    """2026-10-04: sampling stuck at step 0/8 three times (Model Initializing, ComfyUI's HTTP server silent).
+    The job's own ComfyUI is restarted and finished images are not redone; the 20-minute library timeout is
+    cut for the job and restored afterwards."""
+    import comfyui_client as client
+
+    real, calls, starts, limits = env.submit, {"n": 0}, {"n": 0}, []
+
+    def flaky(**kw):
+        calls["n"] += 1
+        limits.append(client.POLL_TIMEOUT_SECONDS_ZIMAGE)
+        if calls["n"] == 3:
+            raise client.ComfyUIUnavailable("ComfyUI 伺服器連續 7 次沒有回應")
+        return real(**kw)
+
+    def start():
+        starts["n"] += 1
+        env.server_state["up"] = True
+        return env.comfy
+
+    env.submit, env.start_comfyui = flaky, start
+    before = client.POLL_TIMEOUT_SECONDS_ZIMAGE
+    web.post("/stories/2/candidates", json={"scenes": [1, 2], "confirm": True})
+    job = env.run_next()
+    assert job["status"] == api.COMPLETED, job["error"]
+    assert job["result"]["images"] == 4 and job["result"]["comfyui_restarts"] == 1 and starts["n"] == 2
+    assert [c["seed"] for c in env.submitted] == sorted({c["seed"] for c in env.submitted})  # nothing rendered twice
+    assert set(limits) == {api.IMAGE_STALL_SECONDS} and client.POLL_TIMEOUT_SECONDS_ZIMAGE == before
+    assert [c[0] for c in env.guard.calls].count("batch") == 2  # the card is checked again before the restart
+
+
+def test_a_comfyui_the_job_did_not_start_is_never_restarted_and_restarts_are_capped(web, env):
+    import comfyui_client as client
+
+    def hang(**kw):
+        raise client.ComfyUIUnavailable("no answer")
+
+    env.submit = hang
+    env.server_state["up"] = True  # someone else's ComfyUI
+    web.post("/stories/2/candidates", json={"scenes": [1], "confirm": True})
+    job = env.run_next()
+    assert job["status"] == api.FAILED and "no answer" in job["error"] and env.comfy.terminated is False
+    env.server_state["up"] = False  # now it is the job's own, but it never recovers
+    web.post("/stories/2/candidates", json={"scenes": [1], "confirm": True})
+    job = env.run_next()
+    assert job["status"] == api.FAILED and env.comfy.terminated is True

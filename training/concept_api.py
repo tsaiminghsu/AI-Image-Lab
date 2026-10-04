@@ -54,6 +54,8 @@ PUBLIC_URL = os.environ.get("CONCEPT_API_PUBLIC_URL", f"http://localhost:{PORT}"
 CORS_ORIGINS = [o for o in os.environ.get("CONCEPT_API_CORS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o]
 FILE_EXTENSIONS = (".png", ".jpg", ".mp4", ".html")
 
+IMAGE_STALL_SECONDS = 600           # a longer image is a hang (normal: 100-330 s)
+MAX_COMFYUI_RESTARTS = 3
 MAX_CLIPS_PER_SESSION = 4            # the conservative split from the story 1 report (4+3)
 SECONDS_PER_IMAGE = 140              # measured on the RTX 2070: 131-141 s mean per 720x1280 image
 SESSION_OVERHEAD_MINUTES = 6.5       # measured: fresh Colab session, models downloaded
@@ -128,6 +130,7 @@ class Runner:
         self.server_up = client.is_server_running
         self.start_comfyui = lambda: client.start_server(extra_args=["--disable-smart-memory"])
         self.popen = subprocess.Popen
+        self.wait_exit = lambda proc: proc.wait(timeout=30) if hasattr(proc, "wait") else None
         self.run = subprocess.run
         self.guard = gpu_guard
         self.assemble = concept_cut.assemble
@@ -197,26 +200,53 @@ class Runner:
         if not self.server_up():
             self._update(job_id, message="啟動 ComfyUI")
             process = self.start_comfyui()
-        done = {"n": 0}
+        letters = tuple(params["letters"])
+        scenes = set(params["scenes"]) if params["scenes"] else None
+
+        def remaining():
+            return len(cs.pending([story], letters, scene_numbers=scenes))
+
+        to_make = remaining()
+        restarts = 0
+        previous_limit = client.POLL_TIMEOUT_SECONDS_ZIMAGE
+        # An image normally takes 100-330 s. A longer one is the "Model Initializing" hang (seen three times on
+        # 2026-10-04: sampling stuck at step 0/8 with 6 GB of VRAM spilled to shared memory, ComfyUI's HTTP
+        # server no longer answering), which only a restart clears. The library default would wait 20 minutes.
+        client.POLL_TIMEOUT_SECONDS_ZIMAGE = IMAGE_STALL_SECONDS
 
         def before_each(_story, scene, letter):
             self.guard.before_image()
             self._update(job_id, message="生圖中",
-                         progress={"done": done["n"], "current": f"scene_{scene:02d} 候選 {letter}"})
-            done["n"] += 1
+                         progress={"done": to_make - remaining(), "current": f"scene_{scene:02d} 候選 {letter}"})
 
         try:
-            made = cs.generate(bible, [story], letters=tuple(params["letters"]),
-                               scene_numbers=set(params["scenes"]) if params["scenes"] else None,
-                               submit=self.submit, server_up=self.server_up, before_each=before_each,
-                               should_stop=lambda: job_id in self.cancel_requested)
+            while True:
+                try:
+                    cs.generate(bible, [story], letters=letters, scene_numbers=scenes, submit=self.submit,
+                                server_up=self.server_up, before_each=before_each,
+                                should_stop=lambda: job_id in self.cancel_requested)
+                    break
+                except (TimeoutError, client.ComfyUIUnavailable) as exc:
+                    # Only a ComfyUI this job started can be restarted; someone else's is not ours to kill.
+                    if process is None or restarts >= MAX_COMFYUI_RESTARTS:
+                        raise
+                    restarts += 1
+                    self._update(job_id, message=f"ComfyUI 卡住（{type(exc).__name__}），重新啟動第 {restarts} 次",
+                                 progress={"done": to_make - remaining(), "current": None})
+                    process.terminate()
+                    self.wait_exit(process)
+                    self.guard.before_batch(max_start_temp_c=rp.start_temp_c(settings))
+                    process = self.start_comfyui()   # finished images are skipped, so this resumes
         finally:
+            client.POLL_TIMEOUT_SECONDS_ZIMAGE = previous_limit
             if process is not None:      # only a ComfyUI this job started; never someone else's
                 process.terminate()
             cs.build_index(cs.load_stories(self.root), self.root)
             cs.build_sheet(bible, cs.load_stories(self.root), self.root)
+        made = to_make - remaining()
         self._update(job_id, progress={"done": made, "current": None})
-        return {"images": made, "review_sheet": file_url(os.path.join(self.root, "review_sheet.html")),
+        return {"images": made, "comfyui_restarts": restarts,
+                "review_sheet": file_url(os.path.join(self.root, "review_sheet.html")),
                 "next": "請使用者看圖後決定每個 Scene 核准哪一張，或判定重生"}
 
     # -- MiniMax H3 clips on Colab

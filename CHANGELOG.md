@@ -3,6 +3,24 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-10-04
+
+### 故事 3 候選圖（14 張，透過工具伺服器的 API 生成）：三次卡死、埠被保留、狀態沒更新
+
+- **結果**：14 張完成，每張 101–327 秒、平均 175 秒（故事 1：141、故事 2：131），逐張時間隨批次拉長
+  （105→134→150→154→162→170→182→201，之後重啟的程序又從 101 開始）。這次是透過 `concept_api.py` 的 HTTP API 排入，
+  不是從 Open WebUI 聊天（Docker 重開機後沒起來，工具也還沒註冊）。
+- **卡死**：取樣停在 0/8「Model Initializing」，VRAM 釘在 7.7–7.8 GB、共享 GPU 記憶體 6 GB、ComfyUI 的 HTTP 不回應。
+  這次批次內發生 2 次（第 10 張、之後重啟的程序的第 2 張），加上昨天的第一次嘗試共 3 次。聊天模型不是原因（每次 Ollama 都沒載入
+  模型），確切原因不明；只有重啟 ComfyUI 能解。
+  - 對策：`concept_api` 的生圖工作把單張逾時從 20 分鐘降到 600 秒（正常 100–330 秒），逾時或 ComfyUI 無回應就重啟
+    **這個工作自己啟動的** ComfyUI（最多 3 次，不碰別人開的），已完成的圖不重做。+2 個測試。
+- **埠**：重開機後 Windows 保留了 8181–8280，ComfyUI 的 8188 綁不上（`PermissionError`，工作乾淨失敗、沒花任何東西）。
+  `comfyui_client.start_server` 現在聽 `COMFYUI_URL` 的埠；這次用 `COMFYUI_URL=http://127.0.0.1:9188`。
+  `stop_comfyui.ps1` 仍然寫死 8188，尚未改。
+- **Bug 修正**：`concept_stills.generate` 只在整個呼叫正常結束時才把 Scene 交給審核，中途死掉的批次留下完成的圖卻停在
+  `NO_CANDIDATES`。改成在 `finally` 依硬碟上的圖標記，並提供 `mark_ready_scenes`。+1 個測試。
+
 ## 2026-10-03
 
 ### 短劇概念片流程可以從 Open WebUI 操作（工具伺服器 `training/concept_api.py`；離線測試完成，聊天端尚未實機驗收）

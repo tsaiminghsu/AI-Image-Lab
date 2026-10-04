@@ -1,0 +1,17 @@
+{
+  "story_id": "story_03_seventh_person",
+  "scene_id": "scene_03",
+  "status": "HUMAN_REVIEW",
+  "approved_candidate": null,
+  "notes": "",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-04T10:48:35+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-04T10:48:35+08:00"
+    }
+  ]
+}

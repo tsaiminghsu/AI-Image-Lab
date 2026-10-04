@@ -318,3 +318,29 @@ def test_init_creates_scene_folders_and_prompt_files(work):
         assert os.path.isfile(os.path.join(root, folder, "prompts.json"))
         assert len([d for d in os.listdir(os.path.join(root, folder)) if d.startswith("scene_")]) == 7
     assert len(cs._read_json(os.path.join(root, FOLDERS[0], "prompts.json"))["candidates"]) == 14
+
+
+def test_a_run_that_dies_midway_still_hands_the_finished_scenes_to_review(work, tmp_path):
+    """Story 3 (2026-10-04) needed three runs because ComfyUI hung twice; scenes finished in the dead runs were
+    stuck at NO_CANDIDATES. The marking comes from what is on disk, in a finally."""
+    _, bible, stories = work
+    story = stories[2]
+    inner = fake_submit(tmp_path)
+
+    def dies_on_the_fifth(**kw):
+        if len(inner.calls) == 4:
+            raise TimeoutError("hung")
+        return inner(**kw)
+
+    with pytest.raises(TimeoutError):
+        cs.generate(bible, [story], scene_numbers={1, 2, 3}, submit=dies_on_the_fifth, server_up=lambda: True)
+    assert [cs.load_review(story, n)["status"] for n in (1, 2, 3)] == [
+        cs.HUMAN_REVIEW,
+        cs.HUMAN_REVIEW,
+        cs.NO_CANDIDATES,
+    ]
+    cs.generate(bible, [story], scene_numbers={1, 2, 3}, submit=inner, server_up=lambda: True)
+    assert cs.load_review(story, 3)["status"] == cs.HUMAN_REVIEW and len(inner.calls) == 6
+    cs.review(story, 1, approve="1")
+    cs.mark_ready_scenes([story])
+    assert cs.load_review(story, 1)["status"] == cs.APPROVED  # a decided scene is never reset
