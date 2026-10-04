@@ -58,6 +58,7 @@ FILE_EXTENSIONS = (".png", ".jpg", ".mp4", ".html")
 IMAGE_STALL_SECONDS = 600           # a longer image is a hang (normal: 100-330 s)
 MAX_COMFYUI_RESTARTS = 3
 MAX_CLIPS_PER_SESSION = 4            # the conservative split from the story 1 report (4+3)
+COOLDOWN_SECONDS_PER_IMAGE = 200     # an estimate until a gated batch has been measured: ~80 C back to 60 C
 SECONDS_PER_IMAGE = 140              # measured on the RTX 2070: 131-141 s mean per 720x1280 image
 SESSION_OVERHEAD_MINUTES = 6.5       # measured: fresh Colab session, models downloaded
 INFERENCE_SECONDS_PER_VIDEO_SECOND = 39.5   # measured: 8 s clip ~315 s
@@ -135,6 +136,7 @@ class Runner:
         self.run = subprocess.run
         self.guard = gpu_guard
         self.assemble = concept_cut.assemble
+        self.thermal_log = gpu_guard.ThermalLog
 
     # -- lifecycle
     def start(self):
@@ -215,8 +217,14 @@ class Runner:
         # server no longer answering), which only a restart clears. The library default would wait 20 minutes.
         client.POLL_TIMEOUT_SECONDS_ZIMAGE = IMAGE_STALL_SECONDS
 
+        thermal = self.thermal_log(os.path.join(REPO_ROOT, "outputs", "thermal", f"{job_id}.csv")).start()
+        waited = {"s": 0.0}
+
         def before_each(_story, scene, letter):
             self.guard.before_image()
+            self._update(job_id, message="等顯示卡降溫", progress={"current": f"scene_{scene:02d} 候選 {letter}"})
+            waited["s"] += self.guard.wait_until_cool()["waited_seconds"]
+            thermal.mark(f"start scene_{scene:02d} {letter}")
             self._update(job_id, message="生圖中",
                          progress={"done": to_make - remaining(), "current": f"scene_{scene:02d} 候選 {letter}"})
 
@@ -240,13 +248,14 @@ class Runner:
                     process = self.start_comfyui()   # finished images are skipped, so this resumes
         finally:
             client.POLL_TIMEOUT_SECONDS_ZIMAGE = previous_limit
+            temperature = dict(thermal.stop(), cooldown_wait_seconds=round(waited["s"]))
             if process is not None:      # only a ComfyUI this job started; never someone else's
                 process.terminate()
             cs.build_index(cs.load_stories(self.root), self.root)
             cs.build_sheet(bible, cs.load_stories(self.root), self.root)
         made = to_make - remaining()
         self._update(job_id, progress={"done": made, "current": None})
-        return {"images": made, "comfyui_restarts": restarts,
+        return {"images": made, "comfyui_restarts": restarts, "temperature": temperature,
                 "review_sheet": file_url(os.path.join(self.root, "review_sheet.html")),
                 "next": "請使用者看圖後決定每個 Scene 核准哪一張，或判定重生"}
 
@@ -513,8 +522,10 @@ def generate_candidates(story: int, body: GenerateBody):
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if not todo:
         return {"queued": False, "message": "這些候選圖都已經存在，沒有要生的"}
-    estimate = {"images": len(todo), "minutes": round(len(todo) * SECONDS_PER_IMAGE / 60),
-                "gpu": "本機 RTX 2070；生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
+    estimate = {"images": len(todo),
+                "minutes": round(len(todo) * (SECONDS_PER_IMAGE + COOLDOWN_SECONDS_PER_IMAGE) / 60),
+                "gpu": "本機 RTX 2070；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
+                       "生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
     if not body.confirm:
         return {"queued": False, "needs_confirmation": True, "estimate": estimate,
                 "message": "還沒開始。請把預估告訴使用者，使用者同意後再用 confirm=true 呼叫一次"}

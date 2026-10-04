@@ -34,6 +34,12 @@
 4. `review --story N --scene M --approve 1|2|3|4`（複製成 `master.png`）或 `--regenerate --notes "原因"`。
 5. 只有 `REGENERATE` 的 Scene 才能 `generate --candidates C,D`。
 
+## 顯示卡溫度
+
+每張圖開始前會等 GPU 降到 60°C 以下（`generate --start-temp N` 可調，0 = 不等），所以一批會比連續跑慢很多，這是刻意的：
+優先讓顯示卡不要長時間待在 83–84°C。每批的溫度曲線存在 `outputs/thermal/*.csv`，結束時會印出最高溫與等待的總秒數。
+一張圖內部的峰值（約 80°C）這個規則管不到，要靠降低功耗上限（系統管理員執行 `nvidia-smi -pl 130`，重開機後還原）。
+
 ## 注意
 
 - 劇本沒給外觀的角色是補的設定，story.json 的 `label` 標了「請確認」。

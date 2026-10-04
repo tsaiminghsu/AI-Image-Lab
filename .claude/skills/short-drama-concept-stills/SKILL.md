@@ -40,6 +40,14 @@ Layout: one folder per story, stills and clips apart - `images/scene_NN/` (candi
    Copying a result to Google Drive needs Drive for desktop (not installed on this machine as of 2026-10-03)
    or a Colab session; ask the user which.
 
+## GPU temperature
+
+The user's priority is the card's lifespan, not speed. `generate` (CLI and tool server) waits before every image
+until the GPU is at or below 60 C (`--start-temp`, env `GPU_IMAGE_START_MAX_C`) and writes a temperature curve to
+`outputs/thermal/*.csv`. Do not turn the gate off to save time. It cannot lower the ~80 C peak inside one render;
+only a lower power limit can (`nvidia-smi -pl`, the user's own setting - never change it yourself). Report the
+batch's peak, seconds at the throttle point and total wait from the summary line.
+
 ## Open WebUI
 
 The same flow is exposed to Open WebUI through `training/concept_api.py` (an OpenAPI tool server on

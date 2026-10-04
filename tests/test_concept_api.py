@@ -47,6 +47,24 @@ class FakeGuard:
     def before_image(self, **kw):
         self.calls.append(("image", kw))
 
+    def wait_until_cool(self, max_c=None, **kw):
+        self.calls.append(("cool", max_c))
+        return {"waited_seconds": 30.0, "temp_c": 58.0}
+
+
+class FakeThermalLog:
+    def __init__(self, path):
+        self.path, self.marks = path, []
+
+    def start(self):
+        return self
+
+    def mark(self, event):
+        self.marks.append(event)
+
+    def stop(self):
+        return {"samples": 3, "peak_c": 79.0, "mean_c": 66.0, "seconds_at_throttle": 0, "log": self.path}
+
 
 class FakeComfy:
     def __init__(self):
@@ -92,6 +110,7 @@ def env(tmp_path, monkeypatch):
     runner.submit = submit
     runner.submitted = made
     runner.guard = FakeGuard()
+    runner.thermal_log = FakeThermalLog
     runner.comfy = FakeComfy()
     runner.server_state = {"up": False}
     runner.server_up = lambda: runner.server_state["up"]
@@ -148,7 +167,7 @@ def test_generation_without_confirm_only_quotes_an_estimate(web, env):
     r = web.post("/stories/3/candidates", json={}).json()
     assert r["queued"] is False and r["needs_confirmation"] is True
     # the default is one image per scene: look first, then decide which scenes need a second
-    assert r["estimate"]["images"] == 7 and r["estimate"]["minutes"] == round(7 * api.SECONDS_PER_IMAGE / 60)
+    assert r["estimate"]["images"] == 7
     assert web.post("/stories/3/candidates", json={"candidates": [1, 2]}).json()["estimate"]["images"] == 14
     assert web.post("/stories/3/candidates", json={"candidates": [5]}).status_code == 422
     assert api.store.all() == [] and env.run_next() is None and env.submitted == []
@@ -160,7 +179,10 @@ def test_confirmed_generation_unloads_the_chat_model_before_the_batch_and_every_
     ]
     job = env.run_next()
     assert job["status"] == api.COMPLETED and job["result"]["images"] == 2 and len(env.submitted) == 2
-    assert [c[0] for c in env.guard.calls] == ["batch", "image", "image"]
+    # per image: unload the chat model, then wait for the card to cool, then render
+    assert [c[0] for c in env.guard.calls] == ["batch", "image", "cool", "image", "cool"]
+    assert job["result"]["temperature"]["peak_c"] == 79.0
+    assert job["result"]["temperature"]["cooldown_wait_seconds"] == 60
     assert env.guard.calls[0][1]["max_start_temp_c"] > 0
     assert env.comfy.terminated  # the ComfyUI this job started is stopped again
     assert web.get(f"/jobs/{job_id}").json()["progress"] == {"done": 2, "total": 2, "current": None}
@@ -685,3 +707,57 @@ def test_stills_and_clips_live_apart_and_new_clips_never_overwrite_old_ones(web,
     assert not [f for f in os.listdir(story.scene_dir(5)) if f.endswith(".mp4")]
     assert os.path.isfile(os.path.join(story.scene_dir(5), "master.png"))
     assert os.listdir(os.path.join(story.dir, "videos", "_batches"))  # the manifests that were sent
+
+
+# --- keeping the card cool ----------------------------------------------------------------------------------
+
+
+def test_an_image_waits_until_the_card_has_cooled_and_gives_up_if_it_never_does():
+    """The owner would rather wait than run the card at its throttle point: every image starts at or below the
+    limit. A card that never cools means something else is heating it, and that stops the batch."""
+    clock = Clock()
+    got = gpu_guard.wait_until_cool(
+        60,
+        run=smi(["81, 900, 8192", "70, 900, 8192", "60, 900, 8192"]),
+        sleep=clock.sleep,
+        clock=clock,
+        log=lambda m: None,
+    )
+    assert got == {"waited_seconds": 2 * gpu_guard.SAMPLE_SECONDS, "temp_c": 60.0}
+    clock = Clock()
+    with pytest.raises(gpu_guard.GpuBusy, match="沒有降到 60"):
+        gpu_guard.wait_until_cool(
+            60, run=smi(["75, 900, 8192"]), sleep=clock.sleep, clock=clock, timeout=40, log=lambda m: None
+        )
+    # an unreadable nvidia-smi or a gate of 0 never blocks
+    assert gpu_guard.wait_until_cool(60, run=smi([None]))["temp_c"] is None
+    assert gpu_guard.wait_until_cool(0, run=smi(["90, 900, 8192"]))["waited_seconds"] == 0.0
+
+
+def test_the_thermal_summary_counts_time_at_the_throttle_point():
+    samples = [(0, 55.0), (5, 70.0), (10, 83.0), (15, 84.0), (20, None), (25, 62.0)]
+    assert gpu_guard.summarize(samples) == {"samples": 5, "peak_c": 84.0, "mean_c": 70.8, "seconds_at_throttle": 10}
+    assert gpu_guard.summarize([])["peak_c"] is None
+
+
+def test_the_thermal_log_writes_a_curve_with_the_power_limit_and_image_marks(tmp_path):
+    def run(cmd, **kw):
+        out = "130.00" if "power.limit" in cmd[1] else "64, 1200, 8192"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out + "\n", stderr="")
+
+    log = gpu_guard.ThermalLog(str(tmp_path / "t" / "log.csv"), run=run, interval=0.05).start()
+    log.mark("start scene_01 A")
+    import time
+
+    time.sleep(0.2)
+    summary = log.stop()
+    lines = open(summary["log"], encoding="utf-8").read().splitlines()
+    assert lines[0].startswith("# power_limit_w=130.0") and lines[1] == "elapsed_s,temp_c,used_mib,event"
+    assert any(line.endswith(",start scene_01 A") for line in lines)
+    assert summary["peak_c"] == 64.0 and summary["samples"] >= 1 and summary["seconds_at_throttle"] == 0
+
+
+def test_the_estimate_includes_the_cooldown_wait(web, env):
+    r = web.post("/stories/4/candidates", json={}).json()
+    assert r["estimate"]["minutes"] == round(7 * (api.SECONDS_PER_IMAGE + api.COOLDOWN_SECONDS_PER_IMAGE) / 60)
+    assert "60°C" in r["estimate"]["gpu"]

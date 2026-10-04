@@ -34,6 +34,7 @@ import time
 
 import comfyui_client as client
 import generate_character as gc
+import gpu_guard
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.join(REPO_ROOT, "projects", "ai_short_drama")
@@ -539,6 +540,32 @@ def _parse_scenes(text):
         raise gc.UsageError(f"--scene 要是數字或逗號分隔，不是 {text!r}") from None
 
 
+def _generate_cool(bible, picked, args):
+    """The CLI's generate: every image waits for the chat model to be unloaded and for the GPU to cool, and the
+    batch leaves a temperature log. The owner prefers a slow batch to a hot card."""
+    letters, scenes = _parse_letters(args.candidates), _parse_scenes(args.scene)
+    if args.dry_run:
+        return generate(bible, picked, letters=letters, scene_numbers=scenes, force=args.force, dry_run=True)
+    thermal = gpu_guard.ThermalLog(os.path.join(
+        REPO_ROOT, "outputs", "thermal", f"{picked[0].id}_{datetime.datetime.now():%Y%m%d-%H%M%S}.csv")).start()
+    waited = {"s": 0.0}
+
+    def cool_first(story, n, letter):
+        gpu_guard.before_image()
+        waited["s"] += gpu_guard.wait_until_cool(args.start_temp)["waited_seconds"]
+        thermal.mark(f"start {story.id} scene_{n:02d} {letter}")
+
+    try:
+        return generate(bible, picked, letters=letters, scene_numbers=scenes, force=args.force,
+                        before_each=cool_first)
+    except gpu_guard.GpuBusy as exc:
+        raise gc.UsageError(str(exc)) from None
+    finally:
+        t = thermal.stop()
+        print(f"溫度：最高 {t['peak_c']}°C、平均 {t['mean_c']}°C、{gpu_guard.THROTTLE_C:.0f}°C 以上 {t['seconds_at_throttle']} 秒；"
+              f"等降溫共 {waited['s']:.0f} 秒；記錄 {t['log']}", flush=True)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Concept stills for the AI short-drama pitches")
     p.add_argument("--root", default=PROJECT_ROOT)
@@ -552,6 +579,8 @@ def main(argv=None):
                    help="A (default: one image per scene first), A,B, or C,D for a REGENERATE scene")
     g.add_argument("--force", action="store_true")
     g.add_argument("--dry-run", action="store_true")
+    g.add_argument("--start-temp", type=float, default=None,
+                   help="每張圖開始前 GPU 要降到幾度以下（預設 60，環境變數 GPU_IMAGE_START_MAX_C；0 = 不等）")
     sub.add_parser("index", help="rebuild candidate_index.json")
     sub.add_parser("sheet", help="write review_sheet.html")
     sub.add_parser("status", help="per-story image and review counts")
@@ -579,8 +608,7 @@ def main(argv=None):
         print(f"{write_prompts(bible, stories)} 條 prompt 已寫入")
     elif args.cmd == "generate":
         picked = select_stories(stories, args.story)
-        made = generate(bible, picked, letters=_parse_letters(args.candidates), scene_numbers=_parse_scenes(args.scene),
-                        force=args.force, dry_run=args.dry_run)
+        made = _generate_cool(bible, picked, args)
         if not args.dry_run:
             build_index(stories, root)
             print(f"生成 {made} 張；下一步：打開 review_sheet.html 人工審核（先跑 sheet）")

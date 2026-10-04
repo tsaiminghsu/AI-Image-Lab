@@ -14,6 +14,7 @@ Only `requests` and the standard library, like comfyui_client.
 
 import os
 import subprocess
+import threading
 import time
 
 import requests
@@ -104,3 +105,104 @@ def before_image(*, http=requests, sleep=time.sleep, clock=time.monotonic, log=p
     if unloaded:
         log(f"[gpu_guard] 生圖前卸載 Ollama：{', '.join(unloaded)}")
     return unloaded
+
+
+# ---------------------------------------------------------------- keeping the card cool between images
+#
+# One Z-Image render takes this card from about 53 C to about 80 C in 100 s (measured 2026-10-04), and a
+# batch run back to back sits at 83-84 C, the hardware throttle point, from the third image on. The owner
+# would rather wait than run it that hot ("時間長沒關係，要讓顯示卡可以用更久"). So every image starts only
+# once the card is back under IMAGE_START_MAX_C. This bounds the time spent near the throttle point; it does
+# not lower the peak inside one render - only a lower power limit (nvidia-smi -pl, the owner's setting) does.
+
+IMAGE_START_MAX_C = float(os.environ.get("GPU_IMAGE_START_MAX_C", "60"))
+COOL_WAIT_SECONDS = 1200
+THROTTLE_C = 83.0
+SAMPLE_SECONDS = 5
+
+
+def wait_until_cool(max_c=None, *, run=subprocess.run, sleep=time.sleep, clock=time.monotonic,
+                    timeout=COOL_WAIT_SECONDS, log=print):
+    """Block until the GPU is at or below max_c. Returns {'waited_seconds', 'temp_c'} (temp_c None when
+    nvidia-smi cannot be read - then there is nothing to wait on). max_c 0 or below turns the gate off.
+    Raises GpuBusy when the card has not cooled within `timeout`: something else is heating it."""
+    max_c = IMAGE_START_MAX_C if max_c is None else max_c
+    started = clock()
+    if max_c <= 0:
+        return {"waited_seconds": 0.0, "temp_c": None}
+    announced = False
+    while True:
+        state = gpu_state(run)
+        if state is None or state["temp_c"] <= max_c:
+            return {"waited_seconds": round(clock() - started, 1), "temp_c": state and state["temp_c"]}
+        if not announced:
+            log(f"[gpu_guard] GPU {state['temp_c']:.0f}°C，等降到 {max_c:.0f}°C 再生下一張")
+            announced = True
+        if clock() - started >= timeout:
+            raise GpuBusy(f"等了 {timeout} 秒 GPU 還在 {state['temp_c']:.0f}°C，沒有降到 {max_c:.0f}°C；"
+                          "有別的程式在用顯示卡，或散熱有問題")
+        sleep(SAMPLE_SECONDS)
+
+
+def power_limit_w(run=subprocess.run):
+    """The card's current power limit in watts, or None. Recorded with every thermal log: it is the one
+    setting that changes the peak temperature, and it resets on reboot."""
+    try:
+        out = run(["nvidia-smi", "--query-gpu=power.limit", "--format=csv,noheader,nounits"],
+                  capture_output=True, text=True, timeout=15).stdout
+        return float(out.strip().splitlines()[0])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+
+
+def summarize(samples, interval=SAMPLE_SECONDS):
+    """Peak temperature and the seconds spent at or above the throttle point, from [(elapsed, temp_c), ...]."""
+    temps = [t for _, t in samples if t is not None]
+    if not temps:
+        return {"samples": 0, "peak_c": None, "mean_c": None, "seconds_at_throttle": 0}
+    return {"samples": len(temps), "peak_c": max(temps), "mean_c": round(sum(temps) / len(temps), 1),
+            "seconds_at_throttle": sum(interval for t in temps if t >= THROTTLE_C)}
+
+
+class ThermalLog:
+    """Samples the GPU every SAMPLE_SECONDS on a thread and writes elapsed,temp_c,used_mib,event to a CSV, so a
+    batch leaves its own heating and cooling curve behind. `mark` adds an event row (image started)."""
+
+    def __init__(self, path, run=subprocess.run, interval=SAMPLE_SECONDS):
+        self.path, self.run, self.interval = path, run, interval
+        self.samples, self.started = [], None
+        self._lock, self._stop, self._thread = threading.Lock(), threading.Event(), None
+
+    def _write(self, state, event=""):
+        elapsed = time.monotonic() - self.started
+        temp = state["temp_c"] if state else ""
+        used = state["used_mib"] if state else ""
+        with self._lock, open(self.path, "a", encoding="utf-8", newline="\n") as f:
+            f.write(f"{elapsed:.0f},{temp},{used},{event}\n")
+        if not event:
+            self.samples.append((elapsed, state["temp_c"] if state else None))
+
+    def start(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        self.started = time.monotonic()
+        with open(self.path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"# power_limit_w={power_limit_w(self.run)} start_max_c={IMAGE_START_MAX_C}\n")
+            f.write("elapsed_s,temp_c,used_mib,event\n")
+
+        def loop():
+            while not self._stop.wait(self.interval):
+                self._write(gpu_state(self.run))
+
+        self._thread = threading.Thread(target=loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def mark(self, event):
+        if self.started is not None:
+            self._write(gpu_state(self.run), event.replace(",", " "))
+
+    def stop(self):
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join(timeout=self.interval + 2)
+        return dict(summarize(self.samples, self.interval), log=self.path)
