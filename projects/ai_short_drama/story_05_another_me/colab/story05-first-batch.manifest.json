@@ -1,0 +1,82 @@
+{
+  "batch": "story05-first-batch",
+  "jobs": [
+    {
+      "prompt": "wide shot down the carriage along the aisle, the two identical men facing each other left and right in the middle of the frame. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance; his exact double: the same man twice, an Asian man in his late 20s, the same face, the same age, the same short black hair, the same dark green utility jacket over a white T-shirt, the same body proportions, only a calmer and more tired expression. Two identical men sit facing each other across the aisle of a late-night subway carriage: the man has just looked up and stares in shock, while his exact double sits opposite him, calm and watching him. Setting: a modern subway carriage at night, blue and grey seats, handrails, a nearly empty carriage with one or two blurred passengers far down the aisle, dark tunnel windows. Lighting: bright even carriage fluorescent light, the dark tunnel window reflections, every face and detail readable, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000011,
+      "solo": false,
+      "allow_text": false
+    },
+    {
+      "prompt": "medium shot, the double centred and in focus with his finger at his lips, the man's shoulder and profile in the left foreground. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance; his exact double: the same man twice, an Asian man in his late 20s, the same face, the same age, the same short black hair, the same dark green utility jacket over a white T-shirt, the same body proportions, only a calmer and more tired expression. The double leans slightly forward in his seat with one finger raised to his lips in a silent gesture, staring intently at the man opposite, whose shoulder and tense face are at the edge of the frame. Setting: the same modern subway carriage at night, blue and grey seats, handrails, dark tunnel windows. Lighting: bright even carriage fluorescent light, clear detail, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000021,
+      "solo": false,
+      "allow_text": false
+    },
+    {
+      "prompt": "wide shot across the aisle, both men visible, the double glancing at the window at the right of the frame. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance; his exact double: the same man twice, an Asian man in his late 20s, the same face, the same age, the same short black hair, the same dark green utility jacket over a white T-shirt, the same body proportions, only a calmer and more tired expression. The double speaks quietly with a glance toward the dark tunnel window, as if warning the man not to look at it; the man listens, tense, his hands gripping his knees. Setting: the same modern subway carriage at night, tunnel windows showing the dark rushing tunnel wall. Lighting: bright even carriage fluorescent light, window reflections, clear detail, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000031,
+      "solo": false,
+      "allow_text": false
+    },
+    {
+      "prompt": "medium shot with the man at the left looking at the window, the window glass at the right showing his reflection and the blank-faced passengers behind him. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance. The man turns to look at the dark window and freezes. In the glass his reflection shows the other passengers seated behind him with smooth blank skin where their faces should be, no eyes and no mouths, while the carriage itself looks normal. Setting: a modern subway carriage at night inside a tunnel, several passengers seated in a row behind him, the window as a dark mirror. Lighting: carriage fluorescent light reflected clearly in the dark window glass, reflections readable, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000041,
+      "solo": false,
+      "allow_text": false
+    },
+    {
+      "prompt": "wide shot from behind the man's shoulder at the left, the empty seat opposite with the smartphone lying on it in the centre of the frame. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance. The man sits alone, looking at the empty seat opposite him where his double was; a single smartphone lies on the blue seat. Setting: a modern subway carriage at night, the empty seat opposite him, handrails, tunnel windows. Lighting: bright even carriage fluorescent light, clear detail, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000051,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "over-the-shoulder shot from behind the man, the phone screen with his double's face clearly visible in the lower half of the frame. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance; his exact double: the same man twice, an Asian man in his late 20s, the same face, the same age, the same short black hair, the same dark green utility jacket over a white T-shirt, the same body proportions, only a calmer and more tired expression. The man holds the smartphone in both hands, watching a video on it; on the screen his double looks straight into the camera, grim and exhausted. The man's face is lit by the screen, pale and horrified. Setting: a modern subway carriage at night, blue and grey seats, handrails. Lighting: bright carriage fluorescent light plus the phone screen's glow on his face, the video image on the screen readable, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000061,
+      "solo": false,
+      "allow_text": false
+    },
+    {
+      "prompt": "wide shot from inside the carriage looking out through the open doors at the identical carriage opposite, the man standing at the threshold at the left. Characters: an Asian man in his late 20s, short black hair, lean build, dark green utility jacket over a white T-shirt, black jeans, realistic cinematic appearance. The train has stopped and the doors are open; the man stands at the doorway and stares out. Instead of a station platform, directly beyond the doors there is another identical subway carriage, the same blue and grey seats, the same lights, the same handrails. Setting: a modern subway carriage at night with its doors open, a narrow gap, and an identical carriage facing it across the gap. Lighting: bright carriage fluorescent light on both sides, a thin dark gap between the two trains, clear detail, realistic cinematic thriller still, photorealistic, natural skin texture, realistic human proportions, cinematic composition, 35mm film look, high environmental detail, realistic lighting, natural depth of field, professional film still",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, exaggerated fantasy, overexposed, underexposed, pitch black, crushed blacks, distorted face, malformed hands, extra fingers",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 5000071,
+      "solo": true,
+      "allow_text": false
+    }
+  ]
+}

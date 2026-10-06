@@ -1,0 +1,41 @@
+{
+  "batch": "story05-first-batch",
+  "story_id": "story_05_another_me",
+  "images": [
+    {
+      "scene": 1,
+      "letter": "A",
+      "seed": 5000011
+    },
+    {
+      "scene": 2,
+      "letter": "A",
+      "seed": 5000021
+    },
+    {
+      "scene": 3,
+      "letter": "A",
+      "seed": 5000031
+    },
+    {
+      "scene": 4,
+      "letter": "A",
+      "seed": 5000041
+    },
+    {
+      "scene": 5,
+      "letter": "A",
+      "seed": 5000051
+    },
+    {
+      "scene": 6,
+      "letter": "A",
+      "seed": 5000061
+    },
+    {
+      "scene": 7,
+      "letter": "A",
+      "seed": 5000071
+    }
+  ]
+}
