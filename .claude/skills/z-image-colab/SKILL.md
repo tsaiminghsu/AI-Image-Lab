@@ -85,6 +85,13 @@ Python: `ComfyUI\.venv\Scripts\python.exe`, run from the repo root. Paths below 
 9. **More images while the worker is idle**: just `submit.py` again - the same session takes them until
    the idle timeout. `python scripts/worker.py stop` ends the session early.
 
+## Model source
+
+By default a restarted session copies the models from Drive. That was measured 6.6x slower than downloading them
+(606 s against 92 s, 2026-10-06). When the user wants the faster or cheaper run, set `ZIMG_MODEL_SOURCE=download` before
+`worker.py up`: ComfyUI and the packages still come from Drive, the models come from the pinned revision (verified by
+sha256), and Drive's copies are left alone. Not yet run live.
+
 ## Job states
 
 `PENDING → QUEUED → RUNNING → GENERATED → VALIDATING → VALID → COMPLETED`; terminal failures `FAILED`,

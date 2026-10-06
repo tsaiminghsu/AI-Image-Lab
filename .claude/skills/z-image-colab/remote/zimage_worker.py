@@ -860,6 +860,10 @@ class Worker:
         manifest = read_json(self.paths.manifest, {}) or {}
         specs = self.model_specs()
         stage_local = bool(self.cfg["models"].get("stage_to_local", True))
+        # models.source "download": take the files from the pinned revision even when Drive has them, because
+        # copying ~20 GB from Drive was measured 6.6x slower than downloading it (606 s against 92 s, 2026-10-06).
+        # Drive still receives only what it lacks, so a file it already holds is never uploaded a second time.
+        fetch_all = self.cfg["models"].get("source", "drive") == "download"
         missing, present = [], []
         for spec in specs:
             drive_file = self.paths.models / spec["folder"] / spec["name"]
@@ -871,15 +875,17 @@ class Worker:
                 and entry.get("sha256") == spec["sha256"]
             )
             (present if ok else missing).append(spec)
-        if missing:
-            need = sum(s["size"] for s in missing)
+        to_download = list(specs) if fetch_all else missing
+        if to_download:
+            need = sum(s["size"] for s in to_download)
             self.check_space(need)
-            self.download_models(missing, manifest)
-            for spec in missing:
+            self.download_models(to_download, manifest, upload={s["name"] for s in missing})
+            for spec in to_download:
                 self.action("model:" + spec["name"], "downloaded")
+        present = [s for s in present if s not in to_download]
         # Downloaded files always run from the local copy (the Drive copy may still be uploading), so once
         # anything was downloaded the present files are staged next to them: ComfyUI gets one model dir.
-        use_local = stage_local or bool(missing)
+        use_local = stage_local or bool(to_download)
         staged_seconds = {}
         for spec in present:
             local = self.paths.local_models / spec["folder"] / spec["name"]
@@ -902,7 +908,9 @@ class Worker:
         if local < need:
             raise WorkerError("DISK_FULL", "%.1f GiB free on /content, need %.1f GiB" % (local / 2**30, need / 2**30))
 
-    def download_models(self, specs, manifest):
+    def download_models(self, specs, manifest, upload=None):
+        """Download and verify `specs` into the local model dir. upload: the file names to also copy to Drive
+        (None = all of them); a file Drive already holds is downloaded for this session but not re-uploaded."""
         import concurrent.futures
 
         def one(spec):
@@ -927,8 +935,9 @@ class Worker:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(specs)) as pool:
             results = list(pool.map(one, specs))
-        if self.persistent:
-            self.drive_sync = DriveSync(results, self.paths, manifest, self.log, self.clock)
+        to_sync = [r for r in results if upload is None or r[0]["name"] in upload]
+        if self.persistent and to_sync:
+            self.drive_sync = DriveSync(to_sync, self.paths, manifest, self.log, self.clock)
             self.drive_sync.start()
 
     def start_comfyui(self):

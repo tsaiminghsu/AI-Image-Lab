@@ -189,7 +189,7 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   **2026-10-06 實機跑過一次**（L4、8 個 job 一個 session）：首次安裝約 4 分 20 秒、每張 720×1280 約 18 秒、VRAM 峰值
   約 22 GB（L4 幾乎滿）、整個 session 649 秒、**0.24 CU**，閒置關機正常、帳號上沒有殘留 runtime；
   第二個 session（驗收 B）同日跑過：確實不重裝不重抓，但模型從 Drive 取要 606 秒、直接下載只要 92 秒（慢 6.6 倍），
-  session 1,099 秒、0.40 CU；這個 skill 還沒有「直接下載」的選項。概念片用 `training/concept_colab.py` 接這個 worker，
+  session 1,099 秒、0.40 CU；現在有 `ZIMG_MODEL_SOURCE=download` 選項（離線測試過，未實機）。概念片用 `training/concept_colab.py` 接這個 worker，
   Colab 與本機的權重不同，同一個 seed 的圖不一樣。
 - 短劇概念片（2026-10-03）：`projects/ai_short_drama/`（五個故事的規格）＋`training/concept_stills.py`（Z-Image 候選
   A/B → 人工審核 → `master.png`）＋`concept_cut.py`（接片與音量調平）＋`concept_api.py`（給 Open WebUI 的 OpenAPI

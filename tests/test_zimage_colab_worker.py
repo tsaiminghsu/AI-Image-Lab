@@ -502,3 +502,37 @@ def test_the_remote_script_is_ascii_and_has_no_future_import():
     src = Path(remote.__file__).read_bytes()
     src.decode("ascii")
     assert b"from __future__" not in src
+
+
+# --- models.source: download instead of copying from Drive ---------------------------------------
+
+
+def test_source_download_fetches_models_drive_already_has_and_does_not_upload_them_again(tmp_path, comfy):
+    """Copying ~20 GB from Drive took 606 s against 92 s for the download (2026-10-06). With source "download" a
+    restarted session downloads from the pinned revision, still skips the reinstall of ComfyUI and the packages,
+    and leaves Drive's files and manifest as they are."""
+    w, _ = first_install(tmp_path, comfy)
+    drive_files = {p: p.stat().st_mtime_ns for p in w.paths.models.rglob("*.safetensors")}
+    manifest_before = w.paths.manifest.read_text()
+    w2, inst2, _ = restarted(tmp_path, comfy, models={"source": "download"})
+    w2.boot()
+    names = ("unet.safetensors", "te.safetensors", "vae.safetensors")
+    assert {w2.actions[f"model:{n}"] for n in names} == {"downloaded"}
+    assert len(inst2.hf) == 3 and inst2.urls == [] and inst2.pip == []
+    assert w2.actions["comfyui"] == "extracted" and w2.actions["deps"] == "extracted"
+    assert w2.drive_sync is None or not w2.drive_sync.results  # nothing to send back
+    assert {p: p.stat().st_mtime_ns for p in w2.paths.models.rglob("*.safetensors")} == drive_files
+    assert w2.paths.manifest.read_text() == manifest_before
+    assert (w2.paths.local_models / "diffusion_models" / "unet.safetensors").is_file()
+
+
+def test_source_download_still_uploads_a_file_drive_lacks(tmp_path, comfy):
+    w, _ = first_install(tmp_path, comfy)
+    (w.paths.models / "vae" / "vae.safetensors").unlink()
+    w2, inst2, _ = restarted(tmp_path, comfy, models={"source": "download"})
+    w2.boot()
+    w2.drive_sync.join(timeout=10)
+    assert len(inst2.hf) == 3  # all three come from the pinned revision
+    assert (w2.paths.models / "vae" / "vae.safetensors").is_file()  # the missing one is saved to Drive again
+    assert w2.drive_sync.report == {"vae.safetensors": w2.drive_sync.report["vae.safetensors"]}
+    assert str(w2.drive_sync.report["vae.safetensors"]).startswith("copied")

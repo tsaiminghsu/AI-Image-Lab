@@ -161,6 +161,7 @@ ComfyUI 啟動時帶 `HF_HUB_OFFLINE=1`、`PIP_NO_INDEX=1`：重啟的 session �
 | `worker.poll_interval_seconds` | 5 | | worker 多久看一次 inbox |
 | `colab.gpu` | `L4` | `ZIMG_GPU` | `T4`／`L4`／`G4`／`A100`／`H100`（要過下面的 GPU 檢查） |
 | `colab.persistent_path` | `MyDrive/AI/ZImage` | `ZIMG_PERSISTENT_PATH` | Drive 掛載點底下的相對路徑 |
+| `models.source` | `drive` | `ZIMG_MODEL_SOURCE` | `drive`：Drive 上已有的模型就從 Drive 複製到 VM；`download`：一律從釘選 revision 下載並驗 sha256，Drive 已有的檔不會再存一次（Drive 沒有的照樣存）。實測複製約 20 GB 要 606 秒、下載只要 92 秒，所以想要快、省 CU 就用 `download` |
 | `colab.drive` | `consent` | | 見上一節 |
 | `colab.cu_settle_seconds` | 120 | `ZIMG_CU_SETTLE_SECONDS` | 關機後等多久再讀餘額（Colab 會延遲扣款） |
 | `controller.heartbeat_timeout_seconds` | 300 | | `seq` 多久沒前進就視為 VM 失聯 |
@@ -236,7 +237,9 @@ Enter）。
 
 - 結論：第二個 session 確實不重裝、不重抓，但**從 Drive 複製三個模型（約 20 GB）花了 10 分鐘，比第一次直接從 HuggingFace 下載慢**，
   整個 session 多花約 67% 的 CU。這和 H3 skill 的量測一致（從 Drive 複製 371–536 秒，下載 172 秒）。
-- 這個 skill 目前沒有「模型直接下載、不從 Drive 複製」的選項（H3 skill 有 `drive.model_source`）。
+- **選項 `models.source: download`（環境變數 `ZIMG_MODEL_SOURCE=download`）**：第二個 session 起模型改成直接下載，
+  ComfyUI 與套件仍然從 Drive 解壓、不重裝。Drive 上已有的模型不會再上傳。2026-10-06 加入，離線測試過，**還沒有實機跑過**，
+  所以「下載比較快」目前只有第一個 session 的 92 秒當依據。預設仍是 `drive`。
 
 ## 實機驗收項目（A–D 的定義）
 

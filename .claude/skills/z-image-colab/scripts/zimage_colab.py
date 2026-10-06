@@ -174,6 +174,10 @@ def _int(value: str) -> int:
     return int(value)
 
 
+# Where a session takes models that are already on Drive: "drive" copies them from there, "download" fetches them
+# from the pinned revision anyway (measured: copy 606 s, download 92 s for the same three files).
+MODEL_SOURCES = ("drive", "download")
+
 ENV_OVERRIDES: dict[str, tuple[str, str, Callable[[str], Any]]] = {
     "ZIMG_GPU": ("colab", "gpu", str),
     "ZIMG_PERSISTENT_PATH": ("colab", "persistent_path", str),
@@ -182,6 +186,7 @@ ENV_OVERRIDES: dict[str, tuple[str, str, Callable[[str], Any]]] = {
     "ZIMG_JOB_TIMEOUT_SECONDS": ("worker", "job_timeout_seconds", _int),
     "ZIMG_MAX_SESSION_SECONDS": ("worker", "max_session_seconds", _int),
     "ZIMG_OUTPUT_DIR": ("output", "directory", str),
+    "ZIMG_MODEL_SOURCE": ("models", "source", str),
 }
 
 
@@ -280,6 +285,10 @@ def validate_config(config: dict) -> dict:
     _check(isinstance(g.get("min_vram_gib"), (int, float)) and g["min_vram_gib"] > 0, "gpu.min_vram_gib")
     _check(isinstance(g.get("require_bf16"), bool), "gpu.require_bf16 must be true or false")
     _check(isinstance(config["models"].get("stage_to_local"), bool), "models.stage_to_local must be true or false")
+    _check(
+        config["models"].get("source") in MODEL_SOURCES,
+        f"models.source must be one of {', '.join(MODEL_SOURCES)}",
+    )
     _check(isinstance(config.get("custom_nodes", []), list), "custom_nodes must be a list")
     _check(
         _is_int(config["limits"].get("max_pixels")) and config["limits"]["max_pixels"] >= SIDE_MIN**2,

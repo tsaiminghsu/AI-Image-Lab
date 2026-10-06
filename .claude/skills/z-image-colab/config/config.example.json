@@ -67,7 +67,8 @@
     ]
   },
   "models": {
-    "stage_to_local": true
+    "stage_to_local": true,
+    "source": "drive"
   },
   "gpu": {
     "min_vram_gib": 15,

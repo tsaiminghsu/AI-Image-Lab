@@ -5,6 +5,16 @@
 
 ## 2026-10-06
 
+### Z-Image Colab skill 加「模型直接下載」選項（`models.source`／`ZIMG_MODEL_SOURCE`；離線完成，未實機）
+
+- **為什麼**：驗收 B 量到從 Drive 複製模型 606 秒、直接下載 92 秒（慢 6.6 倍），多花 10 分鐘與約 67% 的 CU。H3 skill 已經有
+  同樣的選項，這個 skill 沒有。
+- **做法**：`models.source` 是 `drive`（預設，行為不變）或 `download`。`download` 時 worker 對所有模型都從釘選 revision 下載並驗
+  sha256；ComfyUI 與套件仍從 Drive 解壓。**Drive 已有的模型不會再上傳**（上傳只給 Drive 缺的），所以 Drive 的檔案和 manifest
+  不被動到。環境變數 `ZIMG_MODEL_SOURCE`，設定值檢查只允許這兩個。
+- **測試**：+3（下載且不重傳、Drive 缺的檔仍會存回去、設定值與環境變數）。
+- **還沒驗證**：實機跑一次，確認第二個 session 的 MODELS 階段回到約 90 秒。
+
 ### Z-Image Colab worker 第二個 session（驗收 B）：不重抓是真的，但從 Drive 取模型慢 6.6 倍
 
 - **做了什麼**：用 Colab 補故事 4 的 Scene 2、5、6 的第二張（3 張，故事 4 本機生的第一張不動）；這是同一個 skill 的第二個 session。

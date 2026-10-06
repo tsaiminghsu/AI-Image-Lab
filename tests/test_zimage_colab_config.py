@@ -139,3 +139,12 @@ def test_the_local_config_and_credential_files_are_gitignored():
         ".env",
     ):
         assert pattern in ignored, pattern
+
+
+def test_model_source_defaults_to_drive_can_be_set_by_env_and_is_validated(tmp_path):
+    assert make_config(tmp_path)["models"]["source"] == "drive"
+    assert load(tmp_path, ZIMG_MODEL_SOURCE="download")["models"]["source"] == "download"
+    assert load(tmp_path, {"models": {"source": "download"}})["models"]["source"] == "download"
+    with pytest.raises(z.ZImageError) as err:
+        load(tmp_path, ZIMG_MODEL_SOURCE="copy")
+    assert err.value.code == "INVALID_CONFIG"
