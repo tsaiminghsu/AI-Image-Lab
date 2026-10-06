@@ -6,9 +6,9 @@
 
 第一階段只做 Text → Image。
 
-> **驗證狀態（2026-10-06）**：離線測試全過（不需要 GPU／Docker／Colab）。**實機驗收 A、C、D 三項在 2026-10-06 跑過**
-> （一個 session、8 個 job），數字見下面「實機驗收」；**B（第二個 session 重啟不重裝）還沒做**，所以「不重抓」這個
-> 主要賣點仍是未驗證的。
+> **驗證狀態（2026-10-06）**：離線測試全過（不需要 GPU／Docker／Colab）。**實機驗收 A、B、C、D 四項都在 2026-10-06 跑過**，
+> 數字見下面「實機驗收」。**B 的結論是：不重裝、不重抓是真的，但從 Drive 取模型比直接下載慢約 6.6 倍**（606 秒對 92 秒），
+> 所以這個「不重抓」的賣點在時間上是負的。
 
 ## 架構
 
@@ -217,9 +217,26 @@ PENDING → QUEUED → RUNNING → GENERATED → VALIDATING → VALID → COMPLE
 - **A 首次安裝**：通過（8 個 job 都 COMPLETED，PNG 通過本機驗證）。
 - **C 同一個 session 連續跑**：通過（8 個 job 同一個 session）。
 - **D 閒置關機**：通過。
-- **B 重啟不重裝**：**未做**。要再開一個 session，看 comfyui／deps 是不是 `extracted`、模型是不是 `staged`、有沒有 HF 下載。
-  H3 的經驗是從 Drive 複製比直接下載慢，這個 skill 的模型也可能一樣，要量。
+- **B 重啟不重裝**：通過，也是負面的發現（見下表）。
 - 同一個 seed 在 Colab（官方 bf16）和本機（量化版）出的是不同的圖。
+
+**2026-10-06 第二個 session（B）**：同一個 L4、3 個 job（故事 4 的補圖），Drive 掛載成功（105.6 秒，同意頁開了但程式在 90 秒時自己送了
+Enter）。
+
+| 項目 | 第一個 session（下載） | 第二個 session（從 Drive） |
+| --- | ---: | ---: |
+| `setup_actions` | comfyui／deps `installed`，模型 `downloaded` | comfyui／deps **`extracted`**，模型 **`staged`**，沒有 HF 下載、沒有 pip install |
+| DEPS | 33.4 秒 | 29.9 秒 |
+| **MODELS** | **92.4 秒** | **606.6 秒（慢 6.6 倍）** |
+| START_COMFYUI | 39.1 秒 | 29.1 秒 |
+| 到 READY | 約 4 分 20 秒 | 約 14 分 |
+| 每張 720×1280 | 18.03–18.22 秒 | 18.03–18.04 秒（第一張含暖機 66 秒） |
+| 整個 session | 648.8 秒 | 1,098.8 秒 |
+| **CU** | **0.24** | **0.40**（預估 0.47） |
+
+- 結論：第二個 session 確實不重裝、不重抓，但**從 Drive 複製三個模型（約 20 GB）花了 10 分鐘，比第一次直接從 HuggingFace 下載慢**，
+  整個 session 多花約 67% 的 CU。這和 H3 skill 的量測一致（從 Drive 複製 371–536 秒，下載 172 秒）。
+- 這個 skill 目前沒有「模型直接下載、不從 Drive 複製」的選項（H3 skill 有 `drive.model_source`）。
 
 ## 實機驗收項目（A–D 的定義）
 

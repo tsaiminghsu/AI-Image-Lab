@@ -1,0 +1,21 @@
+{
+  "batch": "story04-second-b",
+  "story_id": "story_04_i_wont_save_you",
+  "images": [
+    {
+      "scene": 2,
+      "letter": "B",
+      "seed": 4000022
+    },
+    {
+      "scene": 5,
+      "letter": "B",
+      "seed": 4000052
+    },
+    {
+      "scene": 6,
+      "letter": "B",
+      "seed": 4000062
+    }
+  ]
+}

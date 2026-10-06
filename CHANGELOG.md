@@ -5,6 +5,16 @@
 
 ## 2026-10-06
 
+### Z-Image Colab worker 第二個 session（驗收 B）：不重抓是真的，但從 Drive 取模型慢 6.6 倍
+
+- **做了什麼**：用 Colab 補故事 4 的 Scene 2、5、6 的第二張（3 張，故事 4 本機生的第一張不動）；這是同一個 skill 的第二個 session。
+- **結果**：3 個 job 都完成；`setup_actions` 是 comfyui／deps `extracted`、模型 `staged`，沒有 HF 下載、沒有 pip install。
+- **數字**：MODELS 階段 **606.6 秒**（第一個 session 直接下載是 92.4 秒）；到 READY 約 14 分（第一次約 4 分 20 秒）；
+  每張仍是 18 秒（第一張含暖機 66 秒）；整個 session 1,098.8 秒；**0.40 CU**（34.17 → 33.77，預估 0.47）；
+  閒置關機正常，帳號上沒有殘留 runtime。
+- **意義**：「不重裝、不重抓」成立，但時間上是負的：多 10 分鐘、CU 多約 67%。和 H3 的結論一致（Drive 複製比下載慢）。
+  H3 skill 因此加了 `drive.model_source: download`，這個 skill **還沒有**，是下一個可以做的改動。
+
 ### Z-Image Colab worker 第一次實機跑通：故事 5 的 7 張，0.24 CU（驗收 A、C、D 通過，B 未做）
 
 - **為什麼**：使用者要避開本機顯示卡的高溫，直接用 Colab 生圖。新增 `training/concept_colab.py`（把概念片的 prompt、seed、尺寸與
