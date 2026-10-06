@@ -1,0 +1,17 @@
+{
+  "story_id": "story_05_another_me",
+  "scene_id": "scene_07",
+  "status": "HUMAN_REVIEW",
+  "approved_candidate": null,
+  "notes": "",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-06T19:37:41+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-06T19:37:41+08:00"
+    }
+  ]
+}

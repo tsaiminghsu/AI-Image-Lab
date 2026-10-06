@@ -186,8 +186,10 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   每台新 VM 都要使用者按一次 Drive 同意，沒按就整個重新下載。與 H3 skill 共用 Docker 映像檔與登入。圖用的是
   `training/workflow_template_txt2img_zimage.json`（`comfyui_client.build_zimage_txt2img_workflow`），負面詞走
   `_build_prompt_and_negative`，所以年齡安全詞與 cfg 下限跟本機一樣，VM 上的 worker 會再檢查一次。
-  **離線測試 210 個通過，但從未在真的 Colab GPU 上跑過**——首次安裝、重啟不重裝、連續 3 張、閒置關機四項實機
-  驗收都還沒做，時間與 CU 都沒有數字。
+  **2026-10-06 實機跑過一次**（L4、8 個 job 一個 session）：首次安裝約 4 分 20 秒、每張 720×1280 約 18 秒、VRAM 峰值
+  約 22 GB（L4 幾乎滿）、整個 session 649 秒、**0.24 CU**，閒置關機正常、帳號上沒有殘留 runtime；
+  **「第二個 session 重啟不重裝」（驗收 B）還沒做**。概念片用 `training/concept_colab.py` 接這個 worker，
+  Colab 與本機的權重不同，同一個 seed 的圖不一樣。
 - 短劇概念片（2026-10-03）：`projects/ai_short_drama/`（五個故事的規格）＋`training/concept_stills.py`（Z-Image 候選
   A/B → 人工審核 → `master.png`）＋`concept_cut.py`（接片與音量調平）＋`concept_api.py`（給 Open WebUI 的 OpenAPI
   工具伺服器，`127.0.0.1:7863`，說明在 `projects/ai_short_drama/OPEN_WEBUI.md`）。規則：工具不選圖；H3 只吃

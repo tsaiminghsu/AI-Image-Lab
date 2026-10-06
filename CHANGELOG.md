@@ -3,6 +3,20 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-10-06
+
+### Z-Image Colab worker 第一次實機跑通：故事 5 的 7 張，0.24 CU（驗收 A、C、D 通過，B 未做）
+
+- **為什麼**：使用者要避開本機顯示卡的高溫，直接用 Colab 生圖。新增 `training/concept_colab.py`（把概念片的 prompt、seed、尺寸與
+  安全負面詞原樣交給 z-image-colab 的佇列，跑完把 PNG 與記錄放回 `images/scene_NN/`）；測試比對了 Colab skill 組出來的 prompt 與
+  負面詞和本機的完全一致（35 個 Scene）。
+- **結果**：8 個 job（故事 5 的 7 張＋10-02 排的馬克杯測試）全部 COMPLETED，同一個 L4 session。
+- **數字**：首次安裝（ComfyUI、套件、約 20 GB 模型存進 Drive）從啟動到 READY 約 4 分 20 秒；每張 720×1280 **18 秒**
+  （本機約 100–140 秒，加上降溫等待更久）；VRAM 峰值 20.4–22.3 GB（L4 共 22.5 GB）；整個 session 649 秒；
+  **CU 34.41 → 34.17，用掉 0.24**；結束原因 `worker_idle_timeout`，之後帳號上沒有殘留 runtime。
+- **沒驗證的**：第二個 session 從 Drive 複製、不重抓（驗收 B），以及 H3 經驗（Drive 複製比下載慢）是否也適用這裡。
+- **要知道的**：Colab 的官方 bf16 權重與本機量化版不同，同一個 seed 出不同的圖，每張圖的記錄標了 `backend`。
+
 ## 2026-10-04
 
 ### 故事 4《這次，我不救你》第一批（每個 Scene 一張）：第一次實測「每張先降溫」與卡死自動重啟
