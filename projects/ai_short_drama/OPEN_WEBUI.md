@@ -10,10 +10,24 @@ Open WebUI（Docker，localhost:3000）──工具呼叫──▶ concept_api�
                                                     └─ ffmpeg（成片）
 ```
 
-## 一、啟動工具伺服器
+## 零、一鍵啟動
+
+雙擊專案根目錄的 `start_concept_webui.bat`（或跑 `training\start_concept_webui.ps1`）。它依序：開 Docker Desktop（沒開才開）→
+啟動 `open-webui` 容器 → 啟動工具伺服器（背景執行、不佔視窗、記錄在 `outputs\logs\concept_api.log`）→ 檢查容器連得到
+工具伺服器 → 確認 Ollama 服務在跑（沒開就 `ollama serve`，只開服務、不載入模型）→ 開瀏覽器到 `http://localhost:3000`。
+已經在跑的部分會沿用。**不會啟動 ComfyUI、不會動用顯示卡**。
+
+Open WebUI 裡的工具伺服器註冊存在容器的 volume，**只要註冊一次**，之後只需要這個啟動指令。
+關閉工具伺服器：`training\stop_concept_webui.ps1`（有工作沒做完會拒絕，`-Force` 才硬關）。
+
+已知問題：Windows 會動態保留一段 TCP 埠（`netsh interface ipv4 show excludedportrange protocol=tcp`），重開機後會移動。
+落在 Ollama 的 11434 或 ComfyUI 的 8188 上時，`ollama serve` 會報 `bind: ... forbidden by its access permissions`，
+腳本會明講 Ollama 沒起來。ComfyUI 這邊已經改用 9188（`COMFYUI_URL`）。
+
+## 一、啟動工具伺服器（手動）
 
 ```
-ComfyUI\.venv\Scripts\python.exe training\concept_api.py
+$env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe training\concept_api.py
 ```
 
 - 只綁 `127.0.0.1:7863`。Open WebUI 的容器用 `http://host.docker.internal:7863` 連得到（2026-10-03 實測回 200）。

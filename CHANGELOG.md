@@ -5,6 +5,14 @@
 
 ## 2026-10-06
 
+### Open WebUI 一鍵啟動（`start_concept_webui.bat`）
+
+- **為什麼**：每次都要手動開 Docker、容器、工具伺服器，而且上個 session 結束時背景啟動的工具伺服器會被一起停掉。
+- **做法**：`training/start_concept_webui.ps1`（Docker → open-webui 容器 → 背景獨立的 concept_api → 容器連線檢查 → Ollama → 瀏覽器）
+  與 `stop_concept_webui.ps1`（有工作沒做完就拒絕）；不碰 ComfyUI 與顯示卡。Open WebUI 的工具註冊存在容器 volume，只需註冊一次。
+- **實測**：關閉再啟動都通過，容器連得到工具伺服器（200）。**發現**：Windows 目前保留了 11362–11461，Ollama 的 11434 在裡面，
+  `ollama serve` 綁不上（和 ComfyUI 的 8188 同一類問題），聊天模型目前不能用；尚未處理。
+
 ### Z-Image Colab skill 加「模型直接下載」選項（`models.source`／`ZIMG_MODEL_SOURCE`；離線完成，未實機）
 
 - **為什麼**：驗收 B 量到從 Drive 複製模型 606 秒、直接下載 92 秒（慢 6.6 倍），多花 10 分鐘與約 67% 的 CU。H3 skill 已經有
