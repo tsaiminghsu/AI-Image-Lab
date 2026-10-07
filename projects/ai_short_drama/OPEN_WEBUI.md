@@ -20,9 +20,12 @@ Open WebUI（Docker，localhost:3000）──工具呼叫──▶ concept_api�
 Open WebUI 裡的工具伺服器註冊存在容器的 volume，**只要註冊一次**，之後只需要這個啟動指令。
 關閉工具伺服器：`training\stop_concept_webui.ps1`（有工作沒做完會拒絕，`-Force` 才硬關）。
 
-已知問題：Windows 會動態保留一段 TCP 埠（`netsh interface ipv4 show excludedportrange protocol=tcp`），重開機後會移動。
-落在 Ollama 的 11434 或 ComfyUI 的 8188 上時，`ollama serve` 會報 `bind: ... forbidden by its access permissions`，
-腳本會明講 Ollama 沒起來。ComfyUI 這邊已經改用 9188（`COMFYUI_URL`）。
+**埠與模型資料夾**：Windows 會動態保留一段 TCP 埠（`netsh interface ipv4 show excludedportrange protocol=tcp`），重開機後會移動，
+2026-10-07 保留範圍剛好蓋住 Ollama 的 11434（`ollama serve` 報 `bind: ... forbidden by its access permissions`），
+ComfyUI 的 8188 也是。所以 ComfyUI 改用 9188（`COMFYUI_URL`），Ollama 由腳本固定開在 **21434**（`CONCEPT_OLLAMA_PORT` 可改），
+工具伺服器的 `OLLAMA_URL` 也指向它。**Open WebUI 的 Ollama 連線要改一次**：管理員面板 → 設定 → 連線 → Ollama API，
+URL 填 `http://host.docker.internal:21434`。另外環境變數 `OLLAMA_MODELS` 指向的資料夾可能是空的（這台是 `D:\AI\Models\Ollama`，
+`qwen3.5:9b` 實際在 `D:\Ollama\Models`），腳本會自動挑第一個真的有模型的資料夾。
 
 ## 一、啟動工具伺服器（手動）
 

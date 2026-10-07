@@ -11,7 +11,10 @@
 - **做法**：`training/start_concept_webui.ps1`（Docker → open-webui 容器 → 背景獨立的 concept_api → 容器連線檢查 → Ollama → 瀏覽器）
   與 `stop_concept_webui.ps1`（有工作沒做完就拒絕）；不碰 ComfyUI 與顯示卡。Open WebUI 的工具註冊存在容器 volume，只需註冊一次。
 - **實測**：關閉再啟動都通過，容器連得到工具伺服器（200）。**發現**：Windows 目前保留了 11362–11461，Ollama 的 11434 在裡面，
-  `ollama serve` 綁不上（和 ComfyUI 的 8188 同一類問題），聊天模型目前不能用；尚未處理。
+  `ollama serve` 綁不上（和 ComfyUI 的 8188 同一類問題）。**處理**：腳本改成固定把 Ollama 開在 21434（行程內設 `OLLAMA_HOST`，
+  不動系統環境變數），工具伺服器的 `OLLAMA_URL` 跟著指過去；`OLLAMA_MODELS` 指向的 `D:\AI\Models\Ollama` 是空的，
+  `qwen3.5:9b` 在 `D:\Ollama\Models`，腳本自動挑有模型的資料夾。實測 qwen3.5:9b 列得出來、容器連得到 Ollama；
+  Open WebUI 的 Ollama 連線 URL 要由管理員改一次，尚未改。
 
 ### Z-Image Colab skill 加「模型直接下載」選項（`models.source`／`ZIMG_MODEL_SOURCE`；離線完成，未實機）
 
