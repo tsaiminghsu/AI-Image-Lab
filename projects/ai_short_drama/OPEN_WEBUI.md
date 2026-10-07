@@ -27,6 +27,11 @@ ComfyUI 的 8188 也是。所以 ComfyUI 改用 9188（`COMFYUI_URL`），Ollama
 URL 填 `http://host.docker.internal:21434`。另外環境變數 `OLLAMA_MODELS` 指向的資料夾可能是空的（這台是 `D:\AI\Models\Ollama`，
 `qwen3.5:9b` 實際在 `D:\Ollama\Models`），腳本會自動挑第一個真的有模型的資料夾。
 
+**上下文長度**：Ollama 在 8 GB 的卡上預設只開 4096 個 token，但 Open WebUI 每則訊息都會附上 11 個工具的說明和系統提示
+（約 6,200 token），會報 `exceed_context_size_error`（`request (6198 tokens) exceeds the available context size (4096 tokens)`）。
+腳本因此用 `OLLAMA_CONTEXT_LENGTH=16384` 啟動 Ollama（`CONCEPT_OLLAMA_CTX` 可改）。實測 `qwen3.5:9b` 載入後約 6.6 GB、
+其中 5.7 GB 在 VRAM；換成更長的上下文會吃更多記憶體，生圖前一樣會卸載。
+
 ## 一、啟動工具伺服器（手動）
 
 ```

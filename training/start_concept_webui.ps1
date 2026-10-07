@@ -76,6 +76,9 @@ if (-not (Test-Url "$ollamaUrl/api/tags")) {
     $ollama = (Get-Command ollama -ErrorAction SilentlyContinue).Source
     if (-not $ollama) { Stop-Here "找不到 ollama 指令。" }
     $env:OLLAMA_HOST = "127.0.0.1:$ollamaPort"
+    # Ollama picks a 4096-token context on an 8 GB card, but Open WebUI sends the 11 tool definitions plus the system
+    # prompt (about 6,200 tokens) with every message, and tool results such as list_scenes add more: 16k leaves room.
+    $env:OLLAMA_CONTEXT_LENGTH = if ($env:CONCEPT_OLLAMA_CTX) { $env:CONCEPT_OLLAMA_CTX } else { "16384" }
     # OLLAMA_MODELS can point at an empty folder while the pulled models sit elsewhere (seen here: D:\AI\Models\Ollama is
     # empty, qwen3.5:9b is in D:\Ollama\Models), so serve from the first candidate that actually holds a manifest.
     $candidates = @($env:OLLAMA_MODELS, [Environment]::GetEnvironmentVariable("OLLAMA_MODELS", "User"), "D:\Ollama\Models") |
