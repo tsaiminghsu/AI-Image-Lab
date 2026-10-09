@@ -1,0 +1,68 @@
+{
+  "batch": "l4-id-v1-story8",
+  "story_id": "promo_08_travel",
+  "style": "bible",
+  "identity": "v1",
+  "images": [
+    {
+      "scene": 1,
+      "letter": "A",
+      "seed": 2700011
+    },
+    {
+      "scene": 2,
+      "letter": "A",
+      "seed": 2700021
+    },
+    {
+      "scene": 3,
+      "letter": "A",
+      "seed": 2700031
+    },
+    {
+      "scene": 4,
+      "letter": "A",
+      "seed": 2700041
+    },
+    {
+      "scene": 5,
+      "letter": "A",
+      "seed": 2700051
+    },
+    {
+      "scene": 6,
+      "letter": "A",
+      "seed": 2700061
+    },
+    {
+      "scene": 1,
+      "letter": "B",
+      "seed": 2700012
+    },
+    {
+      "scene": 2,
+      "letter": "B",
+      "seed": 2700022
+    },
+    {
+      "scene": 3,
+      "letter": "B",
+      "seed": 2700032
+    },
+    {
+      "scene": 4,
+      "letter": "B",
+      "seed": 2700042
+    },
+    {
+      "scene": 5,
+      "letter": "B",
+      "seed": 2700052
+    },
+    {
+      "scene": 6,
+      "letter": "B",
+      "seed": 2700062
+    }
+  ]
+}

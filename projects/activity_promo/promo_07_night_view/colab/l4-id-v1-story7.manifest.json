@@ -1,0 +1,137 @@
+{
+  "batch": "l4-id-v1-story7",
+  "jobs": [
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third facing the viewer with a soft smile, the hill with its tower on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman stands on a quiet hillside street in Seoul at dusk and looks at the viewer with a soft smile, the hill with its observation tower on the right of the frame. Setting: a quiet hillside street in a Seoul neighbourhood at dusk, low tiled-roof houses, a hill with an observation tower on the right side of the frame, the first city lights coming on, nobody else in sight, no readable signs. Lighting: soft dusk light and a warm street lamp from the left, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600011,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third pointing toward the hill with bright eyes, the hill with its tower on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman points toward the observation tower on the hill on the right of the frame in Seoul at dusk, her eyes bright, looking at the viewer. Setting: a quiet hillside street in a Seoul neighbourhood at dusk, low tiled-roof houses, a hill with an observation tower on the right side of the frame, the first city lights coming on, nobody else in sight, no readable signs. Lighting: soft dusk light and a warm street lamp from the left, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600021,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third standing by the fortress wall with one hand on it, the city lights between the pines on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman stands on a stone path beside an old Seoul fortress wall in the blue hour, one hand resting on the wall, smiling at the viewer, the city lights showing between the pines on the right of the frame. Setting: a stone path beside an old Seoul fortress wall in the blue hour, small warm path lamps, the city lights showing between pine trees on the right side of the frame, nobody else in sight, no readable signs. Lighting: blue-hour sky and a warm path lamp beside her, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600031,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third counting on her fingers with a playful look, the sea of city lights on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman stands at the railing of an observation deck above Seoul at night, counting on her fingers with a playful look at the viewer, the sea of city lights on the right of the frame. Setting: a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs. Lighting: a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600041,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third leaning on the railing with a gentle smile, the sea of city lights on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman leans on the railing of the observation deck above Seoul at night, her hair moving in the breeze, looking at the viewer with a gentle, honest smile, the sea of city lights on the right of the frame. Setting: a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs. Lighting: a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600051,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third with a dark jacket draped over her shoulders, the sea of city lights on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman has the viewer's dark jacket draped over her shoulders on the observation deck above Seoul at night, holding its collar closed with both hands and smiling at the viewer, the sea of city lights on the right of the frame. Setting: a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs. Lighting: a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600061,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred facing the viewer with a soft smile, the hill with its tower on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman stands on a quiet hillside street in Seoul at dusk and looks at the viewer with a soft smile, the hill with its observation tower on the right of the frame. Setting: a quiet hillside street in a Seoul neighbourhood at dusk, low tiled-roof houses, a hill with an observation tower on the right side of the frame, the first city lights coming on, nobody else in sight, no readable signs. Lighting: soft dusk light and a warm street lamp from the left, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600012,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred pointing toward the hill with bright eyes, the hill with its tower on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman points toward the observation tower on the hill on the right of the frame in Seoul at dusk, her eyes bright, looking at the viewer. Setting: a quiet hillside street in a Seoul neighbourhood at dusk, low tiled-roof houses, a hill with an observation tower on the right side of the frame, the first city lights coming on, nobody else in sight, no readable signs. Lighting: soft dusk light and a warm street lamp from the left, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600022,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred standing by the fortress wall with one hand on it, the city lights between the pines on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman stands on a stone path beside an old Seoul fortress wall in the blue hour, one hand resting on the wall, smiling at the viewer, the city lights showing between the pines on the right of the frame. Setting: a stone path beside an old Seoul fortress wall in the blue hour, small warm path lamps, the city lights showing between pine trees on the right side of the frame, nobody else in sight, no readable signs. Lighting: blue-hour sky and a warm path lamp beside her, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600032,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred counting on her fingers with a playful look, the sea of city lights on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman stands at the railing of an observation deck above Seoul at night, counting on her fingers with a playful look at the viewer, the sea of city lights on the right of the frame. Setting: a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs. Lighting: a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600042,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred leaning on the railing with a gentle smile, the sea of city lights on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman leans on the railing of the observation deck above Seoul at night, her hair moving in the breeze, looking at the viewer with a gentle, honest smile, the sea of city lights on the right of the frame. Setting: a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs. Lighting: a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600052,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred with a dark jacket draped over her shoulders, the sea of city lights on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings. The woman has the viewer's dark jacket draped over her shoulders on the observation deck above Seoul at night, holding its collar closed with both hands and smiling at the viewer, the sea of city lights on the right of the frame. Setting: a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs. Lighting: a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2600062,
+      "solo": true,
+      "allow_text": false
+    }
+  ]
+}

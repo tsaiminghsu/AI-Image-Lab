@@ -1,0 +1,305 @@
+{
+  "schema": 1,
+  "story_id": "promo_06_movie",
+  "number": 6,
+  "title": "Movie night together",
+  "title_zh": "一起看電影",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2500000,
+  "source": "Lines are copied from ai-companion backend/app/activities (outings.py fallback, choice_lines movie, closing_lines movie); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false). The cinema screen is never in frame (copyright, and H3 would invent a film): only its glow on her face.",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a dusty-rose knit sweater with a round neckline that covers the collarbone, and blue jeans"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the earlier promos. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "戲院大廳，她聞著爆米花",
+      "beat_zh": "你們走進戲院大廳，她抱著一桶爆米花湊近聞，笑著說好香。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds a bucket of popcorn at the bottom of the frame and smiles at the viewer, the glowing popcorn stand on the right of the frame in a cinema lobby.",
+      "setting": "a warm cinema lobby in the evening with a glowing popcorn stand on the right side of the frame, soft golden lights, a clean uncluttered floor, nobody else in sight",
+      "lighting": "warm golden lobby light with the popcorn stand glowing on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third holding the popcorn bucket at the bottom of the frame, the glowing popcorn stand on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred holding the popcorn bucket at the bottom of the frame, the glowing popcorn stand on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred holding the popcorn bucket at the bottom of the frame, the glowing popcorn stand on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre holding the popcorn bucket at the bottom of the frame, the glowing popcorn stand on the right"
+      },
+      "overlay": {
+        "caption": "爆米花的味道好香。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dusty-rose knit sweater and blue jeans, holds a popcorn bucket at the bottom of the frame and smiles at the viewer. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 爆米花的味道好香。</d> Then she lowers her face to sniff the popcorn with a happy sigh and looks back up at the viewer. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet cinema lobby in the evening: a soft murmur and a faint popcorn machine hum, with her clear voice in front. Near the end, a soft popcorn crackle sounds from the stand.",
+        "duration": 5
+      },
+      "spoken": "爆米花的味道好香。",
+      "time_of_day": "bright lobby, warm evening",
+      "props": "a popcorn bucket (shots 1-5)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the glowing popcorn stand, on the right",
+      "enters_on": "standing in the lobby holding the popcorn, facing the viewer",
+      "exits_on": "smiling at the viewer, the popcorn bucket at the bottom of the frame",
+      "sound_bridge": "Near the end, a soft popcorn crackle sounds from the stand."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "雙人座，她拍拍旁邊",
+      "beat_zh": "影廳的燈還亮著，她在雙人座坐下，拍拍旁邊的位子。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits in a red velvet double seat in a cinema auditorium with the house lights still on, patting the seat beside her with one hand, the popcorn bucket in her lap, the soft screen glow on the right of the frame.",
+      "setting": "a cinema auditorium with the house lights still on, rows of red velvet seats, the screen out of frame on the right, no other people",
+      "lighting": "warm house lights and a soft glow from the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third seated, patting the seat beside her, the soft screen glow on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred seated, patting the seat beside her, the soft screen glow on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred seated, patting the seat beside her, the soft screen glow on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre seated, patting the seat beside her, the soft screen glow on the right"
+      },
+      "overlay": {
+        "question": "要坐哪裡？",
+        "choices": [
+          "後排中間",
+          "情侶座",
+          "前排"
+        ],
+        "picked": 1,
+        "pick_at": 0.9,
+        "caption": "情侶座……好啊，就坐這裡。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dusty-rose knit sweater and blue jeans, sits in a red velvet double seat, patting the seat beside her with one hand, the popcorn bucket in her lap. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 情侶座……好啊，就坐這裡。</d> Then she pats the seat again and smiles at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet cinema auditorium: a low muffled hum from the speakers and the soft rustle of seats, with her clear voice in front. Near the end, the house lights hum softly.",
+        "duration": 5
+      },
+      "spoken": "情侶座……好啊，就坐這裡。",
+      "time_of_day": "house lights on, before the film",
+      "props": "a popcorn bucket (shots 1-5)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the soft screen glow, on the right",
+      "enters_on": "smiling at the viewer, the popcorn bucket at the bottom of the frame",
+      "exits_on": "seated, patting the seat beside her, smiling at the viewer",
+      "sound_bridge": "Near the end, the house lights hum softly.",
+      "bridge": "from the lobby to the seat: the same evening, now inside the cinema auditorium with the lights still on"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "燈暗，她專心看電影",
+      "beat_zh": "燈暗了，銀幕的光映在她臉上，她望向銀幕，小聲說這段好精彩。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman watches the film in the dim cinema auditorium, her eyes fixed on the screen out of frame on the right, the soft blue-white glow lighting her face, the popcorn bucket in her lap at the bottom of the frame.",
+      "setting": "a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people",
+      "lighting": "a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third watching the screen to the right with wide eyes, the soft screen glow on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred watching the screen to the right with wide eyes, the soft screen glow on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred watching the screen to the right with wide eyes, the soft screen glow on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre watching the screen to the right with wide eyes, the soft screen glow on the right"
+      },
+      "overlay": {
+        "question": "中間要做什麼？",
+        "choices": [
+          "爆米花分著吃",
+          "專心看",
+          "傳訊息聊劇情"
+        ],
+        "picked": 1,
+        "pick_at": 0.9,
+        "caption": "這段好精彩，先不講話。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dusty-rose knit sweater and blue jeans, watches the screen out of frame on the right with wide eyes, the soft blue-white glow lighting her face, the popcorn bucket in her lap. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 這段好精彩，先不講話。</d> Then she leans a little toward the screen on the right with her lips parted, her eyes bright, absorbed in the film. The camera holds a steady shot.",
+        "soundscape": "Quiet cinema auditorium: a low muffled hum from the speakers and the soft rustle of seats, with her clear voice in front. Near the end, a low muffled swell of the film's sound rolls through the hall.",
+        "duration": 5
+      },
+      "spoken": "這段好精彩，先不講話。",
+      "time_of_day": "dim, screen glow",
+      "props": "a popcorn bucket (shots 1-5)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the soft screen glow, on the right",
+      "enters_on": "seated, patting the seat beside her, smiling at the viewer",
+      "exits_on": "watching the screen on the right with wide eyes, lit by the glow",
+      "sound_bridge": "Near the end, a low muffled swell of the film's sound rolls through the hall.",
+      "bridge": "from the lit hall to the film: the same seats, the lights have dimmed and the screen glow lights her face"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "劇情緊張，她遞爆米花",
+      "beat_zh": "劇情到緊張處她倒抽一口氣，笑著把爆米花遞給你，說最上面那層最好吃。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman gasps softly at the film with the popcorn bucket in her lap, then turns and holds the popcorn out toward the viewer, the soft blue-white glow from the screen on the right lighting her face.",
+      "setting": "a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people",
+      "lighting": "a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third holding the popcorn bucket out toward the viewer, the soft screen glow on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred holding the popcorn bucket out toward the viewer, the soft screen glow on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred holding the popcorn bucket out toward the viewer, the soft screen glow on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre holding the popcorn bucket out toward the viewer, the soft screen glow on the right"
+      },
+      "overlay": {
+        "caption": "給你，最上面那層最好吃。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dusty-rose knit sweater and blue jeans, watches the screen out of frame on the right with the popcorn bucket in her lap, then gasps softly. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 給你，最上面那層最好吃。</d> Then she turns to the viewer, holds the popcorn bucket out toward the viewer and smiles. The light stays steady. The camera holds a steady shot.",
+        "soundscape": "Quiet cinema auditorium: a low muffled hum from the speakers and the soft rustle of seats, with her clear voice in front. Near the end, a soft rustle of popcorn sounds.",
+        "duration": 5
+      },
+      "spoken": "給你，最上面那層最好吃。",
+      "time_of_day": "dim, screen glow",
+      "props": "a popcorn bucket (shots 1-5)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the soft screen glow, on the right",
+      "enters_on": "watching the screen on the right with wide eyes, lit by the glow",
+      "exits_on": "holding out the popcorn toward the viewer, smiling",
+      "sound_bridge": "Near the end, a soft rustle of popcorn sounds.",
+      "bridge": "from the film to the popcorn: the same dim hall and glow, she turns from the screen to the viewer"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "她轉頭，笑出來",
+      "beat_zh": "她發現你一直在看她，轉過頭笑出聲，說原來你一直在偷看她。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman turns her head toward the viewer and laughs quietly, her hand resting on the popcorn bucket at the bottom of the frame, the soft blue-white glow from the screen on the right lighting her face.",
+      "setting": "a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people",
+      "lighting": "a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third laughing quietly, a hand on the popcorn bucket, the soft screen glow on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred laughing quietly, a hand on the popcorn bucket, the soft screen glow on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred laughing quietly, a hand on the popcorn bucket, the soft screen glow on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre laughing quietly, a hand on the popcorn bucket, the soft screen glow on the right"
+      },
+      "overlay": {
+        "caption": "原來你一直在偷看我。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dusty-rose knit sweater and blue jeans, turns her head toward the viewer with a surprised look, one hand on the popcorn bucket at the bottom of the frame. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 原來你一直在偷看我。</d> Then she bursts into a quiet laugh and covers her smile with her other hand. The camera holds a steady shot.",
+        "soundscape": "Quiet cinema auditorium: a low muffled hum from the speakers and the soft rustle of seats, with her clear voice in front. Near the end, the house lights come up softly.",
+        "duration": 5
+      },
+      "spoken": "原來你一直在偷看我。",
+      "time_of_day": "dim, screen glow",
+      "props": "a popcorn bucket (shots 1-5)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the soft screen glow, on the right",
+      "enters_on": "holding out the popcorn toward the viewer, smiling",
+      "exits_on": "laughing quietly, looking at the viewer",
+      "sound_bridge": "Near the end, the house lights come up softly.",
+      "bridge": "from the popcorn to the laugh: the same dim hall and glow, she has noticed the viewer watching her"
+    },
+    {
+      "scene": 6,
+      "title": "散場燈亮，她伸懶腰",
+      "beat_zh": "片尾結束，燈亮了，她伸個懶腰，笑著說今天那部片真的好看。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stretches her arms up in the lit cinema auditorium after the film and smiles at the viewer, the seats behind her softly lit, a soft glow on the right of the frame.",
+      "setting": "a cinema auditorium after the film with the house lights up, rows of red velvet seats, a soft glow from the right out of frame, no other people",
+      "lighting": "warm house lights, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third stretching with a content smile, the soft glow on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred stretching with a content smile, the soft glow on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred stretching with a content smile, the soft glow on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre stretching with a content smile, the soft glow on the right"
+      },
+      "overlay": {
+        "question": "看完覺得怎麼樣？",
+        "choices": [
+          "好看",
+          "普通",
+          "被你的反應逗笑"
+        ],
+        "picked": 0,
+        "pick_at": 0.9,
+        "caption": "今天那部片真的好看。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dusty-rose knit sweater and blue jeans, stretches her arms up with a content smile at the viewer. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 今天那部片真的好看。</d> Then she lowers her arms, her smile warm, still looking at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet cinema auditorium: a low muffled hum from the speakers and the soft rustle of seats, with her clear voice in front.",
+        "duration": 5
+      },
+      "spoken": "今天那部片真的好看。",
+      "time_of_day": "lights up, after the film",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the soft screen glow, on the right",
+      "enters_on": "laughing quietly, looking at the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the dark to the lights: the same hall, the house lights are up and her hands are empty"
+    }
+  ],
+  "continuity": "Light runs lobby (1-2, warm and bright) -> house lights on (3) -> dim with a soft blue-white screen glow on her face (4-5) -> house lights up (6). Same outfit in every shot: dusty-rose sweater, jeans. The popcorn bucket is in shots 1-5 only. The screen is never in frame: its glow comes from the right and she looks toward the right. Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "bright lobby",
+      "house lights",
+      "dim",
+      "lights up"
+    ],
+    "prop": "popcorn",
+    "prop_shots": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "landmark_word": "cinema"
+  }
+}

@@ -155,3 +155,100 @@ def test_import_refuses_a_batch_from_another_story_and_reports_jobs_that_are_mis
     empty = tmp / "nojobs"
     empty.mkdir()
     assert cc.import_batch(bible, stories[4], "b3", jobs_dir=str(empty))["missing"] == ["scene_01 A"]
+
+
+# --- named looks (style_variants) -----------------------------------------------------------------
+
+
+@pytest.fixture
+def promo(tmp_path):
+    import copy
+
+    import activity_promo as ap
+
+    bible = cs.load_bible(ap.PROJECT_ROOT)
+    real = next(s for s in cs.load_stories(ap.PROJECT_ROOT) if s.id == "promo_06_movie")
+    # an empty folder, so the test never depends on which stills the user has already made
+    return bible, cs.Story(copy.deepcopy(real.data), str(tmp_path / "story"))
+
+
+def test_a_named_look_changes_only_the_style_text(promo):
+    bible, story = promo
+    plain = cc.job_spec(bible, story, 1, "A")
+    doc = cc.job_spec(bible, story, 1, "A", style="documentary")
+    assert plain["prompt"].endswith(bible["style_positive"])
+    assert doc["prompt"].endswith(bible["style_variants"]["documentary"]["positive"])
+    assert (
+        doc["prompt"].split(", " + bible["style_variants"]["documentary"]["positive"])[0]
+        == plain["prompt"].split(", " + bible["style_positive"])[0]
+    )
+    assert doc["negative"].startswith(plain["negative"])
+    assert "plastic skin" in doc["negative"]
+    for key in ("seed", "width", "height", "steps", "cfg", "solo"):
+        assert doc[key] == plain[key]
+
+
+def test_a_named_look_still_gets_the_safety_negatives_and_cfg_floor(promo):
+    bible, story = promo
+    for style in (None, "bible", "documentary", "phone"):
+        spec = cc.job_spec(bible, story, 2, "B", style=style)
+        positive, negative = skill_assembly(spec)
+        assert all(term in negative for term in gc.AGE_SAFETY_NEGATIVE.split(", "))
+        assert spec["cfg"] >= cs.client.SAFETY_MIN_CFG
+
+
+def test_an_unknown_look_is_refused_with_the_known_ones(promo):
+    bible, story = promo
+    with pytest.raises(gc.UsageError, match="documentary"):
+        cc.job_spec(bible, story, 1, "A", style="vintage")
+
+
+def test_export_records_the_look_in_the_map(promo, tmp_path):
+    bible, story = promo
+    out = cc.export(bible, story, scene_numbers=[1], batch="t", directory=str(tmp_path), style="phone")
+    mapping = json.loads((tmp_path / "t.map.json").read_text(encoding="utf-8"))
+    assert out["images"] == 1 and mapping["style"] == "phone"
+
+
+# --- named descriptions of the woman (identity_variants) -------------------------------------------
+
+
+def test_the_v1_description_keeps_the_promos_own_outfit_and_asks_for_no_selfie_arm(promo):
+    bible, story = promo
+    plain = cc.job_spec(bible, story, 1, "A")
+    young = cc.job_spec(bible, story, 1, "A", identity="v1")
+    assert "aged 23" in plain["prompt"] and "early twenties" not in plain["prompt"]
+    assert "early twenties" in young["prompt"] and "aged 23" not in young["prompt"]
+    outfit = "a dusty-rose knit sweater with a round neckline, blue jeans"
+    assert outfit in young["prompt"] and "outstretched arm" in young["negative"] and "selfie" not in plain["negative"]
+    assert story.data["characters"]["ruoxi"]["description"].count("aged 23") == 1  # the story itself is untouched
+    for key in ("seed", "width", "height", "steps", "cfg"):
+        assert young[key] == plain[key]
+
+
+def test_the_v1_description_is_the_one_round_two_measured(promo):
+    import sys
+
+    sys.path.insert(0, os.path.join(cs.REPO_ROOT, ".claude", "skills", "z-image-colab", "scripts"))
+    import bench
+
+    bible, story = promo
+    outfit = "a dusty-rose knit sweater with a round neckline, blue jeans"
+    assert bench.describe("v1", outfit) in cc.job_spec(bible, story, 1, "A", identity="v1")["prompt"]
+
+
+def test_a_young_adult_description_keeps_the_safety_path_and_no_minor_words(promo):
+    bible, story = promo
+    for n in range(1, 7):
+        spec = cc.job_spec(bible, story, n, "A", style="bible", identity="v1")
+        _, negative = skill_assembly(spec)
+        assert all(term in negative for term in gc.AGE_SAFETY_NEGATIVE.split(", "))
+        assert not any(w in spec["prompt"].lower() for w in ("girl", "teen", "child", "kid", "minor"))
+
+
+def test_an_unknown_identity_is_refused_and_export_records_the_one_used(promo, tmp_path):
+    bible, story = promo
+    with pytest.raises(gc.UsageError, match="v1"):
+        cc.job_spec(bible, story, 1, "A", identity="v9")
+    cc.export(bible, story, scene_numbers=[1], batch="id", directory=str(tmp_path), identity="v1")
+    assert json.loads((tmp_path / "id.map.json").read_text(encoding="utf-8"))["identity"] == "v1"

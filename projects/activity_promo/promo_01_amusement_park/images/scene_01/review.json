@@ -1,0 +1,22 @@
+{
+  "story_id": "promo_01_amusement_park",
+  "scene_id": "scene_01",
+  "status": "APPROVED",
+  "approved_candidate": "candidate_01.png",
+  "notes": "approved by the user (2026-10-04); ChatGPT-made still, H3 use agreed by the user",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-04T14:07:00+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-04T14:07:00+08:00"
+    },
+    {
+      "status": "APPROVED",
+      "at": "2026-10-04T14:25:36+08:00"
+    }
+  ],
+  "decided_via": "cli"
+}

@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_01_amusement_park",
+  "scene_id": "scene_05",
+  "candidate_id": "candidate_02",
+  "candidate_letter": "B",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair, jacket, jeans and earrings.\nfirst-person point of view from the opposite bench, medium shot from the waist up, the woman centred, the lit window behind her on the right. The woman has just sat down on the bench of a Ferris wheel cabin opposite the viewer, her free hand just lowered from reaching toward the viewer and now resting on the bench beside her, the cotton candy in her other hand, smiling at the viewer, the window on the right of the frame.\nSetting: inside a small glass Ferris wheel cabin at dusk, the window on the right looking out over the park lights far below, a carousel, a lake and the city lights, with no other Ferris wheel visible outside the window. Lighting: blue dusk sky outside, warm cabin light on her face, the park lights as soft bokeh, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view from the opposite bench, medium shot from the waist up, the woman centred, the lit window behind her on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "69c57295cd0899f1f1de27cb46a103795deef58fa2570bb3e183dde59c95a2c5",
+  "created_at": "2026-10-04T14:20:16+08:00"
+}

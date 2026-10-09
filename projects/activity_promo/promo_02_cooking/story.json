@@ -1,0 +1,302 @@
+{
+  "schema": 1,
+  "story_id": "promo_02_cooking",
+  "number": 2,
+  "title": "Cooking together",
+  "title_zh": "一起下廚",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2100000,
+  "source": "Lines and choices are copied from ai-companion backend/app/activities (outings.py, choice_lines, closing_lines); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a cream high-neck knit top with a round neckline that covers the collarbone and the sleeves pushed up, a beige linen apron and blue jeans"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the amusement-park promo. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "廚房，她綁上圍裙",
+      "beat_zh": "冰箱打開，食材還算齊全。她綁上圍裙，抬頭問你今天做什麼。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands at the kitchen counter tying the strings of a beige linen apron behind her back and looks up at the viewer with a bright smile, the stove on the right of the frame.",
+      "setting": "a bright home kitchen with a gas stove and a pot on the right side of the frame, a wooden counter, clean uncluttered surfaces, a window on the left with warm early-evening light",
+      "lighting": "warm golden window light from the left, a warm ceiling light, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third facing the viewer, the stove with a pot on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred facing the viewer, the stove with a pot on the right"
+      },
+      "overlay": {
+        "caption": "圍裙拿來了。要做什麼？"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, ties the apron and looks at the viewer with a bright smile. Right away The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 圍裙拿來了。要做什麼？</d> Then she turns toward the fridge on the right with a smile, her face still toward the viewer. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet home kitchen: a soft refrigerator hum and a faint city murmur through the window, with her clear voice in front. Near the end, a soft refrigerator door seal pops open.",
+        "duration": 5
+      },
+      "spoken": "圍裙拿來了。要做什麼？",
+      "time_of_day": "early evening, warm window light",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the stove with a pot, on the right",
+      "enters_on": "standing at the counter, smiling at the viewer",
+      "exits_on": "turning toward the fridge on the right, face still toward the viewer",
+      "sound_bridge": "Near the end, a soft refrigerator door seal pops open."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "冰箱前，她舉起馬鈴薯",
+      "beat_zh": "你選了咖哩飯，她從冰箱拿出馬鈴薯舉給你看。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds up a potato toward the viewer with one hand, an open fridge glowing on the right of the frame and the stove beyond it, her face lit with an excited smile.",
+      "setting": "a bright home kitchen with a gas stove and a pot on the right side of the frame, a wooden counter, clean uncluttered surfaces, an open fridge glowing on the right beside the stove, early-evening window light on the left",
+      "lighting": "warm window light from the left and the cool glow of the open fridge on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, the potato held up near her face, the open fridge and the stove on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, the potato held up beside her cheek, the open fridge and the stove on the right"
+      },
+      "overlay": {
+        "question": "今天做什麼？",
+        "choices": [
+          "義大利麵",
+          "咖哩飯",
+          "火鍋"
+        ],
+        "picked": 1,
+        "caption": "咖哩飯！要加很多馬鈴薯。",
+        "pick_at": 1.2
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, holds the potato up toward the viewer with an excited smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 咖哩飯！要加很多馬鈴薯。</d> Then she sets the potato on the counter and keeps smiling at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet home kitchen: a soft refrigerator hum and a faint city murmur through the window, with her clear voice in front. Near the end, a pan clinks gently on the stove.",
+        "duration": 5
+      },
+      "spoken": "咖哩飯！要加很多馬鈴薯。",
+      "time_of_day": "early evening, warm window light",
+      "props": "a potato (shots 2-3)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the stove with a pot, on the right",
+      "enters_on": "turning toward the fridge on the right, face still toward the viewer",
+      "exits_on": "setting the potato on the counter, still smiling at the viewer",
+      "sound_bridge": "Near the end, a pan clinks gently on the stove.",
+      "bridge": "from the fridge to the counter: the same kitchen and light, the potato now in her hand"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "流理台邊，她陪你煮",
+      "beat_zh": "你說我來煮，她靠在流理台邊托著臉看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman leans on the counter beside a cutting board with a potato resting near her hand, her chin on her other hand, watching the viewer cook with a gentle smile, the stove with a pot on the right of the frame.",
+      "setting": "a bright home kitchen with a gas stove and a pot on the right side of the frame, a wooden counter, clean uncluttered surfaces, a cutting board with a potato on the counter, the window on the left showing a dusky blue-and-orange sky just after sunset",
+      "lighting": "warm ceiling light and the soft dusk light through the window on the left, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third leaning on the counter, the stove with a pot on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred leaning on the counter, the stove with a pot on the right"
+      },
+      "overlay": {
+        "question": "怎麼分工？",
+        "choices": [
+          "你切菜，我掌廚",
+          "我來煮，你陪我聊天",
+          "一起慢慢來"
+        ],
+        "picked": 1,
+        "caption": "好，我就在旁邊陪你。",
+        "pick_at": 0.9
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, leans on the counter with her chin on her hand and smiles at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好，我就在旁邊陪你。</d> Then she glances toward the pot on the stove on the right and smiles. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet home kitchen: a soft simmer and a faint refrigerator hum, with her clear voice in front. Near the end, the pot begins to hiss softly.",
+        "duration": 5
+      },
+      "spoken": "好，我就在旁邊陪你。",
+      "time_of_day": "evening, the sky outside deepening",
+      "props": "a potato (shots 2-3)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the stove with a pot, on the right",
+      "enters_on": "setting the potato on the counter, still smiling at the viewer",
+      "exits_on": "glancing toward the pot on the stove on the right, still smiling",
+      "sound_bridge": "Near the end, the pot begins to hiss softly.",
+      "bridge": "from fetching the potato to waiting beside the counter: the same kitchen, the light one step later"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "鍋子冒煙，她笑著喊",
+      "beat_zh": "鍋子開始冒煙，她笑著指向鍋子，要你趕快救回來。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "A thin curl of steam rises from the pot on the stove on the right of the frame, and the woman laughs, pointing at the pot with one hand while looking at the viewer.",
+      "setting": "a bright home kitchen with a gas stove and a pot on the right side of the frame, a wooden counter, clean uncluttered surfaces, a thin curl of steam rising from the pot, no flames visible, the window on the left deep blue",
+      "lighting": "warm ceiling light and the soft glow from the stove, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, her hand pointing toward the pot, a curl of steam from the stove on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, her hand pointing toward the pot, a curl of steam from the stove on the right"
+      },
+      "overlay": {
+        "question": "怎麼辦？",
+        "choices": [
+          "趕快救回來",
+          "笑著重來一次",
+          "焦一點也很好吃"
+        ],
+        "picked": 0,
+        "caption": "快！關小火！",
+        "pick_at": 0.9
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, laughs and points toward the pot on the stove on the right, then looks at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 快！關小火！</d> Then she laughs again, her eyes bright, still facing the viewer. A thin curl of steam rises from the pot. The camera holds a steady shot.",
+        "soundscape": "Home kitchen: a soft sizzle and a gentle lid rattle, with her clear voice in front. Near the end, plates clink softly.",
+        "duration": 5
+      },
+      "spoken": "快！關小火！",
+      "time_of_day": "evening, the window deep blue",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the stove with a pot, on the right",
+      "enters_on": "glancing toward the pot on the stove on the right, still smiling",
+      "exits_on": "laughing, pointing at the pot, looking at the viewer",
+      "sound_bridge": "Near the end, plates clink softly.",
+      "bridge": "from watching the pot to the steam: the same kitchen, the same light, a little steam now rising"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "餐桌前，她吃第一口",
+      "beat_zh": "菜終於上桌，你把第一口留給她，她湊過來吃。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits at the dining table with a steaming bowl of curry rice in front of her, a spoonful of curry rice held at her own lips as she leans in to take the first bite, her eyes on the viewer with a smile, the stove visible beyond the table on the right.",
+      "setting": "a dining table in a home kitchen at night with a steaming bowl of curry rice, the stove with a pot visible beyond the table on the right, the window on the left dark blue",
+      "lighting": "warm pendant light over the table, her face clearly lit, the window dark blue behind",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third leaning in with the spoon at her lips, the bowl in front, the stove on the right in the background",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred leaning in with the spoon at her lips, the bowl in front, the stove on the right in the background"
+      },
+      "overlay": {
+        "question": "開動前？",
+        "choices": [
+          "先拍照紀念",
+          "第一口給你",
+          "直接開動"
+        ],
+        "picked": 1,
+        "caption": "給我？那我不客氣了。",
+        "pick_at": 0.9
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, leans in toward the viewer with a smile, the spoon at her lips. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 給我？那我不客氣了。</d> Then she takes the first bite from the spoon at her lips, chews happily and smiles with her eyes bright, the spoon in her hand. The camera holds a steady shot.",
+        "soundscape": "Quiet home dining table: a soft spoon tapping a bowl and a faint refrigerator hum, with her clear voice in front. Near the end, a soft happy hum from her.",
+        "duration": 5
+      },
+      "spoken": "給我？那我不客氣了。",
+      "time_of_day": "night, the window dark blue",
+      "props": "a spoon (shots 5-6)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the stove with a pot, on the right",
+      "enters_on": "laughing, pointing at the pot, looking at the viewer",
+      "exits_on": "smiling with a spoon in her hand",
+      "sound_bridge": "Near the end, a soft happy hum from her.",
+      "bridge": "from the stove to the table: night now, the pot still visible on the right"
+    },
+    {
+      "scene": 6,
+      "title": "餐桌前，她對你笑",
+      "beat_zh": "她放下湯匙，認真地笑著看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman lowers the spoon into the bowl and smiles warmly at the viewer, the stove with its pot softly out of focus on the right of the frame.",
+      "setting": "a dining table in a home kitchen at night, the stove with a pot softly out of focus on the right, the window on the left dark blue",
+      "lighting": "warm pendant light over the table, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, the stove softly out of focus on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, the stove softly out of focus on the right"
+      },
+      "overlay": {
+        "caption": "你把第一口給我的時候，我好開心。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream high-neck knit top with the sleeves pushed up, a beige linen apron, blue jeans, smiles warmly at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 你把第一口給我的時候，我好開心。</d> She lowers the spoon into the bowl and holds a warm smile toward the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet home dining table: a faint refrigerator hum and a soft evening stillness, with her clear voice in front.",
+        "duration": 5
+      },
+      "spoken": "你把第一口給我的時候，我好開心。",
+      "time_of_day": "night, the window dark blue",
+      "props": "a spoon (shots 5-6)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the stove with a pot, on the right",
+      "enters_on": "smiling with a spoon in her hand",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the first bite to the smile: the same table and light, her mouth now empty"
+    }
+  ],
+  "continuity": "Light only moves forward: early evening (1-2) -> evening (3-4) -> night (5-6). Same outfit in every shot: cream knit top, beige apron, jeans. The stove with its pot is on the right of the frame in every shot, and she looks, points and leans toward the right. Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "early evening",
+      "evening",
+      "night"
+    ],
+    "prop": "potato",
+    "prop_shots": [
+      2,
+      3
+    ],
+    "prop2": "spoon",
+    "prop2_shots": [
+      5,
+      6
+    ],
+    "landmark_word": "stove"
+  }
+}

@@ -1,0 +1,294 @@
+{
+  "schema": 1,
+  "story_id": "promo_08_travel",
+  "number": 8,
+  "title": "A trip together",
+  "title_zh": "一起去旅行",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2700000,
+  "source": "Lines are copied from ai-companion backend/app/activities (outings.py, choice_lines, closing_lines); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false). The place is a look, not a claim: Japanese coast is only the setting, and no shot shows readable signs. The static-subject constraint is on the shots where she only stands or sits (asked for after the earlier promos drifted).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a white linen blouse with short sleeves and a round neckline, and a light-blue midi skirt"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the earlier promos. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "早晨的和室，地圖攤開",
+      "beat_zh": "早晨的旅館和室裡，地圖攤在矮桌上，她抬頭看你，說走就走。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman kneels at a low wooden table in a Japanese-style inn room with a paper map spread on it, looking up at the viewer with an excited smile, the bright window on the right of the frame.",
+      "setting": "a Japanese-style inn room in the morning with tatami mats, paper shoji screens and a low wooden table, a window with soft morning light on the right side of the frame, nobody else in sight, no readable signs",
+      "lighting": "soft morning light from the window on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third kneeling at the low table with a map, the bright window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred kneeling at the low table with a map, the bright window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred kneeling at the low table with a map, the bright window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre kneeling at the low table with a map, the bright window on the right"
+      },
+      "overlay": {
+        "caption": "說走就走，好期待。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her white linen blouse and light-blue midi skirt, kneels at the low table with a paper map spread on it and looks up at the viewer with an excited smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 說走就走，好期待。</d> Then she smooths the map with one hand and keeps smiling at the viewer. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet inn room in the morning: soft birdsong outside and a faint breeze, with her clear voice in front. Near the end, paper rustles softly.",
+        "duration": 5
+      },
+      "spoken": "說走就走，好期待。",
+      "time_of_day": "morning, soft window light",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the sea of the Japanese coast, on the right",
+      "enters_on": "kneeling at the table, looking up at the viewer",
+      "exits_on": "smiling at the viewer over the map",
+      "sound_bridge": "Near the end, paper rustles softly."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "她指著地圖上的海岸",
+      "beat_zh": "你選了海邊，她戴上草帽，手指點在地圖的海岸線上。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman wears a straw hat and taps the coastline on the paper map with one finger in the Japanese-style inn room, grinning at the viewer, the bright window on the right of the frame.",
+      "setting": "a Japanese-style inn room in the morning with tatami mats, paper shoji screens and a low wooden table, a window with soft morning light on the right side of the frame, nobody else in sight, no readable signs",
+      "lighting": "soft morning light from the window on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third wearing a straw hat and grinning, the bright window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred wearing a straw hat and grinning, the bright window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred wearing a straw hat and grinning, the bright window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre wearing a straw hat and grinning, the bright window on the right"
+      },
+      "overlay": {
+        "caption": "海邊！好想吹海風。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her white linen blouse and light-blue midi skirt, wears a straw hat and taps the coastline on the map with one finger, grinning at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 海邊！好想吹海風。</d> Then she tips the brim of the straw hat with a laugh and looks at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet inn room in the morning: soft birdsong outside and a faint breeze, with her clear voice in front. Near the end, a train rumbles softly far away.",
+        "duration": 5
+      },
+      "spoken": "海邊！好想吹海風。",
+      "time_of_day": "morning, soft window light",
+      "props": "straw hat",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the sea of the Japanese coast, on the right",
+      "enters_on": "smiling at the viewer over the map",
+      "exits_on": "grinning at the viewer under the straw hat",
+      "sound_bridge": "Near the end, a train rumbles softly far away.",
+      "bridge": "from the map to the choice: the same Japanese-style room and morning light, the straw hat now on her head"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "火車窗邊，海出現了",
+      "beat_zh": "搭上海岸線的小火車，窗外第一次出現海，她轉過來看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits by the window of a small Japanese local train with the straw hat on her lap, turning from the sea outside the window on the right of the frame to smile at the viewer.",
+      "setting": "a window seat on a small Japanese local train in the afternoon, the sea bright outside the window on the right side of the frame, empty seats, nobody else in sight, no readable signs",
+      "lighting": "bright afternoon light from the train window on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third seated by the train window with the straw hat on her lap, the sea outside the train window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred seated by the train window with the straw hat on her lap, the sea outside the train window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred seated by the train window with the straw hat on her lap, the sea outside the train window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre seated by the train window with the straw hat on her lap, the sea outside the train window on the right"
+      },
+      "overlay": {
+        "caption": "搭火車好，可以看風景。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her white linen blouse and light-blue midi skirt, sits by the train window with the straw hat on her lap and turns from the sea to smile at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 搭火車好，可以看風景。</d> Then she glances at the sea through the window on the right and back at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet local train: a soft, steady hum of the carriage, with her clear voice in front. Near the end, waves sound softly outside.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "搭火車好，可以看風景。",
+      "time_of_day": "afternoon, bright sea light",
+      "props": "straw hat",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the sea of the Japanese coast, on the right",
+      "enters_on": "grinning at the viewer under the straw hat",
+      "exits_on": "seated by the window, smiling at the viewer",
+      "sound_bridge": "Near the end, waves sound softly outside.",
+      "bridge": "from the room to the train: the Japanese coast in the afternoon, the sea now outside the window"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "海邊步道，她拿著糰子",
+      "beat_zh": "到了海邊，風吹著帽子，她一手壓著帽子，一手拿著剛買的糰子。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds her straw hat on her head with one hand against the sea breeze and a skewer of dango in the other on a Japanese seaside promenade, smiling at the viewer, the blue sea on the right of the frame.",
+      "setting": "a Japanese seaside promenade in the afternoon with a low sea wall, the blue sea on the right side of the frame, a clean uncluttered path, nobody else in sight, no readable signs",
+      "lighting": "bright afternoon sunlight, the sea sparkling on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third holding her straw hat with one hand and a skewer of dango in the other, the blue sea on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred holding her straw hat with one hand and a skewer of dango in the other, the blue sea on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred holding her straw hat with one hand and a skewer of dango in the other, the blue sea on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre holding her straw hat with one hand and a skewer of dango in the other, the blue sea on the right"
+      },
+      "overlay": {
+        "caption": "來當地就要吃當地的。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her white linen blouse and light-blue midi skirt, holds her straw hat on her head with one hand against the breeze and a skewer of dango in the other, smiling at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 來當地就要吃當地的。</d> Then she lifts the dango skewer a little toward the viewer with a happy smile. The camera holds a steady shot.",
+        "soundscape": "Quiet seaside: gentle waves and a soft sea breeze, with her clear voice in front. Near the end, the waves grow slow and soft.",
+        "duration": 5
+      },
+      "spoken": "來當地就要吃當地的。",
+      "time_of_day": "afternoon, bright sea light",
+      "props": "straw hat, dango",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the sea of the Japanese coast, on the right",
+      "enters_on": "seated by the window, smiling at the viewer",
+      "exits_on": "holding up the skewer, smiling at the viewer",
+      "sound_bridge": "Near the end, the waves grow slow and soft.",
+      "bridge": "from the train to the shore: the same afternoon on the Japanese coast, the sea now right beside her"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "夕陽的堤防，她回頭",
+      "beat_zh": "夕陽下她坐在堤防上，回頭看你，說就在這裡等太陽下山。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits on a low sea wall on a Japanese coast at sunset with the straw hat on her head, looking back at the viewer with a calm smile, the sun low over the sea on the right of the frame.",
+      "setting": "a low sea wall on a Japanese coast at sunset, the sun low over the sea on the right side of the frame, calm water, nobody else in sight, no readable signs",
+      "lighting": "warm golden sunset light from the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third sitting on the sea wall, looking back at the viewer, the sunset over the sea on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred sitting on the sea wall, looking back at the viewer, the sunset over the sea on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred sitting on the sea wall, looking back at the viewer, the sunset over the sea on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre sitting on the sea wall, looking back at the viewer, the sunset over the sea on the right"
+      },
+      "overlay": {
+        "caption": "好，就在這裡等太陽下山。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her white linen blouse and light-blue midi skirt, sits on the low sea wall with the straw hat on her head and looks back at the viewer with a calm smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好，就在這裡等太陽下山。</d> Then she turns her face toward the sunset on the right and back to the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet seaside: gentle waves and a soft sea breeze, with her clear voice in front. Near the end, night insects begin softly.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "好，就在這裡等太陽下山。",
+      "time_of_day": "sunset, golden",
+      "props": "straw hat",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the sea of the Japanese coast, on the right",
+      "enters_on": "holding up the skewer, smiling at the viewer",
+      "exits_on": "on the sea wall, smiling calmly at the viewer",
+      "sound_bridge": "Near the end, night insects begin softly.",
+      "bridge": "from the afternoon to the sunset: the same Japanese coast, the sun now low over the sea"
+    },
+    {
+      "scene": 6,
+      "title": "旅館陽台，滿天星星",
+      "beat_zh": "晚上在旅館的陽台，滿天星星，她抬頭看了一會兒，再轉向你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands on the wooden balcony of a Japanese seaside inn at night with the straw hat held against her chest, looking at the viewer with a soft smile, the starry sky over the sea on the right of the frame.",
+      "setting": "a wooden balcony of a Japanese seaside inn at night, a paper lantern glowing warmly, a sky full of stars over the dark sea on the right side of the frame, nobody else in sight, no readable signs",
+      "lighting": "a warm paper-lantern glow on her face, a starry sky behind her, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third holding the straw hat against her chest, the starry sky over the sea on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred holding the straw hat against her chest, the starry sky over the sea on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred holding the straw hat against her chest, the starry sky over the sea on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre holding the straw hat against her chest, the starry sky over the sea on the right"
+      },
+      "overlay": {
+        "caption": "看星星的那一晚，我會記很久。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her white linen blouse and light-blue midi skirt, holds the straw hat against her chest and looks up at the stars on the right, then at the viewer with a soft smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 看星星的那一晚，我會記很久。</d> Then she holds a warm smile toward the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet seaside: gentle waves and a soft sea breeze, with her clear voice in front.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "看星星的那一晚，我會記很久。",
+      "time_of_day": "night, starry",
+      "props": "straw hat",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the sea of the Japanese coast, on the right",
+      "enters_on": "on the sea wall, smiling calmly at the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the sunset to the stars: the Japanese coast at night, a lantern on her face"
+    }
+  ],
+  "continuity": "Light only moves forward: morning (1-2) -> afternoon (3-4) -> sunset (5) -> night (6). Same outfit in every shot: white linen blouse, light-blue skirt; the straw hat is with her from shot 2 on. The window, then the sea, is on the right in every shot. Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "morning",
+      "afternoon",
+      "sunset",
+      "night"
+    ],
+    "prop": "straw hat",
+    "prop_shots": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "prop2": "dango",
+    "prop2_shots": [
+      4
+    ],
+    "landmark_word": "Japanese"
+  }
+}

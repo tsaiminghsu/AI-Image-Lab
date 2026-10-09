@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_03_coffee",
+  "scene_id": "scene_03",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair and pearl drop earrings. She wears a cream knit cardigan over a white t-shirt and blue jeans.\nfirst-person point of view at eye level, medium shot from the waist up, the woman on the left third at the counter, the large window on the right. The woman stands at the café counter with her hands clasped in front of her, waiting with an amused smile, a chalkboard menu with no readable text on the left and the large window on the right.\nSetting: the counter of a small café in the late afternoon, a chalkboard menu with no readable text on the left, the large glass window on the right, a warm wooden interior. Lighting: warm café lighting and soft late-afternoon light from the window on the right, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third at the counter, the large window on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "0e3f0e38489de0e4ab7fc565b344649a944be63c09b55c1d9ada1b87326ed4cc",
+  "created_at": "2026-10-04T18:25:44+08:00"
+}

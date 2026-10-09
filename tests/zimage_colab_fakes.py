@@ -172,13 +172,24 @@ class FakeComfy:
             prompt_id: {
                 "status": {"status_str": "success", "completed": True, "messages": messages},
                 "outputs": {
-                    "9": {"images": [{"filename": f"{entry['prefix']}_00001_.png", "subfolder": "", "type": "output"}]}
+                    "9": {
+                        "images": [
+                            {"filename": f"{entry['prefix']}_{i:05d}_.png", "subfolder": "", "type": "output"}
+                            for i in range(1, self.pictures(entry, b) + 1)
+                        ]
+                    }
                 },
             }
         }
 
+    def pictures(self, entry, behavior):
+        """How many pictures ComfyUI returns: the graph's batch_size, unless the job is set to return a different count
+        (behavior "short" returns one fewer, to test a worker that is handed less than it asked for)."""
+        n = int(entry["graph"]["5"]["inputs"].get("batch_size", 1))
+        return max(1, n - 1) if behavior == "short" else n
+
     def view(self, filename):
-        prefix = filename.rsplit("_00001_", 1)[0]
+        prefix = filename.rsplit("_", 2)[0]
         entry = next(e for e in self.prompts.values() if e["prefix"] == prefix)
         w = entry["graph"]["5"]["inputs"]["width"]
         h = entry["graph"]["5"]["inputs"]["height"]

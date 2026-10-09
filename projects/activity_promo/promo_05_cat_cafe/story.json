@@ -1,0 +1,313 @@
+{
+  "schema": 1,
+  "story_id": "promo_05_cat_cafe",
+  "number": 5,
+  "title": "Cat café together",
+  "title_zh": "一起去貓咪咖啡廳",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2400000,
+  "source": "Lines are copied from ai-companion backend/app/activities (outings.py fallback, choice_lines cat_cafe); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false). Risk: H3 distorts animals, so the cat only ever lies curled or asleep.",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, a sage-green knit sweater with a round neckline, blue jeans, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a sage-green knit sweater with a round neckline that covers the collarbone, and blue jeans"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the earlier promos. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "門口，牠們都在看",
+      "beat_zh": "一推開門，好幾隻貓同時抬頭看過來，她小聲對你說。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands just inside the door of a cat café with the sunlit window and cushions on the right of the frame, looking at the viewer with wide, amused eyes.",
+      "setting": "a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a few tabby and white cats resting far behind her on the cushions",
+      "lighting": "warm golden afternoon sunlight from the window on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third facing the viewer with wide amused eyes, the sunlit window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred facing the viewer with wide amused eyes, the sunlit window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred facing the viewer with wide amused eyes, the sunlit window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre facing the viewer with wide amused eyes, the sunlit window on the right"
+      },
+      "overlay": {
+        "caption": "牠們全部都在看我們耶。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her sage-green knit sweater and blue jeans, looks at the viewer with wide, amused eyes. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 牠們全部都在看我們耶。</d> Then she smiles with a hushed laugh, still facing the viewer. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet cat café: a soft murmur of café chatter and a faint espresso machine hiss, with her clear voice in front. Near the end, a soft cushion rustles nearby.",
+        "duration": 5
+      },
+      "spoken": "牠們全部都在看我們耶。",
+      "time_of_day": "afternoon, golden",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the sunlit cat café window with its cushions, on the right",
+      "enters_on": "standing just inside the café door, facing the viewer",
+      "exits_on": "facing the viewer with a hushed smile",
+      "sound_bridge": "Near the end, a soft cushion rustles nearby."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "窗邊軟墊，陽光照進來",
+      "beat_zh": "你們坐在窗邊的軟墊上，陽光照在她臉上。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits on the soft cushion by the sunlit window on the right of the frame, sunlight on her face, smiling at the viewer.",
+      "setting": "a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a few tabby and white cats resting far behind her on the cushions",
+      "lighting": "warm golden afternoon sunlight from the window on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third seated on the cushion by the window, the sunlit window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred seated on the cushion by the window, the sunlit window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred seated on the cushion by the window, the sunlit window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre seated on the cushion by the window, the sunlit window on the right"
+      },
+      "overlay": {
+        "question": "要坐哪裡？",
+        "choices": [
+          "窗邊的軟墊",
+          "貓跳台旁邊",
+          "貓最多的那一桌"
+        ],
+        "picked": 0,
+        "pick_at": 1.2,
+        "caption": "窗邊好，貓咪最愛曬太陽。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her sage-green knit sweater and blue jeans, sits on the soft cushion by the sunlit window on the right, smiling at the viewer. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 窗邊好，貓咪最愛曬太陽。</d> Then she tilts her head a little toward the sunlight on the right and keeps smiling at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet cat café: a soft murmur of café chatter and a faint espresso machine hiss, with her clear voice in front. Near the end, a snack cup rustles softly.",
+        "duration": 5
+      },
+      "spoken": "窗邊好，貓咪最愛曬太陽。",
+      "time_of_day": "afternoon, golden",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the sunlit cat café window with its cushions, on the right",
+      "enters_on": "facing the viewer with a hushed smile",
+      "exits_on": "seated on the window cushion, sunlight on her face, smiling at the viewer",
+      "sound_bridge": "Near the end, a snack cup rustles softly.",
+      "bridge": "from the door to the window seat: the same cat café and light, she is now seated on the cushion"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "一人一半，她遞零食",
+      "beat_zh": "店員說可以買零食餵貓，你買了一份，她分一半遞給你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits on the cushion by the sunlit window on the right of the frame, holding out half of a small cup of treats toward the viewer with a bright smile, a fluffy orange cat curled up asleep on the table in the lower right of the frame.",
+      "setting": "a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a few tabby and white cats resting far behind her on the cushions, a fluffy orange cat curled up asleep on the wooden table in the lower right",
+      "lighting": "warm golden afternoon sunlight from the window on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third holding out half of the treats toward the viewer, the sunlit window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred holding out half of the treats toward the viewer, the sunlit window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred holding out half of the treats toward the viewer, the sunlit window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre holding out half of the treats toward the viewer, the sunlit window on the right"
+      },
+      "overlay": {
+        "question": "要買嗎？",
+        "choices": [
+          "買一份，一起餵",
+          "先不要，靜靜看就好",
+          "只餵最小的那隻"
+        ],
+        "picked": 0,
+        "pick_at": 0.9,
+        "caption": "好，一人一半。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her sage-green knit sweater and blue jeans, holds out half of a small cup of treats toward the viewer with a bright smile. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好，一人一半。</d> Then she keeps her hand held out and smiles at the viewer. The fluffy orange cat asleep on the table stays curled and still. The camera holds a steady shot.",
+        "soundscape": "Quiet cat café: a soft murmur of café chatter and a faint espresso machine hiss, with her clear voice in front. Near the end, a soft purr begins nearby.",
+        "duration": 5
+      },
+      "spoken": "好，一人一半。",
+      "time_of_day": "afternoon, golden",
+      "props": "treats, an orange cat (shots 3-6)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the sunlit cat café window with its cushions, on the right",
+      "enters_on": "seated on the window cushion, sunlight on her face, smiling at the viewer",
+      "exits_on": "holding out half of the treats toward the viewer, smiling",
+      "sound_bridge": "Near the end, a soft purr begins nearby.",
+      "bridge": "from sitting to the treat: the same cat café and light, she now holds a small cup of treats"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "橘貓趴上桌，她輕輕摸",
+      "beat_zh": "一隻橘貓趴在桌子正中間，她伸手輕輕摸牠。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman gently strokes a fluffy orange cat curled up on the table in the lower right of the frame, looking softly at the viewer, the sunlit window on the right.",
+      "setting": "a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a fluffy orange cat curled up asleep on the wooden table in the lower right",
+      "lighting": "deeper golden light from the window on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third gently stroking the cat on the table, the sunlit window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred gently stroking the cat on the table, the sunlit window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred gently stroking the cat on the table, the sunlit window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre gently stroking the cat on the table, the sunlit window on the right"
+      },
+      "overlay": {
+        "question": "怎麼辦？",
+        "choices": [
+          "輕輕摸牠",
+          "拍下這一幕",
+          "讓牠睡，我們小聲聊"
+        ],
+        "picked": 0,
+        "pick_at": 0.9,
+        "caption": "好軟……牠在呼嚕。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her sage-green knit sweater and blue jeans, has her fingertips resting on the back of the fluffy orange cat curled asleep on the table, and looks softly at the viewer. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好軟……牠在呼嚕。</d> Then she makes one slow, gentle stroke along the cat's back, glances down at the orange cat and lifts her eyes back to the viewer with a soft smile. The cat's belly rises and falls slowly as it breathes; its eyes stay closed and its body stays curled and still. The camera holds a steady shot.",
+        "soundscape": "Quiet cat café: a soft murmur of café chatter and a faint espresso machine hiss, a soft low purr from the sleeping cat, with her clear voice in front. Near the end, the soft purring settles into quiet.",
+        "duration": 5
+      },
+      "spoken": "好軟……牠在呼嚕。",
+      "time_of_day": "late afternoon, deeper gold",
+      "props": "an orange cat (shots 4-6)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the sunlit cat café window with its cushions, on the right",
+      "enters_on": "holding out half of the treats toward the viewer, smiling",
+      "exits_on": "stroking the cat, smiling softly at the viewer",
+      "sound_bridge": "Near the end, the soft purring settles into quiet.",
+      "bridge": "from the treat to the cat: the same cat café, the light a step later, she turns to the orange cat that was already asleep on the table"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "貓睡著，她食指放唇邊",
+      "beat_zh": "橘貓睡著了，她食指放在唇邊，笑著要你小聲。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds one finger to her lips and smiles at the viewer, a fluffy orange cat fast asleep on the table in the lower right of the frame, the sunlit window on the right.",
+      "setting": "a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a fluffy orange cat curled up asleep on the wooden table in the lower right",
+      "lighting": "deeper golden light from the window on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third with one finger to her lips, the sunlit window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred with one finger to her lips, the sunlit window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred with one finger to her lips, the sunlit window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre with one finger to her lips, the sunlit window on the right"
+      },
+      "overlay": {
+        "caption": "好，小聲一點。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her sage-green knit sweater and blue jeans, holds one finger to her lips and smiles at the viewer, the fluffy orange cat fast asleep on the table. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好，小聲一點。</d> Then she glances at the orange cat and back at the viewer with a silent laugh, her finger still at her lips. The cat's belly rises and falls slowly as it breathes; its eyes stay closed and its body stays curled and still. The camera holds a steady shot.",
+        "soundscape": "Quiet cat café: a soft murmur of café chatter and a faint espresso machine hiss, with her clear voice in front. Near the end, a soft cat yawn drifts over.",
+        "duration": 5,
+        "constraints": [
+          "static-subject"
+        ]
+      },
+      "spoken": "好，小聲一點。",
+      "time_of_day": "late afternoon, deeper gold",
+      "props": "an orange cat (shots 4-6)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the sunlit cat café window with its cushions, on the right",
+      "enters_on": "stroking the cat, smiling softly at the viewer",
+      "exits_on": "finger to her lips, smiling at the viewer",
+      "sound_bridge": "Near the end, a soft cat yawn drifts over.",
+      "bridge": "from stroking to sleeping: the same table and light, the orange cat now asleep"
+    },
+    {
+      "scene": 6,
+      "title": "夕陽裡，她想幫牠取名",
+      "beat_zh": "夕陽照進窗邊，她趴在桌邊看著橘貓，問你牠叫什麼名字好。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman rests her chin on her folded arms on the table beside the sleeping orange cat in the lower right of the frame and smiles warmly at the viewer, the sunset window glowing on the right.",
+      "setting": "a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a fluffy orange cat asleep on the wooden table in the lower right, the window glowing orange-pink",
+      "lighting": "warm orange-pink sunset light from the window on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third resting her chin on her folded arms, the sunlit window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred resting her chin on her folded arms, the sunlit window on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred resting her chin on her folded arms, the sunlit window on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre resting her chin on her folded arms, the sunlit window on the right"
+      },
+      "overlay": {
+        "caption": "叫牠「橘子」好不好？"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her sage-green knit sweater and blue jeans, rests her chin on her folded arms beside the sleeping orange cat and smiles warmly at the viewer. The woman (S1), in a clear, warm voice, spoken softly, with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 叫牠「橘子」好不好？</d> Then she glances at the orange cat and back at the viewer, her smile widening a little. The cat's belly rises and falls slowly as it breathes; its eyes stay closed and its body stays curled and still. The camera holds a steady shot.",
+        "soundscape": "Quiet cat café: a soft murmur of café chatter and a faint espresso machine hiss, with her clear voice in front.",
+        "duration": 5,
+        "constraints": [
+          "static-subject"
+        ]
+      },
+      "spoken": "叫牠「橘子」好不好？",
+      "time_of_day": "sunset, warm orange-pink",
+      "props": "an orange cat (shots 4-6)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the sunlit cat café window with its cushions, on the right",
+      "enters_on": "finger to her lips, smiling at the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the whisper to the name: the same table, the light now a sunset glow, the cat still asleep"
+    }
+  ],
+  "continuity": "Light only moves forward: afternoon (1-3) -> late afternoon (4-5) -> sunset (6). Same outfit in every shot: sage-green knit sweater, jeans. The sunlit window with its cushions is on the right of the frame in every shot and she looks and leans toward the right. The treats are only in shot 3; the orange cat sleeps on the table in the lower right from shot 3 on, and it only ever lies curled or asleep. Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "afternoon",
+      "late afternoon",
+      "sunset"
+    ],
+    "prop": "treats",
+    "prop_shots": [
+      3
+    ],
+    "prop2": "orange cat",
+    "prop2_shots": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "landmark_word": "cat"
+  }
+}

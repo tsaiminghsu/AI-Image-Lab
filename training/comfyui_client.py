@@ -1476,12 +1476,14 @@ def build_zimage_txt2img_workflow(
     height: int = ZIMAGE_HEIGHT,
     steps: int = ZIMAGE_STEPS,
     cfg: float = ZIMAGE_CFG,
+    batch_size: int = BATCH_SIZE,
 ) -> dict:
     """The filled Z-Image txt2img graph, with no I/O beyond reading the template. Split out of
     submit_txt2img_generation_zimage so the Colab skill (.claude/skills/z-image-colab), which posts to a
     remote ComfyUI and never goes through _submit_and_wait, fills the exact same graph. `files` is a
     ZIMAGE_MODELS-shaped dict - the skill passes the official bf16 names, which are not in ZIMAGE_MODELS
-    because they don't fit the local 8 GB card. The cfg floor stays here for the same reason."""
+    because they don't fit the local 8 GB card. The cfg floor stays here for the same reason.
+    `batch_size` defaults to the local card's 1; only the Colab skill asks for more (one prompt, N pictures)."""
     wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH))
     wf["10"]["inputs"]["unet_name"] = files["unet"]
     wf["11"]["inputs"]["clip_name"] = files["text_encoder"]
@@ -1491,7 +1493,7 @@ def build_zimage_txt2img_workflow(
     wf["7"]["inputs"]["text"] = negative_prompt
     wf["5"]["inputs"]["width"] = _round16(width)
     wf["5"]["inputs"]["height"] = _round16(height)
-    wf["5"]["inputs"]["batch_size"] = BATCH_SIZE
+    wf["5"]["inputs"]["batch_size"] = batch_size
     wf["3"]["inputs"]["seed"] = seed
     wf["3"]["inputs"]["steps"] = steps
     wf["3"]["inputs"]["cfg"] = max(cfg, ZIMAGE_MIN_CFG)

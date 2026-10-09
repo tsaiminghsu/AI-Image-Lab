@@ -1,0 +1,137 @@
+{
+  "batch": "l4-id-v1-story8",
+  "jobs": [
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third kneeling at the low table with a map, the bright window on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman kneels at a low wooden table in a Japanese-style inn room with a paper map spread on it, looking up at the viewer with an excited smile, the bright window on the right of the frame. Setting: a Japanese-style inn room in the morning with tatami mats, paper shoji screens and a low wooden table, a window with soft morning light on the right side of the frame, nobody else in sight, no readable signs. Lighting: soft morning light from the window on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700011,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third wearing a straw hat and grinning, the bright window on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman wears a straw hat and taps the coastline on the paper map with one finger in the Japanese-style inn room, grinning at the viewer, the bright window on the right of the frame. Setting: a Japanese-style inn room in the morning with tatami mats, paper shoji screens and a low wooden table, a window with soft morning light on the right side of the frame, nobody else in sight, no readable signs. Lighting: soft morning light from the window on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700021,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third seated by the train window with the straw hat on her lap, the sea outside the train window on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman sits by the window of a small Japanese local train with the straw hat on her lap, turning from the sea outside the window on the right of the frame to smile at the viewer. Setting: a window seat on a small Japanese local train in the afternoon, the sea bright outside the window on the right side of the frame, empty seats, nobody else in sight, no readable signs. Lighting: bright afternoon light from the train window on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700031,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third holding her straw hat with one hand and a skewer of dango in the other, the blue sea on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman holds her straw hat on her head with one hand against the sea breeze and a skewer of dango in the other on a Japanese seaside promenade, smiling at the viewer, the blue sea on the right of the frame. Setting: a Japanese seaside promenade in the afternoon with a low sea wall, the blue sea on the right side of the frame, a clean uncluttered path, nobody else in sight, no readable signs. Lighting: bright afternoon sunlight, the sea sparkling on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700041,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third sitting on the sea wall, looking back at the viewer, the sunset over the sea on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman sits on a low sea wall on a Japanese coast at sunset with the straw hat on her head, looking back at the viewer with a calm smile, the sun low over the sea on the right of the frame. Setting: a low sea wall on a Japanese coast at sunset, the sun low over the sea on the right side of the frame, calm water, nobody else in sight, no readable signs. Lighting: warm golden sunset light from the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700051,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third holding the straw hat against her chest, the starry sky over the sea on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman stands on the wooden balcony of a Japanese seaside inn at night with the straw hat held against her chest, looking at the viewer with a soft smile, the starry sky over the sea on the right of the frame. Setting: a wooden balcony of a Japanese seaside inn at night, a paper lantern glowing warmly, a sky full of stars over the dark sea on the right side of the frame, nobody else in sight, no readable signs. Lighting: a warm paper-lantern glow on her face, a starry sky behind her, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700061,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred kneeling at the low table with a map, the bright window on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman kneels at a low wooden table in a Japanese-style inn room with a paper map spread on it, looking up at the viewer with an excited smile, the bright window on the right of the frame. Setting: a Japanese-style inn room in the morning with tatami mats, paper shoji screens and a low wooden table, a window with soft morning light on the right side of the frame, nobody else in sight, no readable signs. Lighting: soft morning light from the window on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700012,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred wearing a straw hat and grinning, the bright window on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman wears a straw hat and taps the coastline on the paper map with one finger in the Japanese-style inn room, grinning at the viewer, the bright window on the right of the frame. Setting: a Japanese-style inn room in the morning with tatami mats, paper shoji screens and a low wooden table, a window with soft morning light on the right side of the frame, nobody else in sight, no readable signs. Lighting: soft morning light from the window on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700022,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred seated by the train window with the straw hat on her lap, the sea outside the train window on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman sits by the window of a small Japanese local train with the straw hat on her lap, turning from the sea outside the window on the right of the frame to smile at the viewer. Setting: a window seat on a small Japanese local train in the afternoon, the sea bright outside the window on the right side of the frame, empty seats, nobody else in sight, no readable signs. Lighting: bright afternoon light from the train window on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700032,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred holding her straw hat with one hand and a skewer of dango in the other, the blue sea on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman holds her straw hat on her head with one hand against the sea breeze and a skewer of dango in the other on a Japanese seaside promenade, smiling at the viewer, the blue sea on the right of the frame. Setting: a Japanese seaside promenade in the afternoon with a low sea wall, the blue sea on the right side of the frame, a clean uncluttered path, nobody else in sight, no readable signs. Lighting: bright afternoon sunlight, the sea sparkling on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700042,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred sitting on the sea wall, looking back at the viewer, the sunset over the sea on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman sits on a low sea wall on a Japanese coast at sunset with the straw hat on her head, looking back at the viewer with a calm smile, the sun low over the sea on the right of the frame. Setting: a low sea wall on a Japanese coast at sunset, the sun low over the sea on the right side of the frame, calm water, nobody else in sight, no readable signs. Lighting: warm golden sunset light from the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700052,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred holding the straw hat against her chest, the starry sky over the sea on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a white linen blouse with short sleeves and a round neckline, a light-blue midi skirt, small pearl drop earrings. The woman stands on the wooden balcony of a Japanese seaside inn at night with the straw hat held against her chest, looking at the viewer with a soft smile, the starry sky over the sea on the right of the frame. Setting: a wooden balcony of a Japanese seaside inn at night, a paper lantern glowing warmly, a sky full of stars over the dark sea on the right side of the frame, nobody else in sight, no readable signs. Lighting: a warm paper-lantern glow on her face, a starry sky behind her, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2700062,
+      "solo": true,
+      "allow_text": false
+    }
+  ]
+}

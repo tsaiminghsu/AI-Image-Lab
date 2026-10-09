@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "story_id": "promo_01_amusement_park",
+  "number": 1,
+  "title": "Amusement park",
+  "title_zh": "一起去遊樂園",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選。",
+  "scene_count": 6,
+  "seed_base": 2000000,
+  "source": "Lines and choices are copied from ai-companion backend/app/activities (outings.AMUSEMENT_PARK, choice_lines, closing_lines); a change there is not picked up here. Shot 4's line is shortened from the app's beat text. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, dark brown leather jacket with a cream shearling collar and cuffs over a cream knit top, blue jeans, pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair, jacket, jeans and earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos."
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "園區入口，她回頭招手",
+      "beat_zh": "一進園區，她回頭對你笑、招手。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands just inside the amusement park entrance with her body turned toward the right of the frame, where the park lies, looking back over her shoulder at the viewer with a bright open smile, one hand raised in a small wave.",
+      "setting": "amusement park entrance plaza in the late afternoon, an arch of warm light bulbs overhead, a carousel and a small distant Ferris wheel on the right horizon, clean open pavement",
+      "lighting": "golden late-afternoon sunlight from the side, the warm bulbs glowing, bright and clear, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot framed from the chest up with nothing below her waist in frame, the woman on the left third facing right and seen from the front, the arch of lights framing her, the Ferris wheel far away on the right",
+        "B": "first-person point of view at eye level, medium shot framed from the chest up with nothing below her waist in frame, the woman centred and seen from the front with her body angled toward the right, the arch of lights overhead, the Ferris wheel far away on the right"
+      },
+      "overlay": {
+        "caption": "好久沒來遊樂園了！"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dark brown leather jacket with a cream shearling collar and blue jeans under the arch of warm light bulbs, looks back over her shoulder at the viewer with a bright smile and gives a small wave. Right away The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好久沒來遊樂園了！</d> Then she beckons toward the park with her raised hand and shifts a half step toward the right while her face and chest stay turned toward the viewer. Her hair moves slightly in the breeze and the bulbs glow steadily. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Cheerful amusement park ambience: distant carousel music and a light breeze, with her clear voice in front. Near the end, the rattle of a roller coaster grows closer.",
+        "duration": 5
+      },
+      "time_of_day": "late afternoon, golden",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "far: small and soft on the right horizon",
+      "enters_on": "standing at the entrance",
+      "exits_on": "beckoning toward the park, still facing the viewer",
+      "sound_bridge": "Near the end, the rattle of a roller coaster grows closer.",
+      "spoken": "好久沒來遊樂園了！"
+    },
+    {
+      "scene": 2,
+      "title": "她指著設施，等你選",
+      "beat_zh": "第一個玩什麼？她指著前面的設施，等你決定。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman has just walked in toward the right and is turning back to the viewer in mid-step, pointing with one outstretched arm toward the rides on the right of the frame, eyebrows raised in a playful questioning smile.",
+      "setting": "amusement park midway in the late afternoon, a roller coaster track and a carousel on the right, the Ferris wheel clearly visible above them, clean open pavement",
+      "lighting": "golden late-afternoon sunlight, soft shadows, bright and clear, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, her pointing arm leading to the right, the Ferris wheel above the rides behind it",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, her pointing arm leading to the right, the roller coaster track soft behind her"
+      },
+      "overlay": {
+        "question": "第一個玩什麼？",
+        "choices": [
+          "雲霄飛車",
+          "旋轉木馬",
+          "鬼屋"
+        ],
+        "picked": 0,
+        "caption": "一開始就這麼刺激？好！",
+        "pick_at": 1.5
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dark brown leather jacket with a cream shearling collar and blue jeans, keeps pointing toward the rides on the right with her hands empty and looks at the viewer with raised eyebrows and a playful questioning smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 一開始就這麼刺激？好！</d> Then she laughs with her eyes open and bright and holds a warm smile toward the viewer. The roller coaster track, the carousel and the Ferris wheel stay in place behind her. The camera holds a steady shot.",
+        "soundscape": "Amusement park ambience: the rattle of a roller coaster passing, distant happy screams and a carousel organ, with her clear voice in front. Near the end, a soft sugar-spinning hum from a food cart comes in.",
+        "duration": 5
+      },
+      "time_of_day": "late afternoon, golden",
+      "props": "none",
+      "bridge": "from the entrance to the midway: the same afternoon light, she has walked in and turned around to face the viewer",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "mid: clearly visible above the rides on the right",
+      "enters_on": "beckoning toward the park, still facing the viewer",
+      "exits_on": "smiling warmly, still facing the viewer",
+      "sound_bridge": "Near the end, a soft sugar-spinning hum from a food cart comes in.",
+      "transition_in": "cut",
+      "spoken": "一開始就這麼刺激？好！"
+    },
+    {
+      "scene": 3,
+      "title": "點心攤，她把棉花糖遞給你",
+      "beat_zh": "排了好久的隊，肚子餓了。你選了棉花糖，她遞過來讓你咬一口。",
+      "bridge": "from the midway to the stalls: still afternoon, the light turns orange",
+      "time_of_day": "sunset, low orange sun",
+      "props": "pink cotton candy on a stick (shots 3-5)",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman walks toward the right beside the viewer along a quiet lane of food stalls, half turned to the viewer, holding a pink cotton candy on a stick out toward the viewer as if offering a bite, laughing.",
+      "setting": "amusement park food lane at sunset, a small cotton candy cart with no readable text, strings of lights just switching on, the Ferris wheel rising behind the stalls on the right, clean open pavement with nobody else on it",
+      "lighting": "low orange sunset sun from the side, warm string lights starting to glow, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third walking right, the cotton candy held out toward the viewer, the stalls and the Ferris wheel behind her on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred and half turned to the viewer, the cotton candy held out in the foreground, the Ferris wheel rising on the right"
+      },
+      "overlay": {
+        "question": "吃什麼點心？",
+        "choices": [
+          "棉花糖",
+          "吉拿棒",
+          "一支冰淇淋兩個人吃"
+        ],
+        "picked": 0,
+        "caption": "好甜，你也吃一口。",
+        "pick_at": 0.7
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dark brown leather jacket with a cream shearling collar and blue jeans, holds the pink cotton candy out toward the viewer as if offering a bite. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好甜，你也吃一口。</d> Then she laughs, lowers it a little, turns her body slightly toward the right, toward the Ferris wheel, and looks back at the viewer over her shoulder with a smile. The string lights glow warmly behind her and the stalls stay in place. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Amusement park food lane ambience: distant ride music, a soft sugar-spinning hum from the cart and a light breeze, with her clear voice in front. Near the end, the low turning hum of the Ferris wheel begins.",
+        "duration": 5
+      },
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "near: rising behind the stalls on the right",
+      "enters_on": "smiling warmly, still facing the viewer",
+      "exits_on": "looking back over her shoulder at the viewer, toward the Ferris wheel",
+      "sound_bridge": "Near the end, the low turning hum of the Ferris wheel begins.",
+      "spoken": "好甜，你也吃一口。"
+    },
+    {
+      "scene": 4,
+      "title": "天快黑了，她拉你去摩天輪",
+      "beat_zh": "天快黑了，摩天輪的燈一圈一圈亮起來，她回頭等你。",
+      "bridge": "from the stalls to the wheel: she is still carrying the cotton candy, the sky goes from orange to blue",
+      "time_of_day": "dusk, sky turning blue and pink",
+      "props": "pink cotton candy on a stick (shots 3-5)",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman walks toward the right, toward a large Ferris wheel whose lights are switching on ring by ring, a pink cotton candy on a stick in one hand, looking back over her shoulder at the viewer with a smile and reaching her free hand toward the viewer, the hand held at a natural arm's length at the lower edge of the frame, small in the picture and in sharp focus with five natural fingers.",
+      "setting": "open walkway at dusk at the foot of a large Ferris wheel that fills the right side of the frame, its lights switching on, a few lit lamp posts, clean open pavement with nobody else on it",
+      "lighting": "dusk sky fading from pink to blue, the Ferris wheel lights glowing warm, soft light on her face from the front",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face turned back over her shoulder on the left third, her free hand reaching toward the viewer at the lower edge of the frame, small and in sharp focus, the glowing Ferris wheel filling the right side",
+        "B": "first-person point of view at eye level, medium close-up of her face turned back over her shoulder in the centre, her free hand reaching toward the viewer at the lower edge of the frame, small and in sharp focus, the glowing Ferris wheel soft behind her on the right"
+      },
+      "overlay": {
+        "caption": "天快黑了，摩天輪的燈一圈一圈亮起來。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dark brown leather jacket with a cream shearling collar and blue jeans, keeps walking toward the right, toward the Ferris wheel, with the cotton candy in one hand and looks back over her shoulder at the viewer with a smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 天快黑了，摩天輪亮起來了。</d> She reaches her free hand toward the viewer at arm's length, the hand staying small and sharp at the lower edge of the frame. The lights of the wheel switch on ring by ring behind her. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Dusk amusement park ambience: the low turning hum of the Ferris wheel and distant ride music, with her clear voice in front. Near the end, a cabin door clunks shut.",
+        "duration": 5
+      },
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "at its foot: the lit wheel fills the right side",
+      "enters_on": "looking back over her shoulder at the viewer, toward the Ferris wheel",
+      "exits_on": "reaching her free hand toward the viewer",
+      "sound_bridge": "Near the end, a cabin door clunks shut.",
+      "spoken": "天快黑了，摩天輪亮起來了。"
+    },
+    {
+      "scene": 5,
+      "title": "摩天輪車廂，她轉回來看你",
+      "beat_zh": "天快黑了，摩天輪上，她看完外面的燈，轉回來看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman has just sat down on the bench of a Ferris wheel cabin opposite the viewer, her free hand just lowered from reaching toward the viewer and now resting on the bench beside her, the cotton candy in her other hand, smiling at the viewer, the window on the right of the frame.",
+      "setting": "inside a small glass Ferris wheel cabin at dusk, the window on the right looking out over the park lights far below, a carousel, a lake and the city lights, with no other Ferris wheel visible outside the window",
+      "lighting": "blue dusk sky outside, warm cabin light on her face, the park lights as soft bokeh, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view from the opposite bench, medium shot from the waist up, the woman on the left third, the window and the lights below on the right",
+        "B": "first-person point of view from the opposite bench, medium shot from the waist up, the woman centred, the lit window behind her on the right"
+      },
+      "overlay": {
+        "caption": "從上面看，燈好像星星。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dark brown leather jacket with a cream shearling collar and blue jeans, settles on the cabin bench holding the cotton candy with her free hand resting on the bench beside her, and looks out of the window on the right at the park lights far below. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 從上面看，燈好像星星。</d> Then she turns to the viewer with a soft smile and holds the smile. The lights outside drift slowly downward as the cabin rises. The camera holds a steady shot.",
+        "soundscape": "Quiet Ferris wheel cabin: a low mechanical hum, a soft creak, and muffled amusement park music far below, with her clear voice in front. Near the end, a first distant firework booms.",
+        "duration": 5
+      },
+      "bridge": "from the walkway into the cabin: the same dusk, the cotton candy still in her hand",
+      "time_of_day": "blue dusk",
+      "props": "pink cotton candy on a stick (shots 3-5)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "inside: the cabin of the Ferris wheel, the park below through the window on the right",
+      "enters_on": "reaching her free hand toward the viewer",
+      "exits_on": "smiling at the viewer",
+      "sound_bridge": "Near the end, a first distant firework booms.",
+      "spoken": "從上面看，燈好像星星。"
+    },
+    {
+      "scene": 6,
+      "title": "煙火下，她轉向你",
+      "beat_zh": "閉園前放煙火，她抬頭看，再轉向你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands in the open plaza at night with her face turned toward the viewer in a happy relaxed smile, fireworks bursting in the sky behind her on the right of the frame, her hands empty.",
+      "setting": "amusement park plaza at night, large colourful fireworks in the sky on the right, the lit Ferris wheel glowing in the distance on the right, clean open pavement",
+      "lighting": "colourful firework light on her hair and shoulders, warm lamp light on her face from the front, her face clearly lit, the background readable",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, her face turned toward the viewer, soft bursts of colour and the lit Ferris wheel behind her on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, her face turned toward the viewer, fireworks as soft bursts of colour behind her on the right"
+      },
+      "overlay": {
+        "caption": "煙火好漂亮，下次還要一起來。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her dark brown leather jacket with a cream shearling collar and blue jeans, smiles at the viewer with fireworks bursting in the night sky behind her on the right. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 煙火好漂亮，下次還要一起來。</d> Then she glances up at the fireworks and turns back to the viewer with a happy relaxed smile. Firework light flickers in colour across her hair and shoulders. The camera holds a steady shot.",
+        "soundscape": "Fireworks booming and crackling overhead, with soft distant cheering and her clear voice in front.",
+        "duration": 5
+      },
+      "bridge": "from the cabin to the ground: the sky is now dark, her hands are free",
+      "time_of_day": "night",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "lit: glowing in the distance on the right",
+      "enters_on": "smiling at the viewer",
+      "exits_on": "smiling at the viewer",
+      "sound_bridge": "",
+      "spoken": "煙火好漂亮，下次還要一起來。"
+    }
+  ],
+  "continuity": "Time of day only moves forward: late afternoon (1-2) -> sunset (3) -> dusk (4) -> blue dusk (5) -> night (6). Same outfit in every shot. The pink cotton candy appears in shots 3-5 and nowhere else. The park lies to the right of the frame in every shot: she faces, walks, points and looks to the right. Each shot's first frame shows the motion the previous shot ended on (enters_on = the previous exits_on). The Ferris wheel is in every shot and only gets closer. Neighbouring shots alternate medium and close framing; both candidates of a shot use that shot's framing. Each shot's sound ends with the first sound of the next place.",
+  "continuity_check": {
+    "time_order": [
+      "late afternoon",
+      "sunset",
+      "dusk",
+      "blue dusk",
+      "night"
+    ],
+    "prop": "cotton candy",
+    "prop_shots": [
+      3,
+      4,
+      5
+    ],
+    "landmark_word": "Ferris wheel"
+  }
+}

@@ -16,7 +16,21 @@ from pathlib import Path
 
 import zimage_colab as z
 
-SPEC_KEYS = ("prompt", "negative", "aspect", "width", "height", "steps", "cfg", "seed", "solo", "allow_text", "count")
+SPEC_KEYS = (
+    "prompt",
+    "negative",
+    "aspect",
+    "width",
+    "height",
+    "steps",
+    "cfg",
+    "seed",
+    "solo",
+    "allow_text",
+    "count",
+    "batch_size",
+    "tag",
+)
 
 
 def specs_from_args(args) -> list[dict]:
@@ -45,6 +59,7 @@ def specs_from_args(args) -> list[dict]:
             "seed": args.seed,
             "solo": args.solo,
             "allow_text": args.allow_text,
+            "batch_size": args.batch_size,
             "count": args.count,
             "batch": args.batch,
         }
@@ -76,7 +91,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--steps", type=int)
     p.add_argument("--cfg", type=float)
     p.add_argument("--seed", type=int, default=-1, help="-1 = random (the chosen seed is recorded)")
-    p.add_argument("--count", type=int, default=1)
+    p.add_argument("--count", type=int, default=1, help="N separate jobs from one prompt (seed, seed+1, ...)")
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="N pictures from ONE job (one prompt, N seeds drawn by ComfyUI from the job's seed; needs the VRAM)",
+    )
     p.add_argument("--solo", action="store_true", help="exactly one person: add the no-second-person negatives")
     p.add_argument("--allow-text", action="store_true", help="the user asked for lettering in the image")
     p.add_argument("--batch", help="a label stored on every job")

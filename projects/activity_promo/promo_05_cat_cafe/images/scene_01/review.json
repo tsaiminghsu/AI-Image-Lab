@@ -1,0 +1,26 @@
+{
+  "story_id": "promo_05_cat_cafe",
+  "scene_id": "scene_01",
+  "status": "APPROVED",
+  "approved_candidate": "candidate_02.png",
+  "notes": "",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-04T23:04:22+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-04T23:04:22+08:00"
+    },
+    {
+      "status": "REGENERATE",
+      "at": "2026-10-04T23:06:04+08:00"
+    },
+    {
+      "status": "APPROVED",
+      "at": "2026-10-04T23:11:53+08:00"
+    }
+  ],
+  "decided_via": "cli"
+}

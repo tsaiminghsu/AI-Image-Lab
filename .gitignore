@@ -84,4 +84,14 @@ secrets/
 /projects/activity_promo/**/*.png
 /projects/activity_promo/**/*.mp4
 /projects/activity_promo/review_sheet.html
+/projects/activity_promo/boundary_sheet.html
 /projects/activity_promo/candidate_index.json
+
+# Asset library (training/asset_library.py): the pictures and generated listings stay local.
+/projects/asset_library/images/
+/projects/asset_library/index.html
+/projects/asset_library/index.json
+/projects/asset_library/colab/
+/projects/activity_promo/**/*_work/
+/projects/activity_promo/**/*.job.json
+/projects/activity_promo/**/_batches/

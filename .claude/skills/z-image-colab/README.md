@@ -9,6 +9,9 @@
 > **驗證狀態（2026-10-06）**：離線測試全過（不需要 GPU／Docker／Colab）。**實機驗收 A、B、C、D 四項都在 2026-10-06 跑過**，
 > 數字見下面「實機驗收」。**B 的結論是：不重裝、不重抓是真的，但從 Drive 取模型比直接下載慢約 6.6 倍**（606 秒對 92 秒），
 > 所以這個「不重抓」的賣點在時間上是負的。
+>
+> **2026-10-08／09 加了「一個 job 一次出 N 張」、`bench.py` 和素材庫，在 A100 與 L4 上實測**：`models.source: download` 實機驗證（下載
+> 92～97 秒）、A100 的速度與成本、一次幾張最省、人物年齡與一致性、素材庫 212 張，數字見下面「批次與 GPU 實測」和「素材庫」。
 
 ## 架構
 
@@ -93,6 +96,8 @@ set S=.claude\skills\z-image-colab\scripts
 | `--steps` / `--cfg` | 預設 8／2.0（turbo 的設定）。cfg 低於 1.5 會被拒絕 |
 | `--seed` | 預設 -1＝隨機，實際用的 seed 會記在 job 裡。固定 seed 配 `--count N` 會是 seed…seed+N-1 |
 | `--count` | 同一個 prompt 生 N 張（N 個 job，同一個 session） |
+| `--batch-size` | **一個 job 出 N 張**（同一個提示詞，ComfyUI 一次推論出 N 張；1～`limits.max_batch_size`）。N 張存成 `result.png`、`result_02.png`…，逐張驗證；要有 VRAM（見下面實測）。manifest 的 job 也可帶 `batch_size` |
+| `tag`（只在 manifest） | 記在 job 和 `zimage_jobs.jsonl` 裡的標籤，`bench.py` 和 `training/asset_library.py` 靠它把完成的 job 對回哪一張圖 |
 | `--solo` | 畫面裡剛好一個人時加上，補「不要第二個人」的負面詞 |
 | `--allow-text` | 使用者要求畫面上有字時才加（預設負面詞含 `text`） |
 | `--manifest batch.json` | `{"batch": "名稱", "jobs": [{"prompt": "...", "aspect": "16:9", "count": 2}, ...]}`；全部先驗證，有一筆不合格就整批不入列 |
@@ -167,6 +172,7 @@ ComfyUI 啟動時帶 `HF_HUB_OFFLINE=1`、`PIP_NO_INDEX=1`：重啟的 session �
 | `controller.heartbeat_timeout_seconds` | 300 | | `seq` 多久沒前進就視為 VM 失聯 |
 | `gpu.min_vram_gib` / `gpu.require_bf16` | 15 / true | | 不符合就 `GPU_NOT_SUPPORTED`，不開始佇列 |
 | `limits.max_pixels` | 4194304 | | 單張像素上限 |
+| `limits.max_batch_size` | 8 | | 一個 job 最多出幾張（1–16）；worker 自己的上限是 16，graph 的 batch_size 和 job 不一致會拒絕 |
 | `output.directory` | `./output/zimage` | `ZIMG_OUTPUT_DIR` | 相對於 repo 根目錄 |
 
 ## Job 狀態與錯誤
@@ -260,6 +266,71 @@ powershell -ExecutionPolicy Bypass -File check.ps1
 遠端 worker 直接在測試行程裡跑，`colab` 指令由 `FakeTransport` 把 `/content/...` 對到暫存資料夾。涵蓋：
 設定與上下限、workflow 只改參數、佇列狀態機、圖片驗證、prompt 不被改寫與安全負面詞、首次安裝／重啟不重裝／
 版本變更只重做那一項、單一 job 失敗不影響下一個、job 逾時、閒置逾時、3 個 job 同一個 session、VM 失聯會關機。
+
+## 批次與 GPU 實測（2026-10-08，A100／L4）
+
+用 `scripts/bench.py` 在真實的宣傳片分鏡提示詞上量（`plan` 寫測試 manifest、`report` 算表、`faces` 用 InsightFace 量年齡與身分）。
+全部 `ZIMG_MODEL_SOURCE=download`、720×1280、8 步、cfg 2.0。
+
+**A100（一個 session：36 個 job、51 張，692 秒，0.98 CU）**
+
+| 一次幾張 | 每張秒數 | VRAM |
+| --- | ---: | ---: |
+| 1 | 5.4（同一提示詞連跑 5.8） | 20.7 GB |
+| 2 | 4.7 | 21.3 GB |
+| 4 | 4.5 | 29.6 GB |
+| 8 | 4.3 | **39.0 GB**（A100 共 40 GB，幾乎滿） |
+| 864×1536，1／2 張 | 7.2／6.6 | 20.9／27.0 GB |
+
+- 費率 **5.3 CU/小時**（不是 H3 的 6.77）；固定成本（安裝、下載模型、啟動、閒置關機）約 0.54 CU，每張邊際約 0.0087 CU。
+- 一次多張只快 16～21%（批次 4 是合理的最佳點，批次 8 太貼近顯存上限）；要省 CU，做法是把很多張放進**同一個 session**，不是加大批次。
+- **A100 對 L4**：每張的 CU 差不多（L4 約 0.0077：18 秒 × 1.54 CU/小時；A100 批次 1 約 0.0079、批次 8 約 0.0063），L4 固定成本約 0.2。
+  所以 **200 張以內 L4 比較省，A100 只是快 3～4 倍**；批次 8 的 A100 要超過約 240 張才反過來。實際：196 張在 A100 用了 2.19 CU
+  （1549 秒，臨時儲存），差不多張數在 L4 估約 1.7 CU、要 1 小時。L4 的 22.5 GB 一次 1 張已用到 22 GB，批次 2 以上沒有測。
+- **模型直接下載（`models.source: download`）實機通過**：MODELS 階段 91.9～96.7 秒（Drive 複製是 606 秒），A100 與 L4 都是。
+
+**真人感：年齡與一致性（貓咖六個鏡頭，A100，第二輪 1.15 CU）**
+
+估計年齡是 InsightFace buffalo_l 的推測（有誤差，系統性偏高，只用來比較版本）；身分相似度是六個鏡頭兩兩的特徵餘弦相似度（0.5 以上通常同一人）。
+
+| 版本 | 人物寫法 | 風格 | 估計年齡（平均，範圍） | 身分相似度（平均，最低） |
+| --- | --- | --- | --- | --- |
+| v0 | 「adult woman aged 23」（原本） | bible | 30.5（26–37） | 0.47（0.37） |
+| v0 | 同上 | documentary | 32.8（27–44） | 0.45（0.25） |
+| **v1** | 「young adult in her early twenties, youthful fresh face, smooth clear skin」 | bible | **24.2（23–25）** | **0.51（0.46）** |
+| v1 | 同上 | documentary | 26.0（24–29） | 0.40（0.26） |
+| v2 | v1＋固定五官（臉型、眼睛、鼻子、嘴唇、痣、瀏海） | bible | 26.7（24–35） | 0.52（0.32） |
+| v3 | v2＋六個鏡頭同一個 seed | bible | 25.5（23–28） | 0.48（0.31） |
+
+- 寫「aged 23」會生出 30～45 歲的臉；改成「early twenties」措辭才到約 24 歲。固定五官與固定 seed 沒有明顯加分；documentary 風格毛孔更真但更老、
+  相似度更低。選用 **v1＋bible**（`visual_bible.json` 的 `identity_variants.v1`，`concept_colab.py export --identity v1`，並自動加
+  `outstretched arm, selfie` 負面詞擋掉鏡頭 1 常見的自拍手臂）。
+- 同一組提示詞換故事不保證同樣效果：四支新故事（L4，48 張，0.46 CU）估計年齡 27～32、相似度 0.39～0.49，日本旅行最差（最低 0.21）。
+- Z-Image 沒有參考圖，同一人的六個鏡頭只是「同一類型的人」；和 ChatGPT 生的臉不是同一批，不能混用。
+
+## 素材庫（`training/asset_library.py`，2026-10-09）
+
+用這個 skill 一次生 212 張 720×1280：人物定裝照 64、同樣 64 人在場景裡的第一人稱中景 64、空景 84（4 個年代 × 21 個場所）。
+人物是 2 性別 × 4 個成年年齡層 × 4 個年代（現代、近代復古、古代、未來）× 2，分到七個地區；全部成年，prompt 不含未成年字眼（測試釘住），
+年齡安全負面詞與 cfg 下限照舊。圖與索引在 `projects/asset_library/`（`CATALOG.md` 追蹤，圖不追蹤），`index.html` 可篩選。
+
+| 階段 | GPU | 張數 | 時間 | CU |
+| --- | --- | ---: | ---: | ---: |
+| 試跑 | L4 | 16 | 643 秒 | 0.18 |
+| 年齡驗證 | L4 | 8 | 482 秒 | 0.19 |
+| 全量 | A100（臨時儲存） | 196 | 1549 秒 | 2.19 |
+| 補生 1（20 張） | L4 | 20 | 675 秒 | 0.21 |
+| 補生 2（7 張） | L4 | 7 | 447 秒 | 0.16 |
+| 補生 3（5 張，換場所） | L4 | 5 | 396 秒 | 0.11 |
+| 合計 | | | | **3.04** |
+
+- **年齡層**：女 26／38／58／76、男 30／46／68／75（估計值，由小到大拉開）。「late thirties／mature adult face」會被畫成 55～65 歲，要寫
+  「mid-thirties, fresh smooth complexion」；五六十歲寫「early fifties」。人像定裝照與場景內同一人的相似度平均 **0.55**（64 對，最低 0.21）。
+- **空景要用眼睛複查，臉部偵測不夠**：偵測只抓到 4 張有臉，我看圖總覽實際有約 12 張有人、手、腳或半裸的人（生物發光森林一群只穿內褲的人），
+  還有可讀文字（NOEW、NSSW、TEVY、TELEPHONE）。負面詞（nude, naked, legs, feet, hand, letters…）補生後有一半修好；
+  **地鐵、網咖、電影院、電話亭、洞穴蘑菇林這類本身暗示「有人」或「有標誌」的場所，加負面詞也擋不住，要換場所**。
+- 端莊問題：肯特布洋裝畫成無肩帶、披肩露半邊胸，改成有袖高領／蓋住兩肩；1970 年代西裝領口開太低，改成扣好襯衫加領帶。
+- 最後 1 張（未來洞穴蘑菇林）仍有兩個人彎腰在看，待換場所。
 
 ## 之後可以擴充的地方（第一階段沒做）
 

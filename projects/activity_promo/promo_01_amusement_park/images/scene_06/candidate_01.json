@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_01_amusement_park",
+  "scene_id": "scene_06",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair, jacket, jeans and earrings.\nfirst-person point of view at eye level, medium close-up of her face and shoulders on the left third, her face tilted up toward the fireworks, soft bursts of colour and the lit Ferris wheel on the right. The woman stands in the open plaza at night with her face tilted up, looking up at the sky where fireworks are bursting on the right of the frame, a happy relaxed smile on her face.\nSetting: amusement park plaza at night, large colourful fireworks in the sky on the right, the lit Ferris wheel glowing in the distance on the right, clean open pavement. Lighting: colourful firework light on her hair and shoulders, warm lamp light on her face from the front, her face clearly lit, the background readable.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, her face tilted up toward the fireworks, soft bursts of colour and the lit Ferris wheel on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "56043f9e3965604d47172ac1ec2805f6b20db91e7fe28ccfa56e2c972efde5cd",
+  "created_at": "2026-10-04T14:07:00+08:00"
+}

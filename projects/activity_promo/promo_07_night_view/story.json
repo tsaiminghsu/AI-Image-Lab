@@ -1,0 +1,282 @@
+{
+  "schema": 1,
+  "story_id": "promo_07_night_view",
+  "number": 7,
+  "title": "Night view together",
+  "title_zh": "一起去看夜景",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2600000,
+  "source": "Lines are copied from ai-companion backend/app/activities (outings.py, choice_lines, closing_lines); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false). The place is a look, not a claim: Seoul is only the setting, and no shot shows readable signs. The static-subject constraint is on the shots where she only stands or sits (asked for after the earlier promos drifted).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, an ivory turtleneck knit, a camel wool skirt, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "an ivory turtleneck knit and a camel wool skirt"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the earlier promos. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "黃昏的坡道，她回頭",
+      "beat_zh": "黃昏的首爾坡道上，遠處山上的塔剛亮燈，她回頭說想看整座城市的燈。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands on a quiet hillside street in Seoul at dusk and looks at the viewer with a soft smile, the hill with its observation tower on the right of the frame.",
+      "setting": "a quiet hillside street in a Seoul neighbourhood at dusk, low tiled-roof houses, a hill with an observation tower on the right side of the frame, the first city lights coming on, nobody else in sight, no readable signs",
+      "lighting": "soft dusk light and a warm street lamp from the left, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third facing the viewer with a soft smile, the hill with its tower on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred facing the viewer with a soft smile, the hill with its tower on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred facing the viewer with a soft smile, the hill with its tower on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre facing the viewer with a soft smile, the hill with its tower on the right"
+      },
+      "overlay": {
+        "caption": "好想看整座城市的燈。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her ivory turtleneck knit and camel wool skirt, looks at the viewer with a soft smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好想看整座城市的燈。</d> Then she glances toward the hill on the right and back at the viewer. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet hillside street in the evening: a soft breeze and a distant murmur of the city, with her clear voice in front. Near the end, a soft wind rises along the hillside.",
+        "duration": 5
+      },
+      "spoken": "好想看整座城市的燈。",
+      "time_of_day": "dusk, first lights",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the city lights of Seoul, on the right",
+      "enters_on": "standing on the street at dusk, facing the viewer",
+      "exits_on": "smiling at the viewer, the hill on the right",
+      "sound_bridge": "Near the end, a soft wind rises along the hillside."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "她指向山上的觀景台",
+      "beat_zh": "你選了山上的觀景台，她指著遠處亮起來的塔，眼睛發亮。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman points toward the observation tower on the hill on the right of the frame in Seoul at dusk, her eyes bright, looking at the viewer.",
+      "setting": "a quiet hillside street in a Seoul neighbourhood at dusk, low tiled-roof houses, a hill with an observation tower on the right side of the frame, the first city lights coming on, nobody else in sight, no readable signs",
+      "lighting": "soft dusk light and a warm street lamp from the left, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third pointing toward the hill with bright eyes, the hill with its tower on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred pointing toward the hill with bright eyes, the hill with its tower on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred pointing toward the hill with bright eyes, the hill with its tower on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre pointing toward the hill with bright eyes, the hill with its tower on the right"
+      },
+      "overlay": {
+        "caption": "觀景台！可以看整座城市。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her ivory turtleneck knit and camel wool skirt, points toward the observation tower on the hill on the right, her eyes bright. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 觀景台！可以看整座城市。</d> Then she lowers her hand and smiles at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet hillside street in the evening: a soft breeze and a distant murmur of the city, with her clear voice in front. Near the end, crickets begin softly along a path.",
+        "duration": 5
+      },
+      "spoken": "觀景台！可以看整座城市。",
+      "time_of_day": "dusk, first lights",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the city lights of Seoul, on the right",
+      "enters_on": "smiling at the viewer, the hill on the right",
+      "exits_on": "smiling at the viewer after pointing at the hill",
+      "sound_bridge": "Near the end, crickets begin softly along a path.",
+      "bridge": "from the street to the choice: the same Seoul street and dusk light, she points at the tower"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "城牆邊的步道，她停下來",
+      "beat_zh": "沿著城牆邊的步道往上，城市的燈在樹縫間出現，她停下來對你說不趕時間。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands on a stone path beside an old Seoul fortress wall in the blue hour, one hand resting on the wall, smiling at the viewer, the city lights showing between the pines on the right of the frame.",
+      "setting": "a stone path beside an old Seoul fortress wall in the blue hour, small warm path lamps, the city lights showing between pine trees on the right side of the frame, nobody else in sight, no readable signs",
+      "lighting": "blue-hour sky and a warm path lamp beside her, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third standing by the fortress wall with one hand on it, the city lights between the pines on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred standing by the fortress wall with one hand on it, the city lights between the pines on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred standing by the fortress wall with one hand on it, the city lights between the pines on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre standing by the fortress wall with one hand on it, the city lights between the pines on the right"
+      },
+      "overlay": {
+        "caption": "好，散步過去，不趕時間。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her ivory turtleneck knit and camel wool skirt, stands by the old fortress wall with one hand on it and smiles at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好，散步過去，不趕時間。</d> Then she tilts her head toward the lights on the right and keeps smiling at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet hilltop at night: a soft wind and the far, low hum of the city below, with her clear voice in front. Near the end, the low hum of the city below grows a little.",
+        "duration": 5
+      },
+      "spoken": "好，散步過去，不趕時間。",
+      "time_of_day": "blue hour, lamps on",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the city lights of Seoul, on the right",
+      "enters_on": "smiling at the viewer after pointing at the hill",
+      "exits_on": "by the fortress wall, smiling at the viewer",
+      "sound_bridge": "Near the end, the low hum of the city below grows a little.",
+      "bridge": "from the street to the path: Seoul one step later, the sky now deep blue and the path lamps on"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "欄杆邊，整片燈海",
+      "beat_zh": "到了觀景台的欄杆邊，整片燈海在她身後展開，她數起還亮著的大樓。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands at the railing of an observation deck above Seoul at night, counting on her fingers with a playful look at the viewer, the sea of city lights on the right of the frame.",
+      "setting": "a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs",
+      "lighting": "a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third counting on her fingers with a playful look, the sea of city lights on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred counting on her fingers with a playful look, the sea of city lights on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred counting on her fingers with a playful look, the sea of city lights on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre counting on her fingers with a playful look, the sea of city lights on the right"
+      },
+      "overlay": {
+        "caption": "一、二、三……好多人還在加班。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her ivory turtleneck knit and camel wool skirt, counts on her fingers with a playful look at the viewer, the city lights behind her. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 一、二、三……好多人還在加班。</d> Then she laughs softly and looks at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet hilltop at night: a soft wind and the far, low hum of the city below, with her clear voice in front. Near the end, the wind brushes softly past the railing.",
+        "duration": 5
+      },
+      "spoken": "一、二、三……好多人還在加班。",
+      "time_of_day": "night, city lights",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the city lights of Seoul, on the right",
+      "enters_on": "by the fortress wall, smiling at the viewer",
+      "exits_on": "at the railing, laughing softly at the viewer",
+      "sound_bridge": "Near the end, the wind brushes softly past the railing.",
+      "bridge": "from the path to the deck: Seoul at night now, the whole city lit behind her"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "靠著欄杆，她說心裡話",
+      "beat_zh": "她靠著欄杆看著你，風吹起她的頭髮，說最近有點累，但現在好多了。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman leans on the railing of the observation deck above Seoul at night, her hair moving in the breeze, looking at the viewer with a gentle, honest smile, the sea of city lights on the right of the frame.",
+      "setting": "a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs",
+      "lighting": "a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third leaning on the railing with a gentle smile, the sea of city lights on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred leaning on the railing with a gentle smile, the sea of city lights on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred leaning on the railing with a gentle smile, the sea of city lights on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre leaning on the railing with a gentle smile, the sea of city lights on the right"
+      },
+      "overlay": {
+        "caption": "其實最近有點累，但現在好多了。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her ivory turtleneck knit and camel wool skirt, leans on the railing and looks at the viewer with a gentle, honest smile, her hair moving in the breeze. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 其實最近有點累，但現在好多了。</d> Then she lets out a small relieved breath and keeps her eyes on the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet hilltop at night: a soft wind and the far, low hum of the city below, with her clear voice in front. Near the end, a soft rustle of fabric sounds close by.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "其實最近有點累，但現在好多了。",
+      "time_of_day": "night, city lights",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the city lights of Seoul, on the right",
+      "enters_on": "at the railing, laughing softly at the viewer",
+      "exits_on": "leaning on the railing, eyes on the viewer",
+      "sound_bridge": "Near the end, a soft rustle of fabric sounds close by.",
+      "bridge": "from counting to talking: the same deck and lights, she has turned quiet"
+    },
+    {
+      "scene": 6,
+      "title": "她披著你的外套",
+      "beat_zh": "你把外套借她，她披在肩上拉緊領口，笑著說會洗乾淨再還你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman has the viewer's dark jacket draped over her shoulders on the observation deck above Seoul at night, holding its collar closed with both hands and smiling at the viewer, the sea of city lights on the right of the frame.",
+      "setting": "a hilltop observation deck above Seoul at night with a wooden railing, a wide sea of city lights and a river with lit bridges on the right side of the frame, a warm deck lamp nearby, nobody else in sight, no readable signs",
+      "lighting": "a warm deck lamp on her face, the city lights glowing behind her on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third with a dark jacket draped over her shoulders, the sea of city lights on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred with a dark jacket draped over her shoulders, the sea of city lights on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred with a dark jacket draped over her shoulders, the sea of city lights on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre with a dark jacket draped over her shoulders, the sea of city lights on the right"
+      },
+      "overlay": {
+        "caption": "外套我會洗乾淨再還你。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her ivory turtleneck knit and camel wool skirt, has a dark jacket draped over her shoulders, holding its collar closed with both hands, and smiles at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 外套我會洗乾淨再還你。</d> Then she pulls the jacket a little closer and holds a warm smile toward the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet hilltop at night: a soft wind and the far, low hum of the city below, with her clear voice in front.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "外套我會洗乾淨再還你。",
+      "time_of_day": "night, city lights",
+      "props": "jacket",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the city lights of Seoul, on the right",
+      "enters_on": "leaning on the railing, eyes on the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the talk to the jacket: the same deck and lights, the viewer's jacket now on her shoulders"
+    }
+  ],
+  "continuity": "Light only moves forward: dusk (1-2) -> blue hour (3) -> night (4-6). Same outfit in every shot: ivory turtleneck, camel skirt; the viewer's jacket is on her shoulders in shot 6 only. The city lights of Seoul are on the right in every shot and grow from a few to a whole sea. Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "dusk",
+      "blue hour",
+      "night"
+    ],
+    "prop": "jacket",
+    "prop_shots": [
+      6
+    ],
+    "landmark_word": "Seoul"
+  }
+}

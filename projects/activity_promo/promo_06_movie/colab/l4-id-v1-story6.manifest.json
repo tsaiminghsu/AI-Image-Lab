@@ -1,0 +1,137 @@
+{
+  "batch": "l4-id-v1-story6",
+  "jobs": [
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third holding the popcorn bucket at the bottom of the frame, the glowing popcorn stand on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman holds a bucket of popcorn at the bottom of the frame and smiles at the viewer, the glowing popcorn stand on the right of the frame in a cinema lobby. Setting: a warm cinema lobby in the evening with a glowing popcorn stand on the right side of the frame, soft golden lights, a clean uncluttered floor, nobody else in sight. Lighting: warm golden lobby light with the popcorn stand glowing on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500011,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third seated, patting the seat beside her, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman sits in a red velvet double seat in a cinema auditorium with the house lights still on, patting the seat beside her with one hand, the popcorn bucket in her lap, the soft screen glow on the right of the frame. Setting: a cinema auditorium with the house lights still on, rows of red velvet seats, the screen out of frame on the right, no other people. Lighting: warm house lights and a soft glow from the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500021,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third watching the screen to the right with wide eyes, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman watches the film in the dim cinema auditorium, her eyes fixed on the screen out of frame on the right, the soft blue-white glow lighting her face, the popcorn bucket in her lap at the bottom of the frame. Setting: a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people. Lighting: a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500031,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third holding the popcorn bucket out toward the viewer, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman gasps softly at the film with the popcorn bucket in her lap, then turns and holds the popcorn out toward the viewer, the soft blue-white glow from the screen on the right lighting her face. Setting: a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people. Lighting: a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500041,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third laughing quietly, a hand on the popcorn bucket, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman turns her head toward the viewer and laughs quietly, her hand resting on the popcorn bucket at the bottom of the frame, the soft blue-white glow from the screen on the right lighting her face. Setting: a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people. Lighting: a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500051,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third stretching with a content smile, the soft glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman stretches her arms up in the lit cinema auditorium after the film and smiles at the viewer, the seats behind her softly lit, a soft glow on the right of the frame. Setting: a cinema auditorium after the film with the house lights up, rows of red velvet seats, a soft glow from the right out of frame, no other people. Lighting: warm house lights, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500061,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred holding the popcorn bucket at the bottom of the frame, the glowing popcorn stand on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman holds a bucket of popcorn at the bottom of the frame and smiles at the viewer, the glowing popcorn stand on the right of the frame in a cinema lobby. Setting: a warm cinema lobby in the evening with a glowing popcorn stand on the right side of the frame, soft golden lights, a clean uncluttered floor, nobody else in sight. Lighting: warm golden lobby light with the popcorn stand glowing on the right, her face fully lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500012,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred seated, patting the seat beside her, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman sits in a red velvet double seat in a cinema auditorium with the house lights still on, patting the seat beside her with one hand, the popcorn bucket in her lap, the soft screen glow on the right of the frame. Setting: a cinema auditorium with the house lights still on, rows of red velvet seats, the screen out of frame on the right, no other people. Lighting: warm house lights and a soft glow from the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500022,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred watching the screen to the right with wide eyes, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman watches the film in the dim cinema auditorium, her eyes fixed on the screen out of frame on the right, the soft blue-white glow lighting her face, the popcorn bucket in her lap at the bottom of the frame. Setting: a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people. Lighting: a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500032,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred holding the popcorn bucket out toward the viewer, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman gasps softly at the film with the popcorn bucket in her lap, then turns and holds the popcorn out toward the viewer, the soft blue-white glow from the screen on the right lighting her face. Setting: a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people. Lighting: a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500042,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred laughing quietly, a hand on the popcorn bucket, the soft screen glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman turns her head toward the viewer and laughs quietly, her hand resting on the popcorn bucket at the bottom of the frame, the soft blue-white glow from the screen on the right lighting her face. Setting: a dim cinema auditorium with rows of red velvet seats softly dark behind her, a steady soft blue-white glow from the screen out of frame on the right, no other people. Lighting: a steady soft blue-white glow from the screen out of frame on the right lighting her face, the seats behind softly dark, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500052,
+      "solo": true,
+      "allow_text": false
+    },
+    {
+      "prompt": "first-person point of view at eye level, medium shot from the waist up, the woman centred stretching with a content smile, the soft glow on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a dusty-rose knit sweater with a round neckline, blue jeans, small pearl drop earrings. The woman stretches her arms up in the lit cinema auditorium after the film and smiles at the viewer, the seats behind her softly lit, a soft glow on the right of the frame. Setting: a cinema auditorium after the film with the house lights up, rows of red velvet seats, a soft glow from the right out of frame, no other people. Lighting: warm house lights, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "negative": "3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "width": 720,
+      "height": 1280,
+      "steps": 8,
+      "cfg": 2.0,
+      "seed": 2500062,
+      "solo": true,
+      "allow_text": false
+    }
+  ]
+}

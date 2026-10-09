@@ -415,3 +415,23 @@ def test_interactive_command_runs_the_cli_under_a_pseudo_terminal():
     assert cmd[:3] == ["docker", "run", "-i"] and "-t" not in cmd
     assert cmd[cmd.index("--entrypoint") + 1] == "script"
     assert "colab --auth=oauth2 drivemount --session zimg-x /content/drive" in cmd
+
+
+def test_a_batch_job_downloads_and_validates_every_picture(tmp_path, comfy):
+    config = make_config(tmp_path)
+    store, jobs = queue_jobs(config, 1, batch_size=3)
+    transport = FakeTransport(tmp_path / "vm")
+    summary = controller(config, transport, InProcessExec(transport, comfy, Installers(), tmp_path)).run()
+    assert summary["reason"] == "worker_idle_timeout"
+    done = store.get(jobs[0]["job_id"])
+    assert done["status"] == z.COMPLETED, done.get("error")
+    out = z.output_root(config) / jobs[0]["job_id"]
+    assert sorted(p.name for p in out.glob("result*.png")) == ["result.png", "result_02.png", "result_03.png"]
+    assert [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in done["outputs"]] == [
+        "result.png",
+        "result_02.png",
+        "result_03.png",
+    ]
+    assert done["output"] == done["outputs"][0]
+    ledger = json.loads((z.output_root(config) / "zimage_jobs.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert ledger["batch_size"] == 3

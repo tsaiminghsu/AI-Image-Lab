@@ -1,0 +1,22 @@
+{
+  "story_id": "promo_02_cooking",
+  "scene_id": "scene_06",
+  "status": "APPROVED",
+  "approved_candidate": "candidate_02.png",
+  "notes": "new version approved by the user (2026-10-05): high-neck top; ChatGPT-made still, H3 use agreed",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-04T18:25:43+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-04T18:25:43+08:00"
+    },
+    {
+      "status": "APPROVED",
+      "at": "2026-10-04T18:46:45+08:00"
+    }
+  ],
+  "decided_via": "cli"
+}

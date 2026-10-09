@@ -1,0 +1,294 @@
+{
+  "schema": 1,
+  "story_id": "promo_09_picnic",
+  "number": 9,
+  "title": "A picnic together",
+  "title_zh": "一起去野餐",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2800000,
+  "source": "Lines are copied from ai-companion backend/app/activities (outings.py, choice_lines, closing_lines); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false). The place is a look, not a claim: Paris is only the setting, and no shot shows readable signs. The static-subject constraint is on the shots where she only stands or sits (asked for after the earlier promos drifted).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, a navy-and-white striped long-sleeved top with a round neckline, beige trousers, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a navy-and-white striped long-sleeved top with a round neckline that covers the collarbone, and beige trousers"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the earlier promos. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "公園草地，她抱著野餐墊",
+      "beat_zh": "巴黎公園的草地上，她抱著捲起來的野餐墊回頭，說天氣好好。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands on the lawn of a Parisian park holding a rolled checked picnic blanket against her chest, smiling at the viewer, the pond on the right of the frame.",
+      "setting": "a wide lawn in a Parisian park at midday with pale gravel paths and clipped trees, a pond on the right side of the frame, cream stone buildings far behind the trees, nobody else in sight, no readable signs",
+      "lighting": "bright midday sunlight with soft shade from the trees, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third holding a rolled picnic blanket against her chest, the pond on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred holding a rolled picnic blanket against her chest, the pond on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred holding a rolled picnic blanket against her chest, the pond on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre holding a rolled picnic blanket against her chest, the pond on the right"
+      },
+      "overlay": {
+        "caption": "天氣好好，很適合野餐。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her navy-and-white striped long-sleeved top and beige trousers, holds a rolled checked picnic blanket against her chest and smiles at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 天氣好好，很適合野餐。</d> Then she looks up at the sky for a moment and back at the viewer. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet city park: soft birdsong and a gentle breeze through the leaves, with her clear voice in front. Near the end, water laps softly at the edge of a pond.",
+        "duration": 5
+      },
+      "spoken": "天氣好好，很適合野餐。",
+      "time_of_day": "midday, bright",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the pond of the Parisian park, on the right",
+      "enters_on": "standing on the lawn, facing the viewer",
+      "exits_on": "smiling at the viewer, the blanket in her arms",
+      "sound_bridge": "Near the end, water laps softly at the edge of a pond."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "池邊，她鋪好野餐墊",
+      "beat_zh": "你選了水邊，她在池邊鋪好野餐墊坐下，野餐籃放在旁邊，抬頭看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits on a checked picnic blanket at the edge of the pond in a Parisian park with a wicker picnic basket beside her, looking up at the viewer with a relaxed smile, the water on the right of the frame.",
+      "setting": "the grassy edge of a pond in a Parisian park, the calm water on the right side of the frame, clipped trees and cream stone buildings far behind, a checked picnic blanket on the grass, nobody else in sight, no readable signs",
+      "lighting": "bright midday sunlight with a soft sparkle off the water on the right, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third seated on the picnic blanket with a wicker basket beside her, the pond on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred seated on the picnic blanket with a wicker basket beside her, the pond on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred seated on the picnic blanket with a wicker basket beside her, the pond on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre seated on the picnic blanket with a wicker basket beside her, the pond on the right"
+      },
+      "overlay": {
+        "caption": "湖邊好，風吹過來好舒服。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her navy-and-white striped long-sleeved top and beige trousers, sits on the checked picnic blanket with a wicker picnic basket beside her and looks up at the viewer with a relaxed smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 湖邊好，風吹過來好舒服。</d> Then she closes her eyes in the breeze for a moment and smiles at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet city park: soft birdsong and a gentle breeze through the leaves, with her clear voice in front. Near the end, the lid of a wicker basket creaks softly.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "湖邊好，風吹過來好舒服。",
+      "time_of_day": "midday, bright",
+      "props": "basket",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the pond of the Parisian park, on the right",
+      "enters_on": "smiling at the viewer, the blanket in her arms",
+      "exits_on": "seated on the blanket, smiling at the viewer",
+      "sound_bridge": "Near the end, the lid of a wicker basket creaks softly.",
+      "bridge": "from the lawn to the water: the same Parisian park and midday light, the blanket now spread by the pond"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "她打開野餐籃",
+      "beat_zh": "你說是自己做的，她打開野餐籃，看到三明治，驚喜地看著你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds the wicker picnic basket open on her lap on the picnic blanket in a Parisian park, baguette sandwiches inside, looking at the viewer with delighted surprise, the pond on the right of the frame.",
+      "setting": "the grassy edge of a pond in a Parisian park, the calm water on the right side of the frame, clipped trees and cream stone buildings far behind, a checked picnic blanket on the grass, nobody else in sight, no readable signs",
+      "lighting": "warm afternoon sunlight with soft shade, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third holding the open picnic basket on her lap, the pond on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred holding the open picnic basket on her lap, the pond on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred holding the open picnic basket on her lap, the pond on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre holding the open picnic basket on her lap, the pond on the right"
+      },
+      "overlay": {
+        "caption": "你親手做的？我要慢慢吃。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her navy-and-white striped long-sleeved top and beige trousers, holds the wicker picnic basket open on her lap, baguette sandwiches inside, and looks at the viewer with delighted surprise. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 你親手做的？我要慢慢吃。</d> Then she looks down into the basket and back at the viewer with a happy smile. The camera holds a steady shot.",
+        "soundscape": "Quiet city park: soft birdsong and a gentle breeze through the leaves, with her clear voice in front. Near the end, the breeze moves softly through the grass.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "你親手做的？我要慢慢吃。",
+      "time_of_day": "afternoon, warm",
+      "props": "basket",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the pond of the Parisian park, on the right",
+      "enters_on": "seated on the blanket, smiling at the viewer",
+      "exits_on": "holding the open basket, smiling at the viewer",
+      "sound_bridge": "Near the end, the breeze moves softly through the grass.",
+      "bridge": "from sitting down to the food: the same pond in the Parisian park, the light one step later"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "躺著看雲",
+      "beat_zh": "吃飽了，你們躺在野餐墊上，她指著天空，再轉頭看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman lies on the picnic blanket in a Parisian park, framed from the shoulders up, one arm raised to point at the sky, her face turned toward the viewer with a playful smile, the wicker picnic basket at the edge of the blanket and the pond on the right of the frame.",
+      "setting": "the grassy edge of a pond in a Parisian park, the calm water on the right side of the frame, clipped trees and cream stone buildings far behind, a checked picnic blanket on the grass, nobody else in sight, no readable signs",
+      "lighting": "warm afternoon sunlight from above, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third lying on the blanket, pointing up at the sky, the pond on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred lying on the blanket, pointing up at the sky, the pond on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred lying on the blanket, pointing up at the sky, the pond on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre lying on the blanket, pointing up at the sky, the pond on the right"
+      },
+      "overlay": {
+        "caption": "那朵雲好像一隻貓。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her navy-and-white striped long-sleeved top and beige trousers, lies on the picnic blanket, the wicker basket at its edge, one arm raised to point at the sky, her face turned toward the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 那朵雲好像一隻貓。</d> Then she laughs softly and keeps looking at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet city park: soft birdsong and a gentle breeze through the leaves, with her clear voice in front. Near the end, evening birdsong begins.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "那朵雲好像一隻貓。",
+      "time_of_day": "afternoon, warm",
+      "props": "basket",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the pond of the Parisian park, on the right",
+      "enters_on": "holding the open basket, smiling at the viewer",
+      "exits_on": "lying on the blanket, laughing softly at the viewer",
+      "sound_bridge": "Near the end, evening birdsong begins.",
+      "bridge": "from the food to the clouds: the same blanket by the pond, she is lying back now"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "金色的草地，她抱著膝蓋",
+      "beat_zh": "草地變成金色，她坐起來抱著膝蓋，說再待一下。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits on the picnic blanket in a Parisian park hugging her knees in the golden light, smiling at the viewer, the pond glowing on the right of the frame.",
+      "setting": "the grassy edge of a pond in a Parisian park, the calm water on the right side of the frame, clipped trees and cream stone buildings far behind, a checked picnic blanket on the grass, nobody else in sight, no readable signs",
+      "lighting": "low golden-hour sunlight from the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third sitting with her arms around her knees, the pond on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred sitting with her arms around her knees, the pond on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred sitting with her arms around her knees, the pond on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre sitting with her arms around her knees, the pond on the right"
+      },
+      "overlay": {
+        "caption": "好，再待一下。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her navy-and-white striped long-sleeved top and beige trousers, sits on the picnic blanket hugging her knees in the golden light and smiles at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 好，再待一下。</d> Then she rests her chin on her knees and keeps her eyes on the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet city park: soft birdsong and a gentle breeze through the leaves, with her clear voice in front. Near the end, the park grows quiet.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "好，再待一下。",
+      "time_of_day": "golden hour, low sun",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the pond of the Parisian park, on the right",
+      "enters_on": "lying on the blanket, laughing softly at the viewer",
+      "exits_on": "hugging her knees, eyes on the viewer",
+      "sound_bridge": "Near the end, the park grows quiet.",
+      "bridge": "from the clouds to the gold: the same blanket by the pond, the sun now low"
+    },
+    {
+      "scene": 6,
+      "title": "夕陽在水面上",
+      "beat_zh": "夕陽落在池面上，她看了一會兒，轉過來對你笑。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits by the pond in a Parisian park at sunset, turned from the glowing water on the right of the frame to smile softly at the viewer.",
+      "setting": "the grassy edge of a pond in a Parisian park, the calm water on the right side of the frame, clipped trees and cream stone buildings far behind, a checked picnic blanket on the grass, nobody else in sight, no readable signs",
+      "lighting": "warm orange sunset light from the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third turned from the water to smile at the viewer, the sunset on the pond on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred turned from the water to smile at the viewer, the sunset on the pond on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred turned from the water to smile at the viewer, the sunset on the pond on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre turned from the water to smile at the viewer, the sunset on the pond on the right"
+      },
+      "overlay": {
+        "caption": "最後那片夕陽，好美。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her navy-and-white striped long-sleeved top and beige trousers, looks at the sunset on the water on the right, then turns to the viewer with a soft smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 最後那片夕陽，好美。</d> Then she holds a warm smile toward the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet city park: soft birdsong and a gentle breeze through the leaves, with her clear voice in front.",
+        "constraints": [
+          "static-subject"
+        ],
+        "duration": 5
+      },
+      "spoken": "最後那片夕陽，好美。",
+      "time_of_day": "sunset, orange",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the pond of the Parisian park, on the right",
+      "enters_on": "hugging her knees, eyes on the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the gold to the sunset: the same pond in the Parisian park, the sky now orange"
+    }
+  ],
+  "continuity": "Light only moves forward: midday (1-2) -> afternoon (3-4) -> golden hour (5) -> sunset (6). Same outfit in every shot: navy-and-white striped top, beige trousers. The picnic basket is in shots 2-4. The pond is on the right in every shot. Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "midday",
+      "afternoon",
+      "golden hour",
+      "sunset"
+    ],
+    "prop": "basket",
+    "prop_shots": [
+      2,
+      3,
+      4
+    ],
+    "landmark_word": "Parisian"
+  }
+}

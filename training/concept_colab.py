@@ -15,9 +15,11 @@ scene's candidates should not be mixed up by seed across backends.
 """
 
 import argparse
+import copy
 import glob
 import json
 import os
+import re
 import shutil
 
 import concept_stills as cs
@@ -28,17 +30,55 @@ BACKEND = "colab"
 COLAB_MODEL = "z_image_turbo (official bf16, Colab)"
 
 
-def job_spec(bible, story, scene_number, letter):
+def style_parts(bible, style=None):
+    """(positive style text, extra negative terms) of a named look. None / "bible" is the project's own style; any
+    other name comes from the bible's `style_variants` (a project can add looks, e.g. a more documentary one)."""
+    if style in (None, "bible"):
+        return bible["style_positive"], cs.style_negative(bible)
+    variants = bible.get("style_variants", {})
+    if style not in variants:
+        known = ", ".join(["bible", *variants]) or "bible"
+        raise gc.UsageError(f"沒有 {style!r} 這個風格；這個專案有：{known}")
+    v = variants[style]
+    return v["positive"], f"{cs.style_negative(bible)}, {v['negative_extra']}"
+
+
+def with_identity(bible, story, identity=None):
+    """(story, extra negative terms) for a named way of describing the woman. The bible's `identity_variants` holds
+    them: the description text with the outfit left as {outfit} (read from the story's own description, so each
+    promo keeps its clothes) and the negative terms that go with it. Measured 2026-10-08: "aged 23" gives faces that
+    read 30-45, "a young adult in her early twenties..." gives about 24 and a steadier face across six shots."""
+    if identity in (None, ""):
+        return story, ""
+    variants = bible.get("identity_variants", {})
+    if identity not in variants:
+        raise gc.UsageError(f"沒有 {identity!r} 這個人物寫法；這個專案有：{', '.join(variants) or '（沒有）'}")
+    v = variants[identity]
+    out = cs.Story(copy.deepcopy(story.data), story.dir)
+    for key, character in out.data["characters"].items():
+        found = re.search(r"athletic build, (.*?), small pearl", character["description"])
+        if not found:
+            raise gc.UsageError(
+                f"{story.id}: {key} 的 description 找不到衣服（要有 'athletic build, <衣服>, small pearl'）"
+            )
+        character["description"] = v["description"].format(outfit=found.group(1))
+    return out, v.get("negative_extra", "")
+
+
+def job_spec(bible, story, scene_number, letter, style=None, identity=None):
     """One manifest entry. The skill adds the safety negatives itself, so this passes the scene text plus style and
     only the extra negative terms - never the already-assembled negative (it would be assembled twice)."""
+    story, identity_negative = with_identity(bible, story, identity)
     scene = story.scene(scene_number)
     composition = cs.composition_for(bible, scene, letter)
     text = cs.scene_prompt_text(story, scene, composition)
-    extra = cs.style_negative(bible)
+    positive_style, extra = style_parts(bible, style)
+    if identity_negative:
+        extra = f"{extra}, {identity_negative}"
     if scene.get("negative_extra"):
         extra = f"{extra}, {scene['negative_extra']}"
     return {
-        "prompt": f"{text}, {bible['style_positive']}",
+        "prompt": f"{text}, {positive_style}",
         "negative": extra,
         "width": bible["canvas"]["width"],
         "height": bible["canvas"]["height"],
@@ -50,7 +90,17 @@ def job_spec(bible, story, scene_number, letter):
     }
 
 
-def export(bible, story, *, letters=cs.FIRST_ROUND[:1], scene_numbers=None, batch=None, directory=None):
+def export(
+    bible,
+    story,
+    *,
+    letters=cs.FIRST_ROUND[:1],
+    scene_numbers=None,
+    batch=None,
+    directory=None,
+    style=None,
+    identity=None,
+):
     """Write the skill's manifest and a map from each seed back to (scene, candidate). Only images that would be
     rendered locally are included (finished ones, and approved scenes, are skipped)."""
     todo = cs.pending([story], letters, scene_numbers=scene_numbers)
@@ -60,12 +110,19 @@ def export(bible, story, *, letters=cs.FIRST_ROUND[:1], scene_numbers=None, batc
 
     batch = batch or f"{story.id}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
     directory = directory or os.path.join(story.dir, "colab")
-    entries = [(n, letter, job_spec(bible, story, n, letter)) for _, n, letter in todo]
+    entries = [(n, letter, job_spec(bible, story, n, letter, style, identity)) for _, n, letter in todo]
     manifest = os.path.join(directory, f"{batch}.manifest.json")
     cs._write_json(manifest, {"batch": batch, "jobs": [spec for _, _, spec in entries]})
-    cs._write_json(os.path.join(directory, f"{batch}.map.json"), {
-        "batch": batch, "story_id": story.id,
-        "images": [{"scene": n, "letter": letter, "seed": spec["seed"]} for n, letter, spec in entries]})
+    cs._write_json(
+        os.path.join(directory, f"{batch}.map.json"),
+        {
+            "batch": batch,
+            "story_id": story.id,
+            "style": style or "bible",
+            "identity": identity,
+            "images": [{"scene": n, "letter": letter, "seed": spec["seed"]} for n, letter, spec in entries],
+        },
+    )
     return {"batch": batch, "manifest": manifest, "images": len(entries)}
 
 
@@ -108,17 +165,33 @@ def import_batch(bible, story, batch, *, jobs_dir=ZIMAGE_JOBS_DIR, directory=Non
         os.makedirs(os.path.dirname(paths["png"]), exist_ok=True)
         shutil.copy2(job["output"], paths["png"])
         req = cs.build_request(bible, story, n, letter)
-        meta = {k: req[k] for k in ("story_id", "scene_id", "candidate_id", "seed", "width", "height", "steps",
-                                    "workflow")}
-        meta.update({
-            "prompt": job["prompt"], "negative_prompt": job["negative_prompt"], "model": COLAB_MODEL,
-            "backend": BACKEND, "cfg": job["cfg"], "composition": req["composition"], "candidate_letter": letter,
-            "sampler": job.get("sampler"), "scheduler": job.get("scheduler"), "shift": job.get("shift"),
-            "workflow_graph": os.path.basename(paths["workflow"]), "image_sha256": cs._sha256(paths["png"]),
-            "generation_seconds": job.get("generation_seconds"), "gpu": job.get("gpu"),
-            "vram_peak_mib": job.get("vram_peak_mib"), "colab_job_id": job["job_id"], "colab_batch": batch,
-            "created_at": job.get("completed_at") or cs._now(),
-        })
+        meta = {
+            k: req[k] for k in ("story_id", "scene_id", "candidate_id", "seed", "width", "height", "steps", "workflow")
+        }
+        meta.update(
+            {
+                "prompt": job["prompt"],
+                "negative_prompt": job["negative_prompt"],
+                "model": COLAB_MODEL,
+                "backend": BACKEND,
+                "style": mapping.get("style", "bible"),
+                "identity": mapping.get("identity"),
+                "cfg": job["cfg"],
+                "composition": req["composition"],
+                "candidate_letter": letter,
+                "sampler": job.get("sampler"),
+                "scheduler": job.get("scheduler"),
+                "shift": job.get("shift"),
+                "workflow_graph": os.path.basename(paths["workflow"]),
+                "image_sha256": cs._sha256(paths["png"]),
+                "generation_seconds": job.get("generation_seconds"),
+                "gpu": job.get("gpu"),
+                "vram_peak_mib": job.get("vram_peak_mib"),
+                "colab_job_id": job["job_id"],
+                "colab_batch": batch,
+                "created_at": job.get("completed_at") or cs._now(),
+            }
+        )
         cs._write_json(paths["meta"], meta)
         if job.get("graph"):
             cs._write_json(paths["workflow"], job["graph"])
@@ -136,6 +209,8 @@ def main(argv=None):
     e.add_argument("--scene")
     e.add_argument("--candidates", default="A")
     e.add_argument("--batch")
+    e.add_argument("--style", help="a named look from visual_bible.json style_variants (default: the project's own)")
+    e.add_argument("--identity", help="a named description of the woman from visual_bible.json identity_variants")
     i = sub.add_parser("import", help="file the finished jobs of a batch into the story's images/ folders")
     i.add_argument("--story", required=True)
     i.add_argument("--batch", required=True)
@@ -146,11 +221,21 @@ def main(argv=None):
     cs.validate_story(story)
     if args.cmd == "export":
         letters = cs._parse_letters(args.candidates)
-        out = export(bible, story, letters=letters, scene_numbers=cs._parse_scenes(args.scene), batch=args.batch)
+        out = export(
+            bible,
+            story,
+            letters=letters,
+            scene_numbers=cs._parse_scenes(args.scene),
+            batch=args.batch,
+            style=args.style,
+            identity=args.identity,
+        )
         print(json.dumps(out, ensure_ascii=False))
-        print("下一步（submit 不花錢，worker.py up 會花 Colab CU）：\n"
-              f"  ComfyUI\\.venv\\Scripts\\python.exe .claude\\skills\\z-image-colab\\scripts\\submit.py --manifest {out['manifest']}\n"
-              "  ComfyUI\\.venv\\Scripts\\python.exe .claude\\skills\\z-image-colab\\scripts\\worker.py up")
+        print(
+            "下一步（submit 不花錢，worker.py up 會花 Colab CU）：\n"
+            f"  ComfyUI\\.venv\\Scripts\\python.exe .claude\\skills\\z-image-colab\\scripts\\submit.py --manifest {out['manifest']}\n"
+            "  ComfyUI\\.venv\\Scripts\\python.exe .claude\\skills\\z-image-colab\\scripts\\worker.py up"
+        )
     else:
         report = import_batch(bible, story, args.batch, force=args.force)
         cs.build_index(cs.load_stories(args.root), args.root)

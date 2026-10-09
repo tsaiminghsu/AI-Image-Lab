@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_01_amusement_park",
+  "scene_id": "scene_03",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair, jacket, jeans and earrings.\nfirst-person point of view at eye level, medium shot from the waist up, the woman on the left third walking right, the cotton candy held out toward the viewer, the stalls and the Ferris wheel behind her on the right. The woman walks toward the right beside the viewer along a quiet lane of food stalls, half turned to the viewer, holding a pink cotton candy on a stick out toward the viewer as if offering a bite, laughing.\nSetting: amusement park food lane at sunset, a small cotton candy cart with no readable text, strings of lights just switching on, the Ferris wheel rising behind the stalls on the right, clean open pavement with nobody else on it. Lighting: low orange sunset sun from the side, warm string lights starting to glow, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third walking right, the cotton candy held out toward the viewer, the stalls and the Ferris wheel behind her on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "25f85432b5993fa2d5eb996eb5aaa7aa09945458071d1716a50bf962db337569",
+  "created_at": "2026-10-04T14:07:00+08:00"
+}

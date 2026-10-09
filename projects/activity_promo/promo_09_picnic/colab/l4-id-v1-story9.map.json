@@ -1,0 +1,68 @@
+{
+  "batch": "l4-id-v1-story9",
+  "story_id": "promo_09_picnic",
+  "style": "bible",
+  "identity": "v1",
+  "images": [
+    {
+      "scene": 1,
+      "letter": "A",
+      "seed": 2800011
+    },
+    {
+      "scene": 2,
+      "letter": "A",
+      "seed": 2800021
+    },
+    {
+      "scene": 3,
+      "letter": "A",
+      "seed": 2800031
+    },
+    {
+      "scene": 4,
+      "letter": "A",
+      "seed": 2800041
+    },
+    {
+      "scene": 5,
+      "letter": "A",
+      "seed": 2800051
+    },
+    {
+      "scene": 6,
+      "letter": "A",
+      "seed": 2800061
+    },
+    {
+      "scene": 1,
+      "letter": "B",
+      "seed": 2800012
+    },
+    {
+      "scene": 2,
+      "letter": "B",
+      "seed": 2800022
+    },
+    {
+      "scene": 3,
+      "letter": "B",
+      "seed": 2800032
+    },
+    {
+      "scene": 4,
+      "letter": "B",
+      "seed": 2800042
+    },
+    {
+      "scene": 5,
+      "letter": "B",
+      "seed": 2800052
+    },
+    {
+      "scene": 6,
+      "letter": "B",
+      "seed": 2800062
+    }
+  ]
+}

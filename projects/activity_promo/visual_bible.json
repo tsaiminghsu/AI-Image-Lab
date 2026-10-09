@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "stage": "keyframes for 20-25 s social promos of ai-companion outings: Z-Image stills -> human review -> H3 clips -> training/activity_promo.py",
+  "model": "z_image_turbo",
+  "workflow": "training/workflow_template_txt2img_zimage.json",
+  "canvas": {
+    "aspect": "9:16",
+    "width": 720,
+    "height": 1280,
+    "note": "Same vertical frame as projects/ai_short_drama. H3 keeps the image's aspect ratio; the cut is scaled to 1080x1920."
+  },
+  "sampler": {
+    "steps": 8,
+    "cfg": 2.0
+  },
+  "style_positive": "candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+  "style_negative_extra": "anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark",
+  "style_note": "First-person point of view: the camera is the viewer's eyes and the character is the only person in frame (the app's keepsake rule: the character alone, never the user). Backgrounds stay uncrowded - passers-by are what H3 changes mid-shot.",
+  "lighting_rule": "The face is always clearly lit. A night shot names its light source (lamps, cabin light, fireworks) and keeps a readable background.",
+  "composition_rule": "Each shot has one framing (story.json `framing`: medium = waist up, close = face and shoulders) and neighbouring shots alternate, so a cut never joins two frames of the same size. Candidates A and B are two takes of that framing (subject on the left third / centred). Candidates C / D only after a REGENERATE decision.",
+  "extra_compositions": {
+    "C": "first-person point of view, slightly low camera angle, the woman facing right, the story's landmark on the right",
+    "D": "first-person point of view at eye level from a little further to the left, the woman facing right, clean uncluttered background"
+  },
+  "seed_rule": "seed = story.seed_base + scene * 10 + candidate_number (A=1, B=2, C=3, D=4).",
+  "review_checklist": [
+    "KNOCK-OUT: not the same face as the reference shot",
+    "KNOCK-OUT: a second person in frame",
+    "KNOCK-OUT: wrong outfit, or the story's prop missing / present in the wrong shots (story.json props)",
+    "KNOCK-OUT: wrong time of day for this shot",
+    "KNOCK-OUT: broken hands or earrings, painted text or signage",
+    "then choose per boundary, not per image: see boundary_sheet.html"
+  ],
+  "video_potential_questions": [
+    "Will the face hold when she turns her head?",
+    "Are the hands a likely problem?",
+    "Is anything in the background likely to morph (rides, lights, people)?",
+    "Is the action a single small movement that fits 5 seconds?"
+  ],
+  "age_rule": "The promo character is an adult of 23 or older (generate_character.CHARACTERS). The tool never drops the project's age-safety negatives or the cfg 1.5 floor.",
+  "boundary_checklist": [
+    "direction: she faces, walks and looks to the right on both sides of the cut",
+    "size and place: her face is not the same size on both sides (medium vs close), but sits in a similar part of the frame",
+    "light: one step later than the shot before, never two (compare the brightness and warmth numbers)",
+    "the 50% blend - what the viewer sees mid-dissolve - reads as one picture turning into the next, not as two faces",
+    "after the clips exist: judge again on last frame vs first frame, because H3 moves away from the still"
+  ],
+  "style_variants": {
+    "documentary": {
+      "positive": "documentary-style candid photograph on a full-frame camera, 50mm f/2 lens, natural available light, visible skin pores and fine flyaway hairs, subtle film grain, true-to-life colours, unretouched, realistic human proportions",
+      "negative_extra": "airbrushed skin, plastic skin, doll face, over-smoothed, beauty filter, CGI, 3D render, uncanny"
+    },
+    "phone": {
+      "positive": "casual smartphone photo, slightly imperfect framing, natural skin with pores and small blemishes, mild sensor noise, daylight white balance, unretouched, realistic human proportions",
+      "negative_extra": "airbrushed skin, plastic skin, doll face, over-smoothed, beauty filter, CGI, 3D render, uncanny"
+    }
+  },
+  "identity_variants": {
+    "v1": {
+      "description": "a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, {outfit}, small pearl drop earrings",
+      "negative_extra": "outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera"
+    }
+  }
+}

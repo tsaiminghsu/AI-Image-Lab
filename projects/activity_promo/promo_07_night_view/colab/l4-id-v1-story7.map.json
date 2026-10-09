@@ -1,0 +1,68 @@
+{
+  "batch": "l4-id-v1-story7",
+  "story_id": "promo_07_night_view",
+  "style": "bible",
+  "identity": "v1",
+  "images": [
+    {
+      "scene": 1,
+      "letter": "A",
+      "seed": 2600011
+    },
+    {
+      "scene": 2,
+      "letter": "A",
+      "seed": 2600021
+    },
+    {
+      "scene": 3,
+      "letter": "A",
+      "seed": 2600031
+    },
+    {
+      "scene": 4,
+      "letter": "A",
+      "seed": 2600041
+    },
+    {
+      "scene": 5,
+      "letter": "A",
+      "seed": 2600051
+    },
+    {
+      "scene": 6,
+      "letter": "A",
+      "seed": 2600061
+    },
+    {
+      "scene": 1,
+      "letter": "B",
+      "seed": 2600012
+    },
+    {
+      "scene": 2,
+      "letter": "B",
+      "seed": 2600022
+    },
+    {
+      "scene": 3,
+      "letter": "B",
+      "seed": 2600032
+    },
+    {
+      "scene": 4,
+      "letter": "B",
+      "seed": 2600042
+    },
+    {
+      "scene": 5,
+      "letter": "B",
+      "seed": 2600052
+    },
+    {
+      "scene": 6,
+      "letter": "B",
+      "seed": 2600062
+    }
+  ]
+}

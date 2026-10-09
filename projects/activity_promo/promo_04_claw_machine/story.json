@@ -1,0 +1,298 @@
+{
+  "schema": 1,
+  "story_id": "promo_04_claw_machine",
+  "number": 4,
+  "title": "Claw machine together",
+  "title_zh": "一起玩娃娃機",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2300000,
+  "source": "Lines are the character's own fallback lines in ai-companion backend/app/activities/claw_machine.py (enter, target_selected_rare, aim_hint_on, slipped, won_rare, wrap_up_won); a change there is not picked up here. The claw machine is a mini-game, not one of the 16 outings, so it has no outings.py entry. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, a lavender crew-neck sweatshirt, blue jeans, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a lavender crew-neck sweatshirt with a round neckline and blue jeans"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the earlier promos. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "機台前，她看著裡面",
+      "beat_zh": "你們走到娃娃機前，她貼近玻璃看，轉頭問你想先夾哪一隻。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands in front of the claw machine on the right of the frame, one hand resting on its glass, looking at the plush toys inside and then at the viewer with wide, delighted eyes.",
+      "setting": "a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight",
+      "lighting": "soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third facing the viewer with one hand on the glass, the claw machine on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred facing the viewer with one hand on the glass, the claw machine on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred facing the viewer with one hand on the glass, the claw machine on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre facing the viewer with one hand on the glass, the claw machine on the right"
+      },
+      "overlay": {
+        "caption": "哇，裡面好多娃娃。你想先夾哪一隻？"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her lavender crew-neck sweatshirt and blue jeans, looks at the plush toys inside the claw machine on the right, then turns her bright eyes to the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 哇，裡面好多娃娃。你想先夾哪一隻？</d> Then she smiles at the viewer, one hand resting on the glass. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet arcade in the evening: a soft electronic jingle far away and a gentle hum from the machines, with her clear voice in front. Near the end, a soft electronic jingle plays from the machine.",
+        "duration": 5
+      },
+      "spoken": "哇，裡面好多娃娃。你想先夾哪一隻？",
+      "time_of_day": "evening, neon arcade glow",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the glass claw machine, on the right",
+      "enters_on": "standing at the claw machine, one hand on the glass, looking at the viewer",
+      "exits_on": "smiling at the viewer, one hand on the glass",
+      "sound_bridge": "Near the end, a soft electronic jingle plays from the machine."
+    },
+    {
+      "scene": 2,
+      "transition_in": "cut",
+      "title": "她握住搖桿，瞄準那隻",
+      "beat_zh": "你選了最難夾的那隻，她一手握住搖桿，把爪子往那隻移過去，笑著說試試看也好。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds the joystick of the claw machine with one hand at the lower right of the frame, steering it while she looks at the white-and-lilac plush on the top shelf inside the machine with a playful grin.",
+      "setting": "a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight",
+      "lighting": "soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third with one hand on the joystick at the lower right of the frame, the claw machine on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred with one hand on the joystick at the lower right of the frame, the claw machine on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred with one hand on the joystick at the lower right of the frame, the claw machine on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre with one hand on the joystick at the lower right of the frame, the claw machine on the right"
+      },
+      "overlay": {
+        "question": "想夾哪一隻？",
+        "choices": [
+          "小熊",
+          "兔兔",
+          "最難夾的那隻"
+        ],
+        "picked": 2,
+        "pick_at": 1.2,
+        "caption": "那隻很難夾耶。不過試試看也好。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her lavender crew-neck sweatshirt and blue jeans, holds the joystick with one hand and looks at the white-and-lilac plush on the top shelf inside the machine on the right with a playful grin. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 那隻很難夾耶。不過試試看也好。</d> Then she pushes the joystick a little to the right, the claw inside the machine drifts over the plush, and she raises her eyebrows with a teasing smile at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet arcade in the evening: a soft electronic jingle far away and a gentle hum from the machines, with her clear voice in front. Near the end, the claw motor whirs softly.",
+        "duration": 5
+      },
+      "spoken": "那隻很難夾耶。不過試試看也好。",
+      "time_of_day": "evening, neon arcade glow",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the glass claw machine, on the right",
+      "enters_on": "smiling at the viewer, one hand on the glass",
+      "exits_on": "one hand on the joystick, a playful grin, looking at the viewer",
+      "sound_bridge": "Near the end, the claw motor whirs softly.",
+      "bridge": "from the machine front to the controls: the same arcade and light, her hand now on the joystick and the claw moving"
+    },
+    {
+      "scene": 3,
+      "transition_in": "cut",
+      "title": "她按下按鈕，爪子下降",
+      "beat_zh": "爪子停在娃娃正上方，她按下大圓按鈕，喊你就是現在，爪子慢慢往下。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman presses the big round button on the control panel at the lower right of the frame with one hand, her other hand on the joystick, her eyes on the claw hanging above the white-and-lilac plush inside the machine.",
+      "setting": "a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight",
+      "lighting": "soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third with one hand on the joystick and the other on the big round button, the claw machine on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred with one hand on the joystick and the other on the big round button, the claw machine on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred with one hand on the joystick and the other on the big round button, the claw machine on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre with one hand on the joystick and the other on the big round button, the claw machine on the right"
+      },
+      "overlay": {
+        "question": "爪子停哪裡？",
+        "choices": [
+          "再往左",
+          "再往右",
+          "就是現在"
+        ],
+        "picked": 2,
+        "pick_at": 0.9,
+        "caption": "就是現在！"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her lavender crew-neck sweatshirt and blue jeans, has one hand on the joystick and the other hovering over the big round button, her eyes on the claw above the white-and-lilac plush inside the machine on the right. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 就是現在！</d> Right away she presses the button and the claw slowly lowers toward the plush. She holds her breath with a hopeful grin, her eyes on the claw and then on the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet arcade in the evening: a soft electronic jingle far away and a gentle hum from the machines, with her clear voice in front. Near the end, the claw motor whirs softly.",
+        "duration": 5
+      },
+      "spoken": "就是現在！",
+      "time_of_day": "evening, neon arcade glow",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the glass claw machine, on the right",
+      "enters_on": "one hand on the joystick, a playful grin, looking at the viewer",
+      "exits_on": "one hand on the joystick, the other on the button, a hopeful grin, eyes on the claw and then the viewer",
+      "sound_bridge": "Near the end, the claw motor whirs softly.",
+      "bridge": "from steering to pressing: the same arcade and light, the claw now stopped above the plush and her finger on the button"
+    },
+    {
+      "scene": 4,
+      "transition_in": "cut",
+      "title": "夾起來，又滑掉了",
+      "beat_zh": "爪子夾起娃娃，拉到一半滑掉，她捂著臉頰笑著喊差一點。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman has her hands at her cheeks in a half-laugh, half-groan, her face turned toward the viewer, while inside the claw machine on the right the claw lifts the white-and-lilac plush a little and the plush slips back down onto the pile.",
+      "setting": "a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight",
+      "lighting": "soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third with both hands at her cheeks, the claw machine on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred with both hands at her cheeks, the claw machine on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred with both hands at her cheeks, the claw machine on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre with both hands at her cheeks, the claw machine on the right"
+      },
+      "overlay": {
+        "question": "差一點，怎麼辦？",
+        "choices": [
+          "再來一次",
+          "換一隻",
+          "休息一下"
+        ],
+        "picked": 0,
+        "pick_at": 0.9,
+        "caption": "啊，差一點點就掉進去了。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her lavender crew-neck sweatshirt and blue jeans, has her hands at her cheeks and watches the claw hanging just above the white-and-lilac plush inside the machine on the right. The claw closes on the plush and lifts it a little, then loosens, and the same plush settles back into its place, keeping its shape and colour. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 啊，差一點點就掉進去了。</d> Then she shakes her head with a laugh and keeps smiling at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet arcade in the evening: a soft electronic jingle far away and a gentle hum from the machines, with her clear voice in front. Near the end, a bright little chime sounds from the machine.",
+        "duration": 5
+      },
+      "spoken": "啊，差一點點就掉進去了。",
+      "time_of_day": "evening, neon arcade glow",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the glass claw machine, on the right",
+      "enters_on": "one hand on the joystick, the other on the button, a hopeful grin, eyes on the claw and then the viewer",
+      "exits_on": "laughing at the near miss, looking at the viewer",
+      "sound_bridge": "Near the end, a bright little chime sounds from the machine.",
+      "bridge": "from the descent to the grab: the same arcade and light, the claw now holds the plush and loses it"
+    },
+    {
+      "scene": 5,
+      "transition_in": "cut",
+      "title": "再夾一次，掉進出口",
+      "beat_zh": "第二次爪子夾穩，把娃娃帶到出口放開，她雙手舉起歡呼。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman has both hands raised in hope and then in cheering, her face turned toward the viewer, while inside the claw machine on the right the claw carries the white-and-lilac plush over the prize chute and lets it drop.",
+      "setting": "a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight",
+      "lighting": "soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third with both hands raised, the claw machine on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred with both hands raised, the claw machine on the right",
+        "C": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred with both hands raised, the claw machine on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium shot from the waist up, the woman just left of centre with both hands raised, the claw machine on the right"
+      },
+      "overlay": {
+        "caption": "太強了，最難的那隻耶！"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her lavender crew-neck sweatshirt and blue jeans, has both hands raised in hope beside the claw machine on the right, where the claw holds the white-and-lilac plush high. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 太強了，最難的那隻耶！</d> Right away the claw lets go over the chute and the plush drops down. She cheers with a huge smile, looking at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet arcade in the evening: a soft electronic jingle far away and a gentle hum from the machines, with her clear voice in front. Near the end, a soft thump sounds from the prize chute.",
+        "duration": 5
+      },
+      "spoken": "太強了，最難的那隻耶！",
+      "time_of_day": "evening, neon arcade glow",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the glass claw machine, on the right",
+      "enters_on": "laughing at the near miss, looking at the viewer",
+      "exits_on": "cheering with both hands up, looking at the viewer",
+      "sound_bridge": "Near the end, a soft thump sounds from the prize chute.",
+      "bridge": "from the miss to the second try: the same arcade and light, the claw now carries the plush to the chute"
+    },
+    {
+      "scene": 6,
+      "title": "她抱著娃娃對你笑",
+      "beat_zh": "她從出口拿出白色獨角獸抱在懷裡，說你夾到的那一刻她比你還興奮。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman hugs the white unicorn plush against her chest and smiles warmly at the viewer, the claw machine softly out of focus on the right of the frame.",
+      "setting": "a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight",
+      "lighting": "soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman on the left third hugging the plush against her chest, the claw machine on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred hugging the plush against her chest, the claw machine on the right",
+        "C": "first-person point of view, slightly low camera angle, medium close-up of her face and shoulders, the woman centred hugging the plush against her chest, the claw machine on the right",
+        "D": "first-person point of view at eye level from a little further to the left, medium close-up of her face and shoulders, the woman just left of centre hugging the plush against her chest, the claw machine on the right"
+      },
+      "overlay": {
+        "caption": "夾到娃娃的那一刻，我比你還興奮。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her lavender crew-neck sweatshirt and blue jeans, hugs the white unicorn plush against her chest and smiles warmly at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 夾到娃娃的那一刻，我比你還興奮。</d> She rests her cheek lightly on the plush and holds a warm smile toward the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet arcade in the evening: a soft electronic jingle far away and a gentle hum from the machines, with her clear voice in front.",
+        "duration": 5
+      },
+      "spoken": "夾到娃娃的那一刻，我比你還興奮。",
+      "time_of_day": "evening, neon arcade glow",
+      "props": "a white unicorn plush (shot 6)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the glass claw machine, on the right",
+      "enters_on": "cheering with both hands up, looking at the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the cheer to the prize: the same arcade and light, the plush from the chute now in her arms"
+    }
+  ],
+  "continuity": "One place, one light: the arcade in the evening, pink-and-blue neon, the same in every shot. Same outfit in every shot: lavender sweatshirt, jeans. The glass claw machine is on the right of the frame in every shot and she looks, points and leans toward the right. The white unicorn plush is only named in shots 5-6 (it sits on the machine's top shelf, unnamed, in 1-4). Every shot ends facing the viewer.",
+  "continuity_check": {
+    "time_order": [
+      "evening"
+    ],
+    "prop": "unicorn",
+    "prop_shots": [
+      6
+    ],
+    "landmark_word": "machine"
+  }
+}

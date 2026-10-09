@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_04_claw_machine",
+  "scene_id": "scene_05",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair and pearl drop earrings. She wears a lavender crew-neck sweatshirt with a round neckline and blue jeans.\nfirst-person point of view at eye level, medium shot from the waist up, the woman on the left third with both hands raised, the claw machine on the right. The woman has both hands raised in hope and then in cheering, her face turned toward the viewer, while inside the claw machine on the right the claw carries the white-and-lilac plush over the prize chute and lets it drop.\nSetting: a bright arcade in the evening with a glass claw machine full of pastel plush toys on the right side of the frame, the claw hanging inside the cabinet above the plush toys, a control panel with a joystick and a big round button at the lower right of the frame, a soft pink-and-blue neon glow, a clean uncluttered floor, nobody else in sight. Lighting: soft pink and blue neon glow from the machine on the right and warm overhead light, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third with both hands raised, the claw machine on the right",
+  "width": 941,
+  "height": 1671,
+  "image_sha256": "b1a7a4796dd07aad221c6f778007e8e3e5d7c6495afbbfed04524e0fa07356c4",
+  "created_at": "2026-10-05T00:30:23+08:00"
+}

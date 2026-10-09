@@ -3,6 +3,64 @@
 每次疊代改了什麼、為什麼這樣改、實測數字如何。安裝步驟和用法在
 [README.md](README.md)，這裡只放結論和對應章節連結。倒序排列，`xxxxxxx` 是 commit。
 
+## 2026-10-09
+
+### 素材庫 `training/asset_library.py`：212 張人物與場景素材，3.04 CU
+
+- **為什麼**：要一批男女老少、不同年代、不同服裝的人物圖和場景圖（定裝照和場景內畫面兩種都要），並看 Z-Image 在 Colab 上一次生很多張的成本。
+- **做法**：64 個成年人物（2 性別 × 4 年齡層 × 4 年代 × 2，分到東亞、東南亞、南亞、中東北非、撒哈拉以南非洲、歐洲、拉丁美洲）× 定裝照和場景內各一張，
+  加 4 個年代 × 21 個空景，共 212 張 720×1280。`check` 寫 `projects/asset_library/CATALOG.md`、`export` 寫 skill 的 manifest、`import` 歸檔並產生
+  `index.html`、`measure` 用 InsightFace（CPU）量年齡層、定裝照對場景內的相似度、空景有沒有臉。服裝 53 種不重複；安全路徑照舊（年齡安全負面詞、
+  cfg 1.5），測試釘住每筆都能通過 skill 的 `build_job`、沒有未成年字眼、沒有品牌或可讀文字。
+- **實測**（L4／A100，`ZIMG_MODEL_SOURCE=download`）：試跑 16 張 0.18 CU、年齡驗證 8 張 0.19、**全量 196 張（A100）2.19 CU、1549 秒**、補生 20／7／5 張
+  0.21／0.16／0.11；餘額 199.50 → 196.46（合計 3.04 CU）。全量那次 Drive 同意晚了，是臨時儲存（重裝套件，圖不受影響）。
+- **發現**：(1) 年齡措辭：「late thirties／mature adult face」被畫成 55～65 歲、五六十歲被畫成 65～75 歲，改成「mid-thirties, fresh smooth complexion」
+  和「early fifties」後三四十歲對了、五六十歲男性對了、女性還略偏老；估計年齡由小到大：女 26／38／58／76、男 30／46／68／75。
+  (2) 定裝照和場景內同一人的相似度平均 0.55（64 對，最低 0.21）。(3) **空景用臉部偵測複查不夠**：偵測只抓到 4 張，看圖總覽有約 12 張有人、手、腳，
+  其中一張是一群只穿內褲的人，還有 NOEW／NSSW／TEVY／TELEPHONE 等文字。加負面詞（nude、legs、feet、hand、letters…）補生後一半修好；
+  地鐵、網咖、露天電影院、電話亭、洞穴蘑菇林這類本身暗示「有人」或「有標誌」的場所加負面詞也擋不住，要換場所（換了 4 個成功）。
+  (4) 端莊：肯特布洋裝無肩帶、披肩露半邊胸、1970 年代西裝開領露胸，改寫後修好。
+- **還沒做**：最後 1 張空景（未來洞穴蘑菇林，有兩個人）待換場所。
+- **測試**：+21 個測試函式（張數與分布、年齡與地區、服裝隨年代、無未成年字眼、無品牌文字、空景無人、每筆能通過 `build_job`、試跑／驗證／補生三組 id 與 seed、
+  匯入與索引、量測）。
+
+## 2026-10-08
+
+### Z-Image Colab skill：一個 job 出 N 張、`bench.py`、風格與人物寫法；A100 與 L4 實測
+
+- **為什麼**：使用者要在 Colab 上用 Z-Image 生更像真人的首幀，並量出「一次幾張、哪種 GPU 最省」。原本一個 job 只出一張（`BATCH_SIZE = 1`）。
+- **做法**：`build_zimage_txt2img_workflow(batch_size=…)`（預設 1，本機不變）；skill 的 `build_job`／`submit.py --batch-size`／manifest `batch_size`、`tag`
+  （上限 `limits.max_batch_size` 8）；worker 逐張存檔、逐張驗證，張數不符 `INVALID_OUTPUT`，graph 與 job 的 batch_size 不一致拒絕；controller 下載
+  `result_02.png`… 並記 `outputs`。`scripts/bench.py` 的 `plan`／`report`／`faces`。`concept_colab.py export --style`（`visual_bible.json` 的
+  `style_variants`：documentary、phone）與 `--identity`（`identity_variants.v1`）。
+- **實測 A100**（36 個 job、51 張，692 秒，**0.98 CU**，費率 5.3 CU/小時而非 H3 的 6.77）：每張 5.4 秒（批次 1）、4.7（2）、4.5（4）、4.3（8，VRAM 39.0 GB
+  共 40 GB）；固定成本約 0.54 CU，邊際約 0.0087 CU/張；模型直接下載 92～97 秒（Drive 複製 606 秒）。一次多張只快 16～21%。**A100 對 L4**：每張 CU 差不多，
+  200 張以內 L4 較省（固定成本 0.2），A100 快 3～4 倍。
+- **第二輪：年齡與一致性**（A100，52 張，1.15 CU）：「aged 23」寫法生出 30～45 歲的臉（估計 30.5）；「young adult in her early twenties, youthful fresh face」
+  到 24.2（23–25），六個鏡頭相似度 0.51（最低 0.46）；固定五官、固定 seed 沒有明顯加分；documentary 風格更老、相似度更低。採用 v1＋bible，並加
+  `outstretched arm, selfie` 負面詞。
+- **四支新故事生圖**（L4，48 張，**0.46 CU**，1237 秒）：估計年齡 27～32、相似度 0.39～0.49（日本旅行最低 0.21），不如貓咖那一輪；問題：看電影的銀幕入鏡、
+  首爾夜景出現像首爾塔的高塔、巴黎野餐躺姿構圖怪。
+- **測試**：+23 個測試函式（batch 上下限與 graph、逐張驗證與張數不符、舊 job 相容、controller 下載整批、bench 矩陣與報告算式、style／identity 只換風格文字且保留安全詞）。
+
+## 2026-10-05
+
+### 活動宣傳短片管線（`training/activity_promo.py`）：9 支故事、5 支成片，H3 17.02 CU
+
+- **為什麼**：把 ai-companion 的約會情境做成 30 秒社群廣告：第一人稱、只有角色（若曦）入鏡、她用中文說 app 裡的原句。首幀由使用者在 ChatGPT 生成（`adopt-stills` 登記、
+  審核由人決定），H3 變 5 秒帶聲音的影片，`cut` 剪成約 32 秒（逐鏡頭疊化或硬切、−48 LUFS 環境底噪、−14 LUFS、結尾字卡）。
+- **做法**：`projects/activity_promo/`（`visual_bible.json`、9 支 `story.json`、`STORYBOARDS.md`＝16 個情境 × 6 鏡頭、每支 `GPT_PROMPTS_<id>.md`），
+  `activity_promo.py` 的 `check`／`manifest`／`cut`／`boundaries`／`gpt-prompts`／`adopt-stills`；`continuity_check` 讓連貫規則（時間只往後、道具不中斷、
+  地標在右邊）由測試守著；`concept_stills.validate_story` 認 `scene_count`。
+- **H3 實測**（`output/h3_jobs.jsonl`，餘額 51.43 → 34.41）：遊樂園 2.60＋1.11＋2.51、咖啡 1.12＋1.82、下廚＋咖啡鏡頭 1 重做 3.05、貓咖 2.34、娃娃機＋貓咖鏡頭 3 補跑 2.47，
+  合計 **17.02 CU**；實測費率 6.77 CU/小時，比估算常數 5.2 高約三成，一個 session 的 6～7 支 5 秒片段約 2.3～3 CU。成片：遊樂園、下廚、咖啡、娃娃機、貓咖。
+- **發現**：(1) H3 會讓人物在 5 秒裡走開或轉身，下一鏡的首幀又是正面：姿勢差大的接點用硬切，站著不動的鏡頭加 `static-subject`。(2) 貓只能趴著或睡著；
+  夾娃娃的娃娃「掉進娃娃堆」會被換成別的娃娃。(3) **我的失誤**：兩支故事共用批次 id `v1`，下廚的 `--dry-run` 刪掉咖啡正在跑的 `output/.work/v1-sc04..06`，
+  3 支上傳失敗（1.12 CU 只有 2 支可用）；現在批次 id 必須帶故事名（程式拒絕、測試釘住）。(4) Drive 同意頁沒點到時程式不等，改臨時儲存並重抓約 40 GB 模型。
+  (5) 成片不含字幕、AI 標示、選項按鈕（使用者決定）；MiniMax H3 授權要求公開發布時標示機器生成，要在平台的 AI 內容開關和貼文文字標示。
+- **測試**：`tests/test_activity_promo.py` 47 個測試函式（連貫規則、剪輯用真的 ffmpeg 驗證疊化與底噪音量、重複圖攔截、批次 id 規則、逐接點轉場）。
+- **PDF 報告**：`outputs/reports/活動宣傳短片_分鏡與運算單元彙整_2026-10.pdf`（不在 git 裡）。
+
 ## 2026-10-06
 
 ### Open WebUI 一鍵啟動（`start_concept_webui.bat`）

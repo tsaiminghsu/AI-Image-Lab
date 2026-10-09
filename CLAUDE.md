@@ -73,7 +73,8 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   別名），並由 `enforce_min_cfg()` 在 `_submit_and_wait` 統一套用，不要為了省時間降到 1.0。
   **唯一的例外是 MiniMax H3**（`.claude/skills/minimax-h3-colab/`，跑在 Colab）：它的 turbo 節點圖是
   BasicGuider，沒有負面詞也沒有 cfg，照 `cloud_video.replicate_safety_gate` 的規則本來應該拒用。使用者
-  同意改用兩道補償控管：首幀只能是本專案生成的虛構成人角色或沒有人物的圖（不能用真人照片），以及
+  同意改用兩道補償控管：首幀只能是本專案生成的虛構成人角色或沒有人物的圖（不能用真人照片；使用者 2026-10-04 另外同意活動宣傳片的首幀可以是他在 ChatGPT
+  生成的虛構成人角色圖，同樣不能是真人照片、同樣過 `screen_prompt`），以及
   `h3_colab.screen_prompt` 對完整 prompt 做正向詞過濾、沒有繞過的參數（測試釘住詞表，而且要涵蓋
   `AGE_SAFETY_NEGATIVE` 的每個詞）。其他模型不要比照這個例外。
   `ai_workflow/` 平台的 `minimax-h3-basic` 是同一張節點圖、同一個例外：`controller/safety.py` 的
@@ -197,6 +198,14 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   `APPROVED` 的 Scene；花 GPU／CU 的工具要 `confirm=true`。`gpu_guard.py` 在生圖前卸載 Ollama 的聊天模型（同一張 8 GB 卡）。
   故事 1 生圖、H3、成片都實跑過（報告在 `outputs/reports/`）；故事 2 只有候選圖；故事 3–5 還沒生。
   **Open WebUI 這條路只有離線測試與連線測試，聊天端還沒實機驗收。**
+- 活動宣傳短片（2026-10-05）：`projects/activity_promo/`（9 支故事的 `story.json`、`STORYBOARDS.md`＝16 個約會情境 × 6 鏡頭）＋`training/activity_promo.py`
+  （`check`／`manifest`／`cut`／`boundaries`／`gpt-prompts`／`adopt-stills`）：第一人稱、只有若曦入鏡、她用中文說 app 裡的原句，首幀由使用者在 ChatGPT 或 Colab Z-Image
+  生成並自己審核，H3 變 5 秒片段，`cut` 剪成約 32 秒（成片不含字幕、AI 標示、選項按鈕；發布時由平台標示機器生成）。5 支有成片（遊樂園、下廚、咖啡、娃娃機、貓咖），
+  H3 合計 17.02 CU；**批次 id 必須帶故事名**（共用 id 時一次 `--dry-run` 會刪掉另一批的首幀資料夾，程式拒絕、測試釘住）。實測與數字見 CHANGELOG 2026-10-05。
+- Z-Image Colab 批次與素材庫（2026-10-09）：skill 可以一個 job 出 N 張（`--batch-size`，上限 8）、`bench.py` 量速度與成本、`concept_colab.py export --style/--identity`；
+  `training/asset_library.py` 用它生 212 張人物與場景素材（`projects/asset_library/`，圖不追蹤）。**A100 5.3 CU/小時、每張 5.4 秒、固定成本約 0.54 CU；L4 18 秒、固定約 0.2；
+  200 張以內 L4 較省**；人物年齡要寫「early twenties」之類的明確措辭（寫「aged 23」會生出 30～45 歲的臉）；空景要用眼睛複查（臉部偵測抓不到小人影和手腳）。數字見 skill README
+  「批次與 GPU 實測」「素材庫」與 CHANGELOG 2026-10-08、10-09。
 - AI Workflow 平台（2026-10-02）：`ai_workflow/`，不綁 AI 供應商的 Drive＋Colab＋ComfyUI 工作流。兩個入口共用一套
   Core（`controller/`，純 stdlib）：notebook（`notebooks/00–03、99`，由 `scripts/build_notebooks.py` 從 registry 產生，
   不要手改）和六個工具（`scripts/aiwf.py`：list-workflows／create-job／status／list-jobs／cancel／result，給任何

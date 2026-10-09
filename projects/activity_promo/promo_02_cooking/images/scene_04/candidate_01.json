@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_02_cooking",
+  "scene_id": "scene_04",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair and pearl drop earrings. She wears a cream knit top with the sleeves pushed up, a beige linen apron and blue jeans.\nfirst-person point of view at eye level, medium close-up of her face and shoulders on the left third, her hand pointing toward the pot, a curl of steam from the stove on the right. A thin curl of steam rises from the pot on the stove on the right of the frame, and the woman laughs, pointing at the pot with one hand while looking at the viewer.\nSetting: a bright home kitchen with a gas stove and a pot on the right side of the frame, a wooden counter, clean uncluttered surfaces, a thin curl of steam rising from the pot, no flames visible, the window on the left deep blue. Lighting: warm ceiling light and the soft glow from the stove, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, her hand pointing toward the pot, a curl of steam from the stove on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "41f3b19e6bca6dc83e2a055a38f6c1f2ef6366217c170bc51a9349190cd9b7ca",
+  "created_at": "2026-10-04T18:25:43+08:00"
+}

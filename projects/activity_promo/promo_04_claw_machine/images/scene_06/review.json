@@ -1,0 +1,22 @@
+{
+  "story_id": "promo_04_claw_machine",
+  "scene_id": "scene_06",
+  "status": "APPROVED",
+  "approved_candidate": "candidate_01.png",
+  "notes": "",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-05T00:30:23+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-05T00:30:23+08:00"
+    },
+    {
+      "status": "APPROVED",
+      "at": "2026-10-05T00:35:57+08:00"
+    }
+  ],
+  "decided_via": "cli"
+}

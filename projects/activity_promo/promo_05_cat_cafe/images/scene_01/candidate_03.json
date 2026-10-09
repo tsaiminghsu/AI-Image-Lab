@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_05_cat_cafe",
+  "scene_id": "scene_01",
+  "candidate_id": "candidate_03",
+  "candidate_letter": "C",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair and pearl drop earrings. She wears a sage-green knit sweater with a round neckline that covers the collarbone, and blue jeans.\nfirst-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred facing the viewer with wide amused eyes, the sunlit window on the right. The woman stands just inside the door of a cat café with the sunlit window and cushions on the right of the frame, looking at the viewer with wide, amused eyes.\nSetting: a cozy cat café with a big sunlit window and soft floor cushions on the right side of the frame, a wooden table, clean uncluttered surfaces, no other people, a few tabby and white cats resting far behind her on the cushions. Lighting: warm golden afternoon sunlight from the window on the right, her face fully lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view, slightly low camera angle, medium shot from the waist up, the woman centred facing the viewer with wide amused eyes, the sunlit window on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "0ccc2bc27fa78bcc22595ac30ee9422bf6d6febfa8d349325366097ccec660e7",
+  "created_at": "2026-10-04T23:10:53+08:00"
+}

@@ -294,6 +294,10 @@ def validate_config(config: dict) -> dict:
         _is_int(config["limits"].get("max_pixels")) and config["limits"]["max_pixels"] >= SIDE_MIN**2,
         "limits.max_pixels must be an integer",
     )
+    _check(
+        _is_int(config["limits"].get("max_batch_size", 1)) and 1 <= config["limits"].get("max_batch_size", 1) <= 16,
+        "limits.max_batch_size must be an integer 1-16",
+    )
     _check(isinstance(config["output"].get("directory"), str) and config["output"]["directory"], "output.directory")
     return config
 
@@ -901,6 +905,8 @@ def build_job(
     seed: int | None = -1,
     solo: bool = False,
     allow_text: bool = False,
+    batch_size: int = 1,
+    tag: str | None = None,
     workflow: str = DEFAULT_WORKFLOW,
     batch: str | None = None,
     job_id: str | None = None,
@@ -926,6 +932,9 @@ def build_job(
             f"cfg must be {client.SAFETY_MIN_CFG}-{CFG_MAX}: below {client.SAFETY_MIN_CFG} ComfyUI would skip "
             "the negative prompt, and with it the safety terms"
         )
+    biggest = config["limits"].get("max_batch_size", 1)
+    if not _is_int(batch_size) or not 1 <= batch_size <= biggest:
+        raise UsageError(f"batch_size must be an integer 1-{biggest} (limits.max_batch_size)")
     seed_value = resolve_seed(seed, rng)
     user_negative = (negative or "").strip() or None
     positive, negative_prompt = gc._build_prompt_and_negative(
@@ -934,7 +943,16 @@ def build_job(
     job_id = job_id or new_job_id()
     spec = WORKFLOWS[workflow]
     graph = client.build_zimage_txt2img_workflow(
-        positive, negative_prompt, seed_value, job_id, model_files(config), width, height, steps, float(cfg)
+        positive,
+        negative_prompt,
+        seed_value,
+        job_id,
+        model_files(config),
+        width,
+        height,
+        steps,
+        float(cfg),
+        batch_size,
     )
     client.enforce_min_cfg(graph)
     problems = workflow_contracts.check(spec["template"], graph)
@@ -963,6 +981,8 @@ def build_job(
         "scheduler": client.ZIMAGE_SCHEDULER,
         "shift": client.ZIMAGE_SHIFT,
         "seed": seed_value,
+        "batch_size": batch_size,
+        "tag": tag,
         "seed_requested": seed,
         "model": m["name"],
         "model_repo": m["repo"],
@@ -997,6 +1017,7 @@ def remote_payload(job: dict, config: dict) -> dict:
         "width": job["width"],
         "height": job["height"],
         "format": "png",
+        "batch_size": job.get("batch_size", 1),
         "attempt": job["attempt"],
         "timeout_seconds": config["worker"]["job_timeout_seconds"],
         "params": {k: job[k] for k in ("prompt", "negative_prompt", "steps", "cfg", "seed", "sampler", "scheduler")},
@@ -1586,13 +1607,32 @@ class Controller:
         except (ColabCommandError, ColabTimeout) as exc:
             self.log(f"download of {job_id} failed, will retry: {exc}")
             return
+        extras = []
+        for index in range(2, int(job.get("batch_size", 1)) + 1):  # result_02.png ... of a batch job
+            extra = out_dir / f"result_{index:02d}.png"
+            try:
+                download_file(
+                    self.transport,
+                    self.session,
+                    f"{REMOTE_ROOT}/outbox/{job_id}/{extra.name}",
+                    extra,
+                    timeout=self.config["colab"]["transfer_timeout_seconds"],
+                )
+            except (ColabCommandError, ColabTimeout) as exc:
+                self.log(f"download of {job_id}/{extra.name} failed, will retry: {exc}")
+                return
+            extras.append(extra)
         self.handled.add(job_id)
         meta = self._download_metadata(job_id)
         write_json_atomic(out_dir / "workflow.json", job["graph"])
         self._advance(job_id, VALIDATING)
         problems = validate_output(result, job["width"], job["height"])
+        for extra in extras:
+            problems += [f"{extra.name}: {p}" for p in validate_output(extra, job["width"], job["height"])]
         fields = self._fields_from_remote(meta, r)
         fields["output"] = str(result)
+        if extras:
+            fields["outputs"] = [str(result), *(str(e) for e in extras)]
         fields["validation"] = {
             "remote": meta.get("validation"),
             "local": {
@@ -1825,6 +1865,8 @@ LEDGER_FIELDS = (
     "cfg",
     "sampler",
     "seed",
+    "batch_size",
+    "tag",
     "started_at",
     "completed_at",
     "generation_seconds",

@@ -1,0 +1,17 @@
+{
+  "story_id": "promo_09_picnic",
+  "scene_id": "scene_06",
+  "status": "HUMAN_REVIEW",
+  "approved_candidate": null,
+  "notes": "",
+  "history": [
+    {
+      "status": "CANDIDATES_READY",
+      "at": "2026-10-08T23:18:39+08:00"
+    },
+    {
+      "status": "HUMAN_REVIEW",
+      "at": "2026-10-08T23:18:39+08:00"
+    }
+  ]
+}

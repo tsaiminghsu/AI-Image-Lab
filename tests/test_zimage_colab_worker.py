@@ -536,3 +536,50 @@ def test_source_download_still_uploads_a_file_drive_lacks(tmp_path, comfy):
     assert (w2.paths.models / "vae" / "vae.safetensors").is_file()  # the missing one is saved to Drive again
     assert w2.drive_sync.report == {"vae.safetensors": w2.drive_sync.report["vae.safetensors"]}
     assert str(w2.drive_sync.report["vae.safetensors"]).startswith("copied")
+
+
+# --- batch jobs: one prompt, N pictures ----------------------------------------------------------
+
+
+def test_a_batch_job_saves_validates_and_persists_every_picture(tmp_path, comfy):
+    w, _, _ = booted(tmp_path, comfy)
+    payload = payload_for("b3", batch_size=3)
+    payload["graph"]["5"]["inputs"]["batch_size"] = 3
+    put_inbox(w, payload)
+    w.run_forever()
+    meta = json.loads((w.paths.outbox / "b3" / "metadata.json").read_text())
+    assert meta["status"] == remote.COMPLETED and meta["images"] == 3 and meta["batch_size"] == 3
+    names = sorted(p.name for p in (w.paths.outbox / "b3").glob("result*.png"))
+    assert names == ["result.png", "result_02.png", "result_03.png"]
+    assert sorted(p.name for p in (w.paths.outputs / "b3").glob("result*.png")) == names  # and on Drive
+    assert meta["validation"]["ok"] is True
+
+
+def test_a_batch_that_returns_fewer_pictures_than_asked_is_invalid_output(tmp_path, comfy):
+    w, _, _ = booted(tmp_path, comfy)
+    comfy.behaviors["short"] = "short"
+    payload = payload_for("short", batch_size=3)
+    payload["graph"]["5"]["inputs"]["batch_size"] = 3
+    put_inbox(w, payload)
+    w.run_forever()
+    job = w.state.data["jobs"]["short"]
+    assert job["status"] == remote.INVALID_OUTPUT
+    assert "asked for 3 pictures, got 2" in json.dumps(job["error"])
+
+
+def test_a_graph_that_disagrees_with_the_job_batch_size_is_refused(tmp_path, comfy):
+    w, _, _ = booted(tmp_path, comfy)
+    put_inbox(w, payload_for("mismatch", batch_size=4))  # graph still says 1
+    w.run_forever()
+    job = w.state.data["jobs"]["mismatch"]
+    assert job["status"] == remote.FAILED and job["error"]["code"] == "INVALID_JOB"
+    assert not [c for c in comfy.calls if c[0] == "POST" and c[1] == "/prompt"]  # never reached ComfyUI
+
+
+def test_a_job_without_batch_size_is_one_picture(tmp_path, comfy):
+    w, _, _ = booted(tmp_path, comfy)
+    put_inbox(w, payload_for("legacy"))
+    w.run_forever()
+    meta = json.loads((w.paths.outbox / "legacy" / "metadata.json").read_text())
+    assert meta["status"] == remote.COMPLETED and meta["images"] == 1 and meta["batch_size"] == 1
+    assert [p.name for p in (w.paths.outbox / "legacy").glob("result*.png")] == ["result.png"]

@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_02_cooking",
+  "scene_id": "scene_02",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair and pearl drop earrings. She wears a cream knit top with the sleeves pushed up, a beige linen apron and blue jeans.\nfirst-person point of view at eye level, medium close-up of her face and shoulders on the left third, the potato held up near her face, the open fridge and the stove on the right. The woman holds up a potato toward the viewer with one hand, an open fridge glowing on the right of the frame and the stove beyond it, her face lit with an excited smile.\nSetting: a bright home kitchen with a gas stove and a pot on the right side of the frame, a wooden counter, clean uncluttered surfaces, an open fridge glowing on the right beside the stove, early-evening window light on the left. Lighting: warm window light from the left and the cool glow of the open fridge on the right, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, the potato held up near her face, the open fridge and the stove on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "e8653c5a551d69ea7857991e742d5e0c9197c82e4a67e9e3662c56d6a85a2a47",
+  "created_at": "2026-10-04T18:25:43+08:00"
+}

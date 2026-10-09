@@ -76,7 +76,8 @@
   },
   "custom_nodes": [],
   "limits": {
-    "max_pixels": 4194304
+    "max_pixels": 4194304,
+    "max_batch_size": 8
   },
   "output": {
     "directory": "./output/zimage"

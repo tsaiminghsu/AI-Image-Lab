@@ -1,0 +1,297 @@
+{
+  "schema": 1,
+  "story_id": "promo_03_coffee",
+  "number": 3,
+  "title": "Coffee together",
+  "title_zh": "一起去喝咖啡",
+  "genre": "社群宣傳片 / 第一人稱約會",
+  "hook": "約會去哪，你來選",
+  "scene_count": 6,
+  "seed_base": 2200000,
+  "source": "Lines and choices are copied from ai-companion backend/app/activities (outings.py, choice_lines, closing_lines); a change there is not picked up here. The lines are spoken by the character (H3 dialogue), not burned in as subtitles (promo.subtitles = false).",
+  "characters": {
+    "ruoxi": {
+      "label": "若曦",
+      "character_key": "ruoxi",
+      "description": "an adult Taiwanese woman aged 23, long layered hair with soft curls, dark brown eyes, oval face, athletic build, cream knit cardigan over a white t-shirt, blue jeans, small pearl drop earrings",
+      "gpt_same": "Same woman as the reference image above — same face, hair and pearl drop earrings.",
+      "gpt_reference": "Create a photorealistic portrait photo of {description}, for use as a consistent character reference. Natural skin texture, soft daylight, neutral background, waist-up, looking at the camera with a relaxed smile. Vertical 9:16 frame. Only one person, no text, no logos.",
+      "gpt_outfit": "a cream knit cardigan over a white t-shirt and blue jeans"
+    }
+  },
+  "promo": {
+    "hook": "約會去哪，你來選",
+    "end_card": {
+      "label": "AI Companion",
+      "phrase": "每一步，都由你決定",
+      "translation": "16 種約會情境",
+      "note": "即將推出｜18 歲以上｜角色為虛構"
+    },
+    "gpt_suffix": "Photorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+    "subtitles": false,
+    "on_screen_text": false,
+    "ai_label": false,
+    "label_note": "The user chose (2026-10-04) to leave the AI label and every on-screen line off the video, as for the amusement-park promo. The MiniMax H3 licence (skill README) asks public releases to say the content is machine-generated, so the label has to be given where it is published: the platform's AI-content toggle and the post text."
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "午後的街上，她回頭",
+      "beat_zh": "午後的街上，她走在你旁邊，回頭笑著說今天慢慢來。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands on a quiet side street in the afternoon, turned toward the right where a small café glows, looking back at the viewer with a relaxed smile.",
+      "setting": "a quiet side street in the afternoon, a small café with a large glass window on the right, glowing warmly, a wooden door beside it, clean pavement with nobody else on it",
+      "lighting": "soft golden afternoon sunlight from the left, the café window glowing warmly, her face fully lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third facing the viewer, the café window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred facing the viewer, the café window on the right"
+      },
+      "overlay": {
+        "caption": "今天就慢慢喝、慢慢聊吧。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream knit cardigan over a white t-shirt, blue jeans, looks back at the viewer with a relaxed smile. Right away The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 今天就慢慢喝、慢慢聊吧。</d> Then she tilts her head a little toward the café on the right, still smiling at the viewer, her empty hands relaxed at her sides. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Quiet side street in the afternoon: a soft breeze and a distant murmur of the city, with her clear voice in front. Near the end, a café door chime rings softly.",
+        "constraints": ["static-subject"],
+        "duration": 5
+      },
+      "spoken": "今天就慢慢喝、慢慢聊吧。",
+      "time_of_day": "afternoon, golden",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the café window, on the right",
+      "enters_on": "standing on the street, smiling at the viewer",
+      "exits_on": "head tilted toward the café on the right, face still toward the viewer",
+      "sound_bridge": "Near the end, a café door chime rings softly."
+    },
+    {
+      "scene": 2,
+      "title": "咖啡廳門口，她驚喜",
+      "beat_zh": "你說去上次提過的那家，她驚喜地轉頭。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands at the wooden door of a small café with its glass window on the right of the frame, turning to the viewer with a delighted, surprised smile and one hand on the door handle.",
+      "setting": "the wooden door of a small café with a large glass window on the right, afternoon light, clean pavement with nobody else on it",
+      "lighting": "soft golden afternoon sunlight, the café window glowing warmly, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, her hand on the door handle, the café window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, her hand on the door handle, the café window on the right"
+      },
+      "overlay": {
+        "question": "要進哪一家？",
+        "choices": [
+          "連鎖店",
+          "巷弄裡的小店",
+          "你上次說想試的那家"
+        ],
+        "picked": 2,
+        "caption": "你還記得我說過？",
+        "pick_at": 1.0
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream knit cardigan over a white t-shirt, blue jeans, turns to the viewer with a delighted, surprised smile, one hand on the door handle. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 你還記得我說過？</d> Then she laughs softly and keeps smiling at the viewer. The camera holds a steady shot.",
+        "soundscape": "Quiet side street in the afternoon: a soft breeze and a distant murmur of the city, with her clear voice in front. Near the end, the sound of coffee beans being ground comes from inside.",
+        "duration": 5
+      },
+      "spoken": "你還記得我說過？",
+      "time_of_day": "afternoon, golden",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the café window, on the right",
+      "enters_on": "head tilted toward the café on the right, face still toward the viewer",
+      "exits_on": "hand on the door handle, smiling at the viewer",
+      "sound_bridge": "Near the end, the sound of coffee beans being ground comes from inside.",
+      "bridge": "from the street to the café door: the same light, she has turned to face you",
+      "transition_in": "cut"
+    },
+    {
+      "scene": 3,
+      "title": "櫃台前，她等你點",
+      "beat_zh": "你說我幫你點，她雙手交握，等著看你點什麼。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman stands at the café counter with her hands clasped in front of her, waiting with an amused smile, a chalkboard menu with no readable text on the left and the large window on the right.",
+      "setting": "the counter of a small café in the late afternoon, a chalkboard menu with no readable text on the left, the large glass window on the right, a warm wooden interior",
+      "lighting": "warm café lighting and soft late-afternoon light from the window on the right, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third at the counter, the large window on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred at the counter, the large window on the right"
+      },
+      "overlay": {
+        "question": "要喝什麼？",
+        "choices": [
+          "美式",
+          "拿鐵",
+          "我幫你點"
+        ],
+        "picked": 2,
+        "caption": "那我等著看你幫我點什麼。",
+        "pick_at": 1.0
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream knit cardigan over a white t-shirt, blue jeans, stands with her hands clasped and an amused smile. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 那我等著看你幫我點什麼。</d> Then she tilts her head, laughs softly, and glances toward a window seat on the right with a smile. Her movements make only quiet, light sounds. The camera holds a steady shot.",
+        "soundscape": "Café interior: soft chatter far away, the hiss of an espresso machine, with her clear voice in front. Near the end, a cup is set down on a saucer.",
+        "duration": 5
+      },
+      "spoken": "那我等著看你幫我點什麼。",
+      "time_of_day": "late afternoon",
+      "props": "none",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the café window, on the right",
+      "enters_on": "hand on the door handle, smiling at the viewer",
+      "exits_on": "glancing toward a window seat on the right, still smiling",
+      "sound_bridge": "Near the end, a cup is set down on a saucer.",
+      "bridge": "from the door to the counter: the same afternoon, the light one step later, now indoors"
+    },
+    {
+      "scene": 4,
+      "title": "窗邊座位，她捧著杯子",
+      "beat_zh": "你們在窗邊坐下，她捧著杯子看街景，再看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sits at a window seat holding a coffee cup in both hands, looking out at the street through the large window on the right, then turning to the viewer with a warm smile.",
+      "setting": "a window seat in a small café in the late afternoon, the large glass window on the right showing the street, a small wooden table with a saucer",
+      "lighting": "soft late-afternoon light from the window on the right on her face, warm café lighting behind",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, the coffee cup held in both hands, the window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, the coffee cup held in both hands, the window on the right"
+      },
+      "overlay": {
+        "question": "要坐哪裡？",
+        "choices": [
+          "窗邊看街景",
+          "最裡面的角落",
+          "吧台高腳椅"
+        ],
+        "picked": 0,
+        "caption": "窗邊好，看路人走來走去。",
+        "pick_at": 1.0
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream knit cardigan over a white t-shirt, blue jeans, holds her coffee cup in both hands and looks out of the window on the right at the street. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 窗邊好，看路人走來走去。</d> Then she turns to the viewer with a warm smile. The camera holds a steady shot.",
+        "soundscape": "Café interior: soft chatter far away and a gentle clink of cups, with her clear voice in front. Near the end, the street outside grows a little quieter.",
+        "duration": 5
+      },
+      "spoken": "窗邊好，看路人走來走去。",
+      "time_of_day": "late afternoon",
+      "props": "a coffee cup (shots 4-6)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the café window, on the right",
+      "enters_on": "glancing toward a window seat on the right, still smiling",
+      "exits_on": "looking at the viewer, holding the coffee cup",
+      "sound_bridge": "Near the end, the street outside grows a little quieter.",
+      "bridge": "from the counter to the window seat: the same café, the light one step later"
+    },
+    {
+      "scene": 5,
+      "title": "黃昏的窗邊，她認真看你",
+      "beat_zh": "窗外天色變暗，她放下杯子，認真地看著你說以後。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman sets her coffee cup down on its saucer and looks at the viewer sincerely, the large window on the right showing the street at dusk with the first lights switching on.",
+      "setting": "a window seat in a small café at dusk, the large glass window on the right showing the street with the first lights switching on, a small wooden table with a coffee cup on a saucer",
+      "lighting": "blue dusk light from the window on the right and warm café lighting on her face, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium shot from the waist up, the woman on the left third, the window with the dusk street on the right",
+        "B": "first-person point of view at eye level, medium shot from the waist up, the woman centred, the window with the dusk street on the right"
+      },
+      "overlay": {
+        "question": "要聊點什麼？",
+        "choices": [
+          "今天發生的事",
+          "想聽你最近怎麼樣",
+          "以後想一起做的事"
+        ],
+        "picked": 2,
+        "caption": "以後啊……想跟你去很多地方。",
+        "pick_at": 1.0
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream knit cardigan over a white t-shirt, blue jeans, sets her coffee cup on its saucer and looks at the viewer sincerely. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 以後啊……想跟你去很多地方。</d> Then her face softens into a gentle smile. The camera holds a steady shot.",
+        "soundscape": "Quiet café at dusk: soft music far away and a gentle clink of a spoon, with her clear voice in front. Near the end, a soft evening hush settles over the café.",
+        "duration": 5
+      },
+      "spoken": "以後啊……想跟你去很多地方。",
+      "time_of_day": "dusk",
+      "props": "a coffee cup (shots 4-6)",
+      "screen_direction": "right",
+      "framing": "medium",
+      "landmark": "the café window, on the right",
+      "enters_on": "looking at the viewer, holding the coffee cup",
+      "exits_on": "smiling softly at the viewer",
+      "sound_bridge": "Near the end, a soft evening hush settles over the café.",
+      "bridge": "from the afternoon window to dusk: the same seat, the street now blue with the first lights"
+    },
+    {
+      "scene": 6,
+      "title": "夜色的窗光裡，她笑著",
+      "beat_zh": "窗光變成傍晚的藍，她拿著杯子笑著看你。",
+      "characters": [
+        "ruoxi"
+      ],
+      "action": "The woman holds her coffee cup near her chin and smiles warmly at the viewer, the large window on the right glowing with the evening blue and the first street lights.",
+      "setting": "a window seat in a small café in the evening, the large glass window on the right glowing blue with the street lights, a small wooden table",
+      "lighting": "soft evening blue from the window on the right and warm café light on her face, her face clearly lit",
+      "on_screen_text": "",
+      "solo": true,
+      "compositions": {
+        "A": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, the coffee cup near her chin, the evening window on the right",
+        "B": "first-person point of view at eye level, medium close-up of her face and shoulders in the centre, the coffee cup near her chin, the evening window on the right"
+      },
+      "overlay": {
+        "caption": "說好的那些以後，我都記下來了。"
+      },
+      "video": {
+        "description": "The woman in the first frame, in her cream knit cardigan over a white t-shirt, blue jeans, holds her coffee cup near her chin and smiles warmly at the viewer. The woman (S1), in a clear, warm voice with a natural Taiwanese Mandarin accent, says: <d>[Chinese] 說好的那些以後，我都記下來了。</d> Then she smiles even more softly and holds it. The camera holds a steady shot.",
+        "soundscape": "Quiet café in the evening: soft music far away and a faint hum of the espresso machine, with her clear voice in front.",
+        "duration": 5
+      },
+      "spoken": "說好的那些以後，我都記下來了。",
+      "time_of_day": "evening",
+      "props": "a coffee cup (shots 4-6)",
+      "screen_direction": "right",
+      "framing": "close",
+      "landmark": "the café window, on the right",
+      "enters_on": "smiling softly at the viewer",
+      "exits_on": "smiling warmly at the viewer",
+      "sound_bridge": "",
+      "bridge": "from the dusk to the evening: the same seat, the window now blue"
+    }
+  ],
+  "continuity": "Light only moves forward: afternoon (1-2) -> late afternoon (3-4) -> dusk (5) -> evening (6). Same outfit in every shot: cream cardigan, white t-shirt, jeans. The café window is on the right of the frame in every shot, and she looks, points and leans toward the right. Every shot ends facing the viewer. The coffee cup appears in shots 4-6 and nowhere else. Shot 6's line is shortened from the app's closing line so it fits five seconds.",
+  "continuity_check": {
+    "time_order": [
+      "afternoon",
+      "late afternoon",
+      "dusk",
+      "evening"
+    ],
+    "prop": "coffee cup",
+    "prop_shots": [
+      4,
+      5,
+      6
+    ],
+    "landmark_word": "window"
+  }
+}

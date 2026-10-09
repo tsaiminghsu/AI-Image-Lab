@@ -1,0 +1,68 @@
+{
+  "batch": "l4-id-v1-story6",
+  "story_id": "promo_06_movie",
+  "style": "bible",
+  "identity": "v1",
+  "images": [
+    {
+      "scene": 1,
+      "letter": "A",
+      "seed": 2500011
+    },
+    {
+      "scene": 2,
+      "letter": "A",
+      "seed": 2500021
+    },
+    {
+      "scene": 3,
+      "letter": "A",
+      "seed": 2500031
+    },
+    {
+      "scene": 4,
+      "letter": "A",
+      "seed": 2500041
+    },
+    {
+      "scene": 5,
+      "letter": "A",
+      "seed": 2500051
+    },
+    {
+      "scene": 6,
+      "letter": "A",
+      "seed": 2500061
+    },
+    {
+      "scene": 1,
+      "letter": "B",
+      "seed": 2500012
+    },
+    {
+      "scene": 2,
+      "letter": "B",
+      "seed": 2500022
+    },
+    {
+      "scene": 3,
+      "letter": "B",
+      "seed": 2500032
+    },
+    {
+      "scene": 4,
+      "letter": "B",
+      "seed": 2500042
+    },
+    {
+      "scene": 5,
+      "letter": "B",
+      "seed": 2500052
+    },
+    {
+      "scene": 6,
+      "letter": "B",
+      "seed": 2500062
+    }
+  ]
+}

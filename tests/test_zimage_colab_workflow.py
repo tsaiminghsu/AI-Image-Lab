@@ -140,3 +140,33 @@ def test_node_check_reports_a_missing_class_and_an_undeclared_input(tmp_path):
     problems = remote.check_against_object_info(graph, info)
     assert any("ModelSamplingAuraFlow is not installed" in p for p in problems)
     assert any("'scheduler' is not declared" in p for p in problems)
+
+
+# --- batch_size: one job, N pictures -------------------------------------------------------------
+
+
+def test_batch_size_defaults_to_one_and_only_changes_the_latent_batch(tmp_path):
+    config = make_config(tmp_path)
+    one = z.build_job(config, prompt="a mug", aspect="1:1", seed=5, job_id="j1")
+    three = z.build_job(config, prompt="a mug", aspect="1:1", seed=5, job_id="j1", batch_size=3)
+    assert one["batch_size"] == 1 and one["graph"]["5"]["inputs"]["batch_size"] == 1
+    assert three["batch_size"] == 3 and three["graph"]["5"]["inputs"]["batch_size"] == 3
+    three["graph"]["5"]["inputs"]["batch_size"] = 1
+    assert three["graph"] == one["graph"]  # nothing else in the graph moved
+    assert z.remote_payload(three, config)["batch_size"] == 3
+    assert "batch_size" in z.LEDGER_FIELDS
+
+
+@pytest.mark.parametrize("bad", [0, -1, 9, 2.5, True, "3"])
+def test_batch_size_outside_the_configured_range_is_refused(tmp_path, bad):
+    config = make_config(tmp_path)
+    with pytest.raises(z.UsageError, match="batch_size"):
+        z.build_job(config, prompt="a mug", aspect="1:1", batch_size=bad)
+
+
+def test_a_batch_job_keeps_the_safety_negative_and_the_cfg_floor(tmp_path):
+    config = make_config(tmp_path)
+    job = z.build_job(config, prompt="a mug", aspect="1:1", batch_size=4)
+    remote.check_graph(job["graph"])  # the worker's own refusal rule accepts it
+    assert all(term in job["negative_prompt"] for term in remote.AGE_TERMS)
+    assert job["graph"]["3"]["inputs"]["cfg"] >= z.client.SAFETY_MIN_CFG

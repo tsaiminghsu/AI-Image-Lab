@@ -1,0 +1,13 @@
+{
+  "story_id": "promo_03_coffee",
+  "scene_id": "scene_06",
+  "candidate_id": "candidate_01",
+  "candidate_letter": "A",
+  "source": "ChatGPT image made by the user outside this repo",
+  "prompt_suggested": "Same woman as the reference image above — same face, hair and pearl drop earrings. She wears a cream knit cardigan over a white t-shirt and blue jeans.\nfirst-person point of view at eye level, medium close-up of her face and shoulders on the left third, the coffee cup near her chin, the evening window on the right. The woman holds her coffee cup near her chin and smiles warmly at the viewer, the large window on the right glowing with the evening blue and the first street lights.\nSetting: a window seat in a small café in the evening, the large glass window on the right glowing blue with the street lights, a small wooden table. Lighting: soft evening blue from the window on the right and warm café light on her face, her face clearly lit.\nPhotorealistic, natural skin texture, shallow depth of field. Her face is clearly lit. Only one person in the frame, no crowd, no text or signs, no logos. Vertical 9:16.",
+  "composition": "first-person point of view at eye level, medium close-up of her face and shoulders on the left third, the coffee cup near her chin, the evening window on the right",
+  "width": 941,
+  "height": 1672,
+  "image_sha256": "9dc7e38ef65496b04388c236841e3446aede96c5490756d63f7f494932b29ee5",
+  "created_at": "2026-10-04T18:25:44+08:00"
+}

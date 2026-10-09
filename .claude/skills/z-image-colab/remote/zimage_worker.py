@@ -53,6 +53,7 @@ WORKER_VERSION = 1
 # they are equal to the project constants.
 AGE_TERMS = ("child", "children", "kid", "minor", "teen", "teenager", "underage", "young girl")
 MIN_CFG = 1.5
+HARD_MAX_BATCH = 16  # the controller enforces limits.max_batch_size; this is the worker's own ceiling
 
 QUEUED = "QUEUED"
 RUNNING = "RUNNING"
@@ -239,6 +240,17 @@ def check_graph(graph):
             raise WorkerError("UNSAFE_JOB", "negative prompt is missing the age-safety terms %s" % missing)
 
 
+def batch_count(payload):
+    """How many pictures one job produces (older jobs have no batch_size: one)."""
+    value = payload.get("batch_size", 1)
+    return value if isinstance(value, int) and not isinstance(value, bool) else -1
+
+
+def image_name(index):
+    """result.png for the first picture, result_02.png ... for the rest."""
+    return "result.png" if index == 0 else "result_%02d.png" % (index + 1)
+
+
 def check_payload(payload):
     for key in ("job_id", "graph", "width", "height", "save_node"):
         if key not in payload:
@@ -249,6 +261,12 @@ def check_payload(payload):
     if str(payload["save_node"]) not in payload["graph"]:
         raise WorkerError("INVALID_JOB", "save_node %r is not in the graph" % payload["save_node"])
     check_graph(payload["graph"])
+    count = batch_count(payload)
+    if not 1 <= count <= HARD_MAX_BATCH:
+        raise WorkerError("INVALID_JOB", "batch_size must be 1-%d, not %r" % (HARD_MAX_BATCH, count))
+    in_graph = [n["inputs"]["batch_size"] for n in payload["graph"].values() if "batch_size" in n.get("inputs", {})]
+    if in_graph and any(b != count for b in in_graph):
+        raise WorkerError("INVALID_JOB", "the graph asks for batch_size %s but the job says %d" % (in_graph, count))
 
 
 def check_against_object_info(graph, object_info):
@@ -1107,6 +1125,7 @@ class Worker:
             "width": payload.get("width"),
             "height": payload.get("height"),
             "params": payload.get("params", {}),
+            "batch_size": batch_count(payload),
         }
         t_job = self.clock()
         try:
@@ -1115,10 +1134,12 @@ class Worker:
                 # Pushed again after a lost session that had already finished it: report, don't re-render.
                 out = self.paths.outbox / job_id
                 out.mkdir(parents=True, exist_ok=True)
-                for name in ("result.png", "metadata.json", "workflow.json"):
-                    src = self.paths.outputs / job_id / name
+                for src in sorted((self.paths.outputs / job_id).glob("result*.png")) + [
+                    self.paths.outputs / job_id / "metadata.json",
+                    self.paths.outputs / job_id / "workflow.json",
+                ]:
                     if src.is_file():
-                        shutil.copyfile(src, out / name)
+                        shutil.copyfile(src, out / src.name)
                 fields = {k: v for k, v in previous.items() if k != "job_id"}
                 self.state.job(job_id, **dict(fields, reused_previous_output=True))
                 self.log("job %s already completed in an earlier session; re-reported" % job_id)
@@ -1129,19 +1150,35 @@ class Worker:
                 self.log("ComfyUI is not running; restarting it before job %s" % job_id)
                 self.comfy.stop()
                 self.wait_for_comfy()
-            image, timing, vram_peak = self.render(job_id, payload)
+            images, timing, vram_peak = self.render(job_id, payload)
             rec.update(timing)
             rec["vram_peak_mib"] = vram_peak
             out = self.paths.outbox / job_id
             out.mkdir(parents=True, exist_ok=True)
-            result = out / "result.png"
-            tmp = out / "result.png.tmp"
-            tmp.write_bytes(self.comfy_http.view(image))
-            os.replace(tmp, result)
+            wanted = batch_count(payload)
+            results = []
+            for index, image in enumerate(images):
+                result = out / image_name(index)
+                tmp = out / (result.name + ".tmp")
+                tmp.write_bytes(self.comfy_http.view(image))
+                os.replace(tmp, result)
+                results.append(result)
             self.state.job(job_id, status=GENERATED)
             self.state.job(job_id, status=VALIDATING)
-            problems = validate_image(result, payload["width"], payload["height"], payload.get("format", "png"))
-            rec["validation"] = {"ok": not problems, "problems": problems, "bytes": result.stat().st_size}
+            problems = []
+            if len(results) != wanted:
+                problems.append("asked for %d pictures, got %d" % (wanted, len(results)))
+            for result in results:
+                problems += [
+                    "%s: %s" % (result.name, p)
+                    for p in validate_image(result, payload["width"], payload["height"], payload.get("format", "png"))
+                ]
+            rec["images"] = len(results)
+            rec["validation"] = {
+                "ok": not problems,
+                "problems": problems,
+                "bytes": sum(r.stat().st_size for r in results),
+            }
             if problems:
                 raise WorkerError("INVALID_OUTPUT", "; ".join(problems))
             self.state.job(job_id, status=VALID)
@@ -1194,7 +1231,7 @@ class Worker:
                             "comfy_execution_seconds": execution_seconds(status),
                             "prompt_id": prompt_id,
                         }
-                        return images[0], timing, vram.peak
+                        return images, timing, vram.peak
                 self.sleep(1)
 
     def cancel_requested(self, job_id):
@@ -1230,9 +1267,9 @@ class Worker:
         try:
             dest = self.paths.outputs / job_id
             dest.mkdir(parents=True, exist_ok=True)
-            for name in ("result.png", "workflow.json", "metadata.json"):
-                if (out / name).is_file():
-                    shutil.copyfile(out / name, dest / name)
+            for src in sorted(out.glob("result*.png")) + [out / "workflow.json", out / "metadata.json"]:
+                if src.is_file():
+                    shutil.copyfile(src, dest / src.name)
         except OSError as exc:
             rec.setdefault("warnings", []).append("could not copy the output to Drive: %s" % exc)
             write_json_atomic(out / "metadata.json", rec)

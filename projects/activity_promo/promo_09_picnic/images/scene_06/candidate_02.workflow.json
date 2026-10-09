@@ -1,0 +1,111 @@
+{
+  "10": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "11": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    }
+  },
+  "12": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "13": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "shift": 3.0
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "first-person point of view at eye level, medium close-up of her face and shoulders, the woman centred turned from the water to smile at the viewer, the sunset on the pond on the right. Characters: a young adult Taiwanese woman in her early twenties with a youthful fresh face and smooth clear skin, long layered dark brown hair with soft curls, dark brown eyes, oval face, athletic build, a navy-and-white striped long-sleeved top with a round neckline, beige trousers, small pearl drop earrings. The woman sits by the pond in a Parisian park at sunset, turned from the glowing water on the right of the frame to smile softly at the viewer. Setting: the grassy edge of a pond in a Parisian park, the calm water on the right side of the frame, clipped trees and cream stone buildings far behind, a checked picnic blanket on the grass, nobody else in sight, no readable signs. Lighting: warm orange sunset light from the right, her face clearly lit, candid lifestyle photograph, photorealistic, natural skin texture, realistic human proportions, warm natural colours, shallow depth of field, 35mm lens, high detail, realistic lighting",
+      "clip": [
+        "11",
+        0
+      ]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "nsfw, nude, naked, explicit, sexual content, child, children, kid, minor, teen, teenager, underage, young girl, lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, multiple people, two people, duplicate, twins, extra person, crowd, 3d render, cgi, illustration, airbrushed, plastic skin, doll-like, smooth skin, perfect skin, symmetrical face, digital art, render, unreal engine, anime, cartoon, painting, overexposed, underexposed, crushed blacks, distorted face, malformed hands, extra fingers, crowd, signage, watermark, outstretched arm, extended arm, selfie, arm reaching toward the camera, hand reaching toward the camera",
+      "clip": [
+        "11",
+        0
+      ]
+    }
+  },
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 720,
+      "height": 1280,
+      "batch_size": 1
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "13",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ],
+      "seed": 2800062,
+      "steps": 8,
+      "cfg": 2.0,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1.0
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "12",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "filename_prefix": "zimg-20261008-225532-51136a"
+    }
+  }
+}
