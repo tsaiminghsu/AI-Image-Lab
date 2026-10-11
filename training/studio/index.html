@@ -5,219 +5,346 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>圖片轉影片工作室</title>
 <style>
-:root{--bg:#f6f6f4;--panel:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#dcdcd6;--acc:#2f5bea;--warn:#b45309;--ok:#15803d}
-@media (prefers-color-scheme:dark){:root{--bg:#161616;--panel:#212121;--ink:#ececea;--mute:#9a9a94;--line:#363632;--acc:#7b9cff;--warn:#f0a35a;--ok:#5fcf8a}}
+:root{
+  --bg:#f3f2ee;--bg2:#eae8e2;--panel:#ffffff;--raise:#f7f6f2;--ink:#17181c;--mute:#6d6f78;--line:#dfddd5;
+  --acc:#3d4eea;--acc-ink:#ffffff;--acc-soft:rgba(61,78,234,.1);--warn:#b4530a;--bad:#c2281d;--ok:#157f43;
+  --shadow:0 1px 2px rgba(20,20,30,.06),0 8px 24px rgba(20,20,30,.07);--r:14px;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0d0e11;--bg2:#131419;--panel:#17191f;--raise:#1e2028;--ink:#eeeef0;--mute:#8d909c;--line:#2a2d37;
+  --acc:#c9f25c;--acc-ink:#12140a;--acc-soft:rgba(201,242,92,.12);--warn:#f2b45c;--bad:#ff7a6e;--ok:#6fdc9a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.45);
+}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,"Noto Sans TC",sans-serif;display:grid;grid-template-columns:320px 1fr;min-height:100vh;padding-bottom:64px}
-aside{background:var(--panel);border-right:1px solid var(--line);padding:16px;position:sticky;top:0;height:100vh;overflow:auto}
-h1{font-size:16px;margin:0 0 12px}h2{font-size:13px;color:var(--mute);margin:16px 0 6px;font-weight:600}
-textarea,input,select{width:100%;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
-textarea{min-height:110px;resize:vertical}
-.row{display:flex;gap:8px}.row>*{flex:1}
-.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.seg button{flex:1;border:0;background:none;color:inherit;padding:6px;cursor:pointer;font:inherit}
-.seg button.on{background:var(--acc);color:#fff}
-button.go{width:100%;margin-top:12px;padding:10px;border:0;border-radius:6px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
-button.go:disabled{opacity:.5;cursor:default}
-.hint{color:var(--mute);font-size:12px;margin:4px 0 0}
-main{padding:16px}
-.tabs{display:flex;gap:8px;margin-bottom:12px}
-.tabs button{border:1px solid var(--line);background:var(--panel);color:inherit;border-radius:999px;padding:4px 14px;cursor:pointer;font:inherit}
-.tabs button.on{background:var(--ink);color:var(--bg)}
-.wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative}
-.card img,.card video{width:100%;display:block;aspect-ratio:auto;background:#000}
-.card .cap{padding:6px 8px;font-size:12px;color:var(--mute);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.card .acts{position:absolute;inset:auto 0 auto 0;top:0;display:flex;gap:6px;padding:6px;opacity:0;transition:opacity .15s}
-.card:hover .acts,.card:focus-within .acts{opacity:1}
-.acts button{border:0;border-radius:4px;padding:4px 8px;cursor:pointer;background:rgba(0,0,0,.72);color:#fff;font:inherit;font-size:12px}
-.badge{position:absolute;right:6px;bottom:34px;background:rgba(0,0,0,.72);color:#fff;border-radius:4px;padding:0 6px;font-size:11px}
-.empty{color:var(--mute);padding:48px 0;text-align:center}
-#drawer{position:fixed;top:0;right:0;height:100vh;width:340px;max-width:100vw;background:var(--panel);border-left:1px solid var(--line);padding:16px;transform:translateX(100%);transition:transform .2s;overflow:auto;z-index:5}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "Segoe UI","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.app{display:grid;grid-template-columns:348px 1fr;grid-template-rows:auto 1fr;min-height:100vh}
+
+/* top bar */
+header{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(12px);position:sticky;top:0;z-index:6}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;letter-spacing:.02em}
+.mark{width:28px;height:28px;border-radius:8px;background:var(--acc);display:grid;place-items:center}
+.mark svg{width:16px;height:16px;fill:var(--acc-ink)}
+.flow{display:flex;align-items:center;gap:8px;color:var(--mute);font-size:12px;margin-left:8px}
+.flow b{color:var(--ink);font-weight:600}.flow i{opacity:.5;font-style:normal}
+.pills{margin-left:auto;display:flex;gap:4px;background:var(--bg2);padding:4px;border-radius:999px}
+.pills button{border:0;background:none;border-radius:999px;padding:5px 16px;color:var(--mute)}
+.pills button.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.count{color:var(--mute);font-size:12px;min-width:64px;text-align:right}
+
+/* composer */
+aside{padding:20px;border-right:1px solid var(--line);position:sticky;top:53px;height:calc(100vh - 53px);overflow:auto;display:flex;flex-direction:column;gap:16px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px;box-shadow:var(--shadow)}
+.step{display:flex;align-items:center;gap:8px;font-weight:650;margin-bottom:12px}
+.step span{width:22px;height:22px;border-radius:50%;background:var(--acc-soft);color:var(--acc);display:grid;place-items:center;font-size:12px;font-weight:700}
+label.f{display:block;font-size:12px;color:var(--mute);margin:14px 0 6px}
+textarea{width:100%;font:inherit;color:inherit;background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:118px;resize:vertical;transition:border-color .15s}
+textarea:focus{outline:none;border-color:var(--acc)}
+textarea::placeholder{color:var(--mute);opacity:.7}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:3px}
+.seg button{border:0;background:none;border-radius:7px;padding:6px 4px;color:var(--mute);display:flex;align-items:center;justify-content:center;gap:6px}
+.seg button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.18);font-weight:600}
+.shape{display:inline-block;border:1.5px solid currentColor;border-radius:2px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hint{color:var(--mute);font-size:12px;margin:8px 0 0}
+.check{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px}
+.check input{accent-color:var(--acc);width:15px;height:15px}
+.go{width:100%;margin-top:14px;padding:11px;border:0;border-radius:10px;background:var(--acc);color:var(--acc-ink);font-weight:700;letter-spacing:.02em;transition:transform .08s,filter .15s}
+.go:hover:not(:disabled){filter:brightness(1.07)}.go:active:not(:disabled){transform:translateY(1px)}
+.go:disabled{opacity:.4;cursor:default}
+.go.ghost{background:none;border:1px solid var(--line);color:var(--ink);font-weight:600}
+.qi{display:grid;grid-template-columns:38px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.qi:last-child{border-bottom:0}
+.qi img{width:38px;height:52px;object-fit:cover;border-radius:6px;background:#000}
+.qi .t{font-size:12px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.qi .t b{display:block;font-size:11px;color:var(--acc);font-weight:600}
+.qi button{border:0;background:none;color:var(--mute);font-size:18px;line-height:1;padding:4px 6px;border-radius:6px}
+.qi button:hover{color:var(--bad);background:var(--raise)}
+
+/* wall */
+main{padding:20px 20px 110px;min-width:0}
+.wall{columns:5 220px;column-gap:14px}
+.card{break-inside:avoid;margin:0 0 14px;border-radius:var(--r);overflow:hidden;position:relative;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform .18s}
+.card:hover{transform:translateY(-2px)}
+.card img,.card video{width:100%;display:block;background:#000;cursor:zoom-in}
+.card .shade{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.82) 0,rgba(0,0,0,.25) 38%,transparent 60%);opacity:0;transition:opacity .18s;pointer-events:none;display:flex;flex-direction:column;justify-content:flex-end;padding:12px;gap:8px}
+.card:hover .shade,.card:focus-within .shade{opacity:1}
+.card .cap{color:#fff;font-size:12px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.acts{display:flex;gap:6px;pointer-events:auto}
+.acts button{border:0;border-radius:8px;padding:7px 10px;font-size:12px;background:rgba(255,255,255,.16);color:#fff;backdrop-filter:blur(6px)}
+.acts button:hover{background:rgba(255,255,255,.28)}
+.acts button.pri{background:var(--acc);color:var(--acc-ink);font-weight:700;flex:1}
+.tag{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.6);color:#fff;border-radius:999px;padding:2px 9px;font-size:11px;backdrop-filter:blur(6px)}
+.tag.v{left:auto;right:10px;background:var(--acc);color:var(--acc-ink);font-weight:700}
+.card.vid .shade{background:linear-gradient(to bottom,rgba(0,0,0,.7) 0,transparent 40%);justify-content:flex-start;padding-top:38px}
+.skel{break-inside:avoid;margin:0 0 14px;border-radius:var(--r);border:1px dashed var(--line);background:linear-gradient(100deg,var(--panel) 30%,var(--raise) 50%,var(--panel) 70%);background-size:300% 100%;animation:shimmer 1.6s linear infinite;display:grid;place-items:center;color:var(--mute);font-size:12px}
+@keyframes shimmer{to{background-position:-300% 0}}
+.empty{max-width:420px;margin:12vh auto 0;text-align:center;color:var(--mute)}
+.empty .art{width:84px;height:84px;margin:0 auto 18px;border-radius:24px;background:var(--acc-soft);display:grid;place-items:center}
+.empty .art svg{width:36px;height:36px;stroke:var(--acc);fill:none;stroke-width:1.6}
+.empty h2{color:var(--ink);font-size:17px;margin:0 0 6px}
+.empty ol{text-align:left;margin:16px auto 0;padding-left:20px;line-height:1.9}
+
+/* drawer */
+#veil{position:fixed;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .2s;z-index:8}
+#veil.open{opacity:1;pointer-events:auto}
+#drawer{position:fixed;top:0;right:0;height:100vh;width:400px;max-width:100vw;background:var(--panel);border-left:1px solid var(--line);padding:20px;transform:translateX(102%);transition:transform .24s cubic-bezier(.2,.8,.2,1);overflow:auto;z-index:9;box-shadow:var(--shadow)}
 #drawer.open{transform:none}
-#drawer img{width:100%;border-radius:6px}
-.check{display:flex;gap:6px;align-items:center;margin:4px 0}.check input{width:auto}
-#queue{margin-top:12px;font-size:13px}.qi{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)}
-#bar{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:12px;align-items:center;z-index:4}
-#bar .msg{flex:1}#bar .warn{color:var(--warn);font-weight:600}
-#bar button{border:1px solid var(--line);background:none;color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
-dialog{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);max-width:460px}
-dialog::backdrop{background:rgba(0,0,0,.45)}
-dialog pre{white-space:pre-wrap;font:inherit;background:var(--bg);padding:8px;border-radius:6px}
-dialog .row{margin-top:12px}dialog button{padding:8px;border-radius:6px;border:1px solid var(--line);background:none;color:inherit;cursor:pointer;font:inherit}
-dialog button.ok{background:var(--acc);color:#fff;border:0}
-@media (max-width:760px){body{grid-template-columns:1fr}aside{position:static;height:auto}}
+#drawer h2{margin:0;font-size:16px}
+.dhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.x{border:0;background:var(--raise);width:30px;height:30px;border-radius:50%;font-size:17px;line-height:1;color:var(--mute)}
+.frame{position:relative;border-radius:12px;overflow:hidden;background:#000;max-height:38vh;display:grid;place-items:center}
+.frame img{max-width:100%;max-height:38vh;display:block}
+.frame span{position:absolute;left:10px;bottom:10px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 9px;border-radius:999px}
+.note{background:var(--acc-soft);border-radius:10px;padding:10px 12px;font-size:12px;margin-top:14px;color:var(--ink)}
+
+/* job dock */
+#dock{position:fixed;left:50%;bottom:20px;transform:translate(-50%,140%);transition:transform .28s cubic-bezier(.2,.8,.2,1);background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:12px 14px;width:min(620px,calc(100vw - 32px));z-index:7}
+#dock.show{transform:translate(-50%,0)}
+.drow{display:flex;align-items:center;gap:12px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--acc);flex:none;animation:pulse 1.4s ease-in-out infinite}
+#dock.done .dot{animation:none;background:var(--ok)}#dock.fail .dot{animation:none;background:var(--bad)}#dock.wait .dot{background:var(--warn)}
+@keyframes pulse{50%{opacity:.3;transform:scale(.7)}}
+#dockMsg{flex:1;min-width:0;font-size:13px}
+#dockSub{color:var(--mute);font-size:12px;margin:4px 0 0 21px}
+#dock.wait #dockSub{color:var(--warn);font-weight:600}#dock.fail #dockSub{color:var(--bad)}
+.dbtn{border:1px solid var(--line);background:none;border-radius:8px;padding:5px 12px;font-size:12px;white-space:nowrap}
+.dbtn.pri{background:var(--acc);color:var(--acc-ink);border:0;font-weight:700}
+.track{height:4px;border-radius:4px;background:var(--bg2);margin-top:10px;overflow:hidden}
+.track i{display:block;height:100%;width:0;background:var(--acc);border-radius:4px;transition:width .5s}
+
+/* dialog, toast, lightbox */
+dialog{border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink);width:min(480px,calc(100vw - 32px));padding:22px;box-shadow:var(--shadow)}
+dialog::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(3px)}
+dialog h2{margin:0 0 14px;font-size:17px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:12px}
+.stat{background:var(--raise);border-radius:10px;padding:10px 12px}
+.stat small{display:block;color:var(--mute);font-size:11px}.stat b{font-size:18px}
+.quote{background:var(--raise);border-left:3px solid var(--acc);border-radius:6px;padding:10px 12px;font-size:13px;margin-bottom:12px;max-height:120px;overflow:auto}
+.quote small{display:block;color:var(--mute);font-size:11px;margin-bottom:2px}
+dialog p{color:var(--mute);font-size:12px;margin:0 0 6px}
+.dact{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:16px}.dact .go{margin:0}
+#toast{position:fixed;top:68px;left:50%;transform:translate(-50%,-200%);opacity:0;visibility:hidden;transition:transform .25s,opacity .25s;background:var(--bad);color:#fff;padding:10px 16px;border-radius:10px;z-index:20;max-width:min(560px,calc(100vw - 32px));font-size:13px;box-shadow:var(--shadow)}
+#toast.show{transform:translate(-50%,0);opacity:1;visibility:visible}#toast.ok{background:var(--ok)}
+#light{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;place-items:center;z-index:15;cursor:zoom-out;padding:24px}
+#light.open{display:grid}#light img{max-width:100%;max-height:100%;border-radius:8px}
+
+@media (max-width:860px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}.flow,.count{display:none}.wall{columns:2 150px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<aside>
-  <h1>圖片轉影片工作室</h1>
-  <h2>1. 描述畫面（中文或英文）</h2>
-  <textarea id="prompt" placeholder="例如：一位二十多歲的女性站在咖啡廳窗邊，午後陽光，自然光"></textarea>
-  <h2>比例</h2>
-  <div class="seg" id="aspect"><button data-v="9:16" class="on">9:16</button><button data-v="16:9">16:9</button><button data-v="1:1">1:1</button></div>
-  <h2>張數</h2>
-  <div class="seg" id="count"><button data-v="1">1</button><button data-v="2" class="on">2</button><button data-v="4">4</button></div>
-  <h2>生圖引擎</h2>
-  <div class="seg" id="backend"><button data-v="local" class="on">本機顯卡</button><button data-v="colab">Colab</button></div>
-  <p class="hint" id="backendHint">本機：不花錢，但每張前會等顯示卡降到 60°C。</p>
-  <div class="check"><label><input type="checkbox" id="solo" checked> 只有一個人</label></div>
-  <button class="go" id="goImages">生成圖片</button>
-  <p class="hint">按下後會先顯示預估與實際送出的英文 prompt，確認才開始。</p>
+<div class="app">
+<header>
+  <div class="brand"><span class="mark"><svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></span>圖片轉影片工作室</div>
+  <div class="flow"><b>描述</b><i>→</i><b>候選圖</b><i>→</i><b>選首幀</b><i>→</i><b>影片</b></div>
+  <div class="pills" id="filter"><button data-v="" class="on">全部</button><button data-v="image">圖片</button><button data-v="video">影片</button></div>
+  <div class="count" id="count"></div>
+</header>
 
-  <h2>待送影片清單</h2>
-  <div id="queue"><div class="hint">在圖片上按「生成影片」，把它加進來。</div></div>
-  <button class="go" id="goVideos" disabled>送出影片（MiniMax H3，Colab）</button>
+<aside>
+  <section class="box">
+    <div class="step"><span>1</span>描述畫面</div>
+    <textarea id="prompt" placeholder="例如：一位二十多歲的女性站在咖啡廳窗邊，午後陽光，自然光，半身&#10;（中文或英文都可以）"></textarea>
+    <label class="f">比例</label>
+    <div class="seg" id="aspect">
+      <button data-v="9:16" class="on"><i class="shape" style="width:8px;height:14px"></i>9:16</button>
+      <button data-v="16:9"><i class="shape" style="width:14px;height:8px"></i>16:9</button>
+      <button data-v="1:1"><i class="shape" style="width:11px;height:11px"></i>1:1</button>
+    </div>
+    <div class="two">
+      <div><label class="f">張數</label><div class="seg" id="num"><button data-v="1">1</button><button data-v="2" class="on">2</button><button data-v="4">4</button></div></div>
+      <div><label class="f">生圖引擎</label><div class="seg" id="backend"><button data-v="local" class="on">本機</button><button data-v="colab">Colab</button></div></div>
+    </div>
+    <p class="hint" id="backendHint">本機：不花錢，每張開始前會等顯示卡降到 60°C。</p>
+    <label class="check"><input type="checkbox" id="solo" checked>畫面裡只有一個人</label>
+    <button class="go" id="goImages">生成圖片</button>
+  </section>
+
+  <section class="box">
+    <div class="step"><span>2</span>待送影片 <small id="qn" style="color:var(--mute);font-weight:400"></small></div>
+    <div id="queue"></div>
+    <button class="go" id="goVideos" disabled>送出影片</button>
+    <p class="hint">MiniMax H3（Colab）。多支一起送共用一個 session，比較省 CU。</p>
+  </section>
 </aside>
 
-<main>
-  <div class="tabs" id="filter"><button data-v="" class="on">全部</button><button data-v="image">圖片</button><button data-v="video">影片</button></div>
-  <div class="wall" id="wall"></div>
-</main>
-
-<div id="drawer" aria-label="影片設定">
-  <h1>用這張圖生成影片</h1>
-  <img id="dImg" alt="首幀">
-  <h2>動作與鏡頭（英文或中文）</h2>
-  <textarea id="dDesc" placeholder="她轉頭看向鏡頭微笑，頭髮被微風吹動。鏡頭緩慢推近。"></textarea>
-  <h2>聲音（選填）</h2>
-  <textarea id="dSound" style="min-height:56px" placeholder="咖啡廳的輕聲背景音、杯盤碰撞聲"></textarea>
-  <h2>秒數</h2>
-  <div class="seg" id="dDur"><button data-v="5" class="on">5</button><button data-v="8">8</button><button data-v="10">10</button></div>
-  <div class="check"><label><input type="checkbox" id="dLock"> 鎖定鏡頭</label></div>
-  <div class="check"><label><input type="checkbox" id="dStatic"> 主體不動（只有細微動作）</label></div>
-  <p class="hint">H3 沒有負面詞，所以首幀只能用這面牆上生成的圖，描述會先過內容篩選。</p>
-  <div class="row" style="margin-top:12px"><button class="go" id="dAdd">加入待送清單</button><button class="go" id="dClose" style="background:var(--mute)">關閉</button></div>
+<main><div class="wall" id="wall"></div></main>
 </div>
 
-<div id="bar"><span class="msg" id="barMsg">沒有進行中的工作</span><button id="barConsent" hidden>我按好了 Drive 同意</button><button id="barCancel" hidden>取消</button></div>
+<div id="veil"></div>
+<div id="drawer" role="dialog" aria-label="影片設定">
+  <div class="dhead"><h2>用這張圖生成影片</h2><button class="x" id="dClose" aria-label="關閉">×</button></div>
+  <div class="frame"><img id="dImg" alt="首幀"><span>首幀</span></div>
+  <label class="f">動作與鏡頭</label>
+  <textarea id="dDesc" placeholder="她轉頭看向鏡頭微笑，頭髮被微風吹動。鏡頭緩慢推近。"></textarea>
+  <label class="f">聲音（選填）</label>
+  <textarea id="dSound" style="min-height:60px" placeholder="咖啡廳的輕聲背景音、杯盤碰撞聲"></textarea>
+  <label class="f">長度</label>
+  <div class="seg" id="dDur"><button data-v="5" class="on">5 秒</button><button data-v="8">8 秒</button><button data-v="10">10 秒</button></div>
+  <label class="check"><input type="checkbox" id="dLock">鎖定鏡頭</label>
+  <label class="check"><input type="checkbox" id="dStatic">主體不動（只有細微動作）</label>
+  <div class="note">首幀只能用這面牆上生成的圖，描述會先過內容篩選。</div>
+  <button class="go" id="dAdd">加入待送清單</button>
+</div>
 
-<dialog id="confirm"><h1 id="cTitle">確認</h1><pre id="cBody"></pre><div class="row"><button id="cNo">取消</button><button class="ok" id="cYes">確認開始</button></div></dialog>
+<div id="dock">
+  <div class="drow"><span class="dot"></span><span id="dockMsg"></span>
+    <button class="dbtn pri" id="dockConsent" hidden>我按好 Drive 同意了</button>
+    <button class="dbtn" id="dockCancel" hidden>取消</button>
+    <button class="dbtn" id="dockHide" hidden>關閉</button></div>
+  <div id="dockSub"></div>
+  <div class="track"><i id="dockBar"></i></div>
+</div>
+
+<dialog id="confirm"><h2 id="cTitle"></h2><div id="cBody"></div>
+  <div class="dact"><button class="go ghost" id="cNo">取消</button><button class="go" id="cYes">確認開始</button></div></dialog>
+<div id="toast" role="alert"></div>
+<div id="light"><img alt=""></div>
 
 <script>
 const $ = s => document.querySelector(s);
-const state = {aspect:'9:16', count:'2', backend:'local', filter:'', queue:[], drawerImage:null, job:null};
-const hints = {local:'本機：不花錢，但每張前會等顯示卡降到 60°C。', colab:'Colab：花少量 CU，每台新 VM 要按一次 Google Drive 同意。'};
+const el = (tag, cls, text) => { const e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; };
+const state = {aspect:'9:16', num:'2', backend:'local', filter:'', queue:[], drawerImage:null, job:null, pending:null};
+const hints = {local:'本機：不花錢，每張開始前會等顯示卡降到 60°C。', colab:'Colab：花少量 CU，每台新 VM 要按一次 Google Drive 同意。'};
+const ACTIVE = ['queued','running','waiting_for_user'];
+const RATIO = {'9:16':'9/16','16:9':'16/9','1:1':'1/1'};
 
-async function api(path, opts){
-  const r = await fetch(path, opts && {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(opts)});
+async function api(path, body){
+  const r = await fetch(path, body && {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
   const data = await r.json().catch(() => ({}));
   if(!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || r.status));
   return data;
 }
+let toastTimer;
+function toast(msg, ok){ const t = $('#toast'); t.textContent = msg; t.className = 'show' + (ok ? ' ok' : ''); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', ok ? 2200 : 6000); }
 function seg(id, key, after){
   $('#'+id).addEventListener('click', e => {
     const b = e.target.closest('button'); if(!b) return;
-    state[key] = b.dataset.v;
+    if(key) state[key] = b.dataset.v;
     [...$('#'+id).children].forEach(c => c.classList.toggle('on', c === b));
     after && after();
   });
 }
-seg('aspect','aspect'); seg('count','count'); seg('backend','backend', () => $('#backendHint').textContent = hints[state.backend]);
-seg('filter','filter', loadWall);
-$('#dDur').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; [...$('#dDur').children].forEach(c => c.classList.toggle('on', c === b)); });
+seg('aspect','aspect'); seg('num','num'); seg('filter','filter', loadWall); seg('dDur');
+seg('backend','backend', () => $('#backendHint').textContent = hints[state.backend]);
 
-function ask(title, body){
-  $('#cTitle').textContent = title; $('#cBody').textContent = body;
+function ask(title, parts){
+  $('#cTitle').textContent = title; const body = $('#cBody'); body.textContent = '';
+  if(parts.quote){ const q = el('div','quote'); q.append(el('small','', '實際送出的英文 prompt'), document.createTextNode(parts.quote)); body.append(q); }
+  const stats = el('div','stats');
+  parts.stats.forEach(([k, v]) => { const s = el('div','stat'); s.append(el('small','',k), el('b','',v)); stats.append(s); });
+  body.append(stats);
+  parts.notes.filter(Boolean).forEach(n => body.append(el('p','',n)));
   const d = $('#confirm'); d.showModal();
   return new Promise(res => { $('#cYes').onclick = () => { d.close(); res(true); }; $('#cNo').onclick = () => { d.close(); res(false); }; d.oncancel = () => res(false); });
 }
-function fmtEstimate(e){
-  const cu = e.compute_units === null ? '' : `\n預估 CU：${e.compute_units}`;
-  return `預估時間：約 ${e.minutes} 分鐘${cu}\n${e.where || (e.note || '')}` + (e.user_actions ? '\n需要你做：' + e.user_actions.join('、') : '');
-}
 
 $('#goImages').onclick = async () => {
-  const body = {prompt:$('#prompt').value, aspect:state.aspect, count:+state.count, backend:state.backend, solo:$('#solo').checked};
+  const body = {prompt:$('#prompt').value, aspect:state.aspect, count:+state.num, backend:state.backend, solo:$('#solo').checked};
   try{
-    const pre = await api('/api/images', body);
-    if(!await ask(`生成 ${body.count} 張圖`, `實際送出的英文 prompt：\n${pre.english_prompt}\n\n${fmtEstimate(pre.estimate)}`)) return;
+    const pre = await api('/api/images', body), e = pre.estimate;
+    const stats = [['張數', String(e.images)], ['預估時間', `約 ${e.minutes} 分`], ['花費', e.compute_units === 0 ? '0 CU' : '少量 CU']];
+    if(!await ask('生成圖片', {quote:pre.english_prompt, stats, notes:[e.where]})) return;
     const job = await api('/api/images', {...body, confirm:true});
-    track(job.job_id);
-  }catch(e){ alert(e.message); }
+    state.pending = {n:body.count, aspect:body.aspect}; track(job.job_id);
+  }catch(err){ toast(err.message); }
 };
 
-function addToQueue(){
+function closeDrawer(){ $('#drawer').classList.remove('open'); $('#veil').classList.remove('open'); }
+function openDrawer(item){ state.drawerImage = item; $('#dImg').src = item.url; $('#drawer').classList.add('open'); $('#veil').classList.add('open'); setTimeout(() => $('#dDesc').focus(), 250); }
+$('#dClose').onclick = closeDrawer; $('#veil').onclick = closeDrawer;
+document.addEventListener('keydown', e => { if(e.key === 'Escape'){ closeDrawer(); $('#light').classList.remove('open'); } });
+$('#dAdd').onclick = () => {
   const desc = $('#dDesc').value.trim();
-  if(!desc){ alert('請描述要發生的動作'); return; }
+  if(!desc){ toast('請描述要發生的動作'); return; }
   state.queue.push({image_id:state.drawerImage.image_id, url:state.drawerImage.url, description:desc, soundscape:$('#dSound').value,
     duration:+$('#dDur .on').dataset.v, locked_camera:$('#dLock').checked, static_subject:$('#dStatic').checked});
-  $('#drawer').classList.remove('open'); $('#dDesc').value=''; renderQueue();
-}
-$('#dAdd').onclick = addToQueue; $('#dClose').onclick = () => $('#drawer').classList.remove('open');
+  closeDrawer(); $('#dDesc').value = ''; $('#dSound').value = ''; renderQueue(); toast('已加入待送清單', true);
+};
 
 function renderQueue(){
   const q = $('#queue'); q.textContent = '';
-  if(!state.queue.length){ q.innerHTML = '<div class="hint">在圖片上按「生成影片」，把它加進來。</div>'; }
+  $('#qn').textContent = state.queue.length ? `${state.queue.length} 支` : '';
+  if(!state.queue.length) q.append(el('p','hint','把滑鼠移到圖片上，按「生成影片」把它加進來。'));
   state.queue.forEach((c, i) => {
-    const row = document.createElement('div'); row.className = 'qi';
-    const t = document.createElement('span'); t.textContent = `${i+1}. ${c.duration} 秒｜${c.description.slice(0,28)}`;
-    const x = document.createElement('button'); x.textContent = '移除'; x.onclick = () => { state.queue.splice(i,1); renderQueue(); };
-    row.append(t, x); q.append(row);
+    const row = el('div','qi'), img = el('img'), t = el('div','t'), x = el('button','', '×');
+    img.src = c.url; img.alt = ''; t.append(el('b','',`${c.duration} 秒`), document.createTextNode(c.description));
+    x.setAttribute('aria-label','移除'); x.onclick = () => { state.queue.splice(i,1); renderQueue(); };
+    row.append(img, t, x); q.append(row);
   });
   $('#goVideos').disabled = !state.queue.length;
+  $('#goVideos').textContent = state.queue.length ? `送出 ${state.queue.length} 支影片` : '送出影片';
 }
 $('#goVideos').onclick = async () => {
   const clips = state.queue.map(({url, ...c}) => c);
   try{
-    const pre = await api('/api/videos', {clips});
-    if(!await ask(`送出 ${clips.length} 支影片到 Colab`, fmtEstimate(pre.estimate) + '\n\n會花 Colab 運算單位。')) return;
+    const e = (await api('/api/videos', {clips})).estimate;
+    const stats = [['影片', `${e.clips} 支`], ['預估時間', `約 ${e.minutes} 分`], ['預估花費', `${e.compute_units} CU`]];
+    if(!await ask('送出影片到 Colab', {stats, notes:[e.note, '需要你做：' + e.user_actions.join('、')]})) return;
     const job = await api('/api/videos', {clips, confirm:true});
-    state.queue = []; renderQueue(); track(job.job_id);
-  }catch(e){ alert(e.message); }
+    state.queue = []; renderQueue(); state.pending = null; track(job.job_id);
+  }catch(err){ toast(err.message); }
 };
 
-function openDrawer(item){
-  state.drawerImage = item; $('#dImg').src = item.url; $('#drawer').classList.add('open'); $('#dDesc').focus();
-}
 function card(item){
-  const c = document.createElement('div'); c.className = 'card';
-  const m = document.createElement(item.kind === 'video' ? 'video' : 'img'); m.src = item.url;
-  if(item.kind === 'video'){ m.controls = true; m.preload = 'metadata'; } else m.loading = 'lazy';
+  const video = item.kind === 'video', c = el('div', 'card' + (video ? ' vid' : ''));
+  const m = el(video ? 'video' : 'img'); m.src = item.url;
+  if(video){ m.controls = true; m.preload = 'metadata'; m.loop = true; }
+  else { m.loading = 'lazy'; m.alt = item.prompt || ''; m.onclick = () => { $('#light img').src = item.url; $('#light').classList.add('open'); }; }
   c.append(m);
-  const acts = document.createElement('div'); acts.className = 'acts';
-  const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; acts.append(b); };
-  if(item.kind === 'image'){
-    btn('生成影片', () => openDrawer(item));
-    btn('複製 prompt', () => navigator.clipboard && navigator.clipboard.writeText(item.prompt || ''));
-    c.append(acts);
+  const shade = el('div','shade');
+  shade.append(el('div','cap', video ? item.description : (item.prompt || '')));
+  if(!video){
+    const acts = el('div','acts'), go = el('button','pri','生成影片'), copy = el('button','', '複製 prompt');
+    go.onclick = () => openDrawer(item);
+    copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(item.prompt || '').then(() => toast('已複製', true));
+    acts.append(go, copy); shade.append(acts);
   }
-  const cap = document.createElement('div'); cap.className = 'cap';
-  cap.textContent = item.kind === 'video' ? `${item.duration} 秒｜${item.description}` : (item.prompt || '');
-  c.append(cap);
-  if(item.kind === 'image' && item.backend){ const b = document.createElement('span'); b.className = 'badge'; b.textContent = item.backend === 'colab' ? 'Colab' : '本機'; c.append(b); }
+  c.append(shade);
+  if(video) c.append(el('span','tag v',`${item.duration} 秒`));
+  else if(item.backend) c.append(el('span','tag', item.backend === 'colab' ? 'Colab' : '本機'));
   return c;
 }
 async function loadWall(){
   const {items} = await api('/api/library' + (state.filter ? '?kind=' + state.filter : ''));
   const w = $('#wall'); w.textContent = '';
-  if(!items.length){ w.innerHTML = '<div class="empty">作品牆還是空的。從左邊描述一個畫面開始。</div>'; return; }
+  $('#count').textContent = items.length ? `${items.length} 件作品` : '';
+  if(state.pending && state.filter !== 'video') for(let i = 0; i < state.pending.n; i++){ const s = el('div','skel','生成中…'); s.style.aspectRatio = RATIO[state.pending.aspect]; w.append(s); }
+  if(!items.length && !state.pending){
+    w.innerHTML = '<div class="empty" style="column-span:all"><div class="art"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></svg></div><h2>作品牆還是空的</h2>從左邊描述一個畫面開始。<ol><li>描述畫面，生成幾張候選圖</li><li>在喜歡的那張上按「生成影片」</li><li>填動作與秒數，送出</li></ol></div>';
+    return;
+  }
   items.forEach(i => w.append(card(i)));
 }
+$('#light').onclick = () => $('#light').classList.remove('open');
 
-let timer = null;
-function track(id){ state.job = id; clearInterval(timer); timer = setInterval(poll, 3000); poll(); }
+let timer = null, seen = -1;
+function track(id){ state.job = id; seen = -1; clearInterval(timer); timer = setInterval(poll, 3000); poll(); loadWall(); }
 async function poll(){
   if(!state.job) return;
   try{
-    const j = await api('/api/jobs/' + state.job);
-    const active = ['queued','running','waiting_for_user'].includes(j.status);
-    const p = j.progress || {};
-    $('#barMsg').textContent = `${j.status === 'waiting_for_user' ? '' : ''}${j.message}${p.total ? `（${p.done||0}/${p.total}）` : ''}${j.error ? '｜' + j.error : ''}`;
-    $('#barMsg').classList.toggle('warn', !!j.needs_user_action || j.status === 'failed');
-    if(j.needs_user_action) $('#barMsg').textContent += '｜' + j.needs_user_action;
-    $('#barConsent').hidden = j.status !== 'waiting_for_user'; $('#barCancel').hidden = !active;
-    loadWall();
-    if(!active){ clearInterval(timer); state.job = null; }
-  }catch(e){ $('#barMsg').textContent = e.message; }
+    const j = await api('/api/jobs/' + state.job), active = ACTIVE.includes(j.status), p = j.progress || {}, dock = $('#dock');
+    dock.className = 'show' + (j.status === 'waiting_for_user' ? ' wait' : j.status === 'failed' ? ' fail' : active ? '' : ' done');
+    $('#dockMsg').textContent = j.message + (p.total ? `　${p.done || 0} / ${p.total}` : '');
+    $('#dockSub').textContent = j.needs_user_action || j.error || '';
+    $('#dockBar').style.width = (active ? (p.total ? Math.max(4, 100 * (p.done || 0) / p.total) : 4) : 100) + '%';
+    $('#dockConsent').hidden = j.status !== 'waiting_for_user'; $('#dockCancel').hidden = !active; $('#dockHide').hidden = active;
+    if(state.pending) state.pending.n = Math.max(0, (p.total || 0) - (p.done || 0));
+    if(!active){ clearInterval(timer); state.job = null; state.pending = null; }
+    if(!active || (p.done || 0) !== seen){ seen = p.done || 0; loadWall(); }
+  }catch(err){ $('#dockSub').textContent = err.message; }
 }
-$('#barCancel').onclick = () => state.job && api(`/api/jobs/${state.job}/cancel`, {}).then(poll).catch(e => alert(e.message));
-$('#barConsent').onclick = () => state.job && api(`/api/jobs/${state.job}/consent-done`, {}).then(poll).catch(e => alert(e.message));
+$('#dockCancel').onclick = () => state.job && api(`/api/jobs/${state.job}/cancel`, {}).then(poll).catch(e => toast(e.message));
+$('#dockConsent').onclick = () => state.job && api(`/api/jobs/${state.job}/consent-done`, {}).then(poll).catch(e => toast(e.message));
+$('#dockHide').onclick = () => $('#dock').className = '';
 
 (async () => {
-  loadWall();
+  renderQueue(); loadWall();
   const {jobs} = await api('/api/jobs?limit=1').catch(() => ({jobs:[]}));
-  if(jobs[0] && ['queued','running','waiting_for_user'].includes(jobs[0].status)) track(jobs[0].job_id);
+  if(jobs[0] && ACTIVE.includes(jobs[0].status)) track(jobs[0].job_id);
 })();
 </script>
 </body>
