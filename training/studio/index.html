@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>圖片轉影片工作室</title>
+<style>
+:root{--bg:#f6f6f4;--panel:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#dcdcd6;--acc:#2f5bea;--warn:#b45309;--ok:#15803d}
+@media (prefers-color-scheme:dark){:root{--bg:#161616;--panel:#212121;--ink:#ececea;--mute:#9a9a94;--line:#363632;--acc:#7b9cff;--warn:#f0a35a;--ok:#5fcf8a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,"Noto Sans TC",sans-serif;display:grid;grid-template-columns:320px 1fr;min-height:100vh;padding-bottom:64px}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:16px;position:sticky;top:0;height:100vh;overflow:auto}
+h1{font-size:16px;margin:0 0 12px}h2{font-size:13px;color:var(--mute);margin:16px 0 6px;font-weight:600}
+textarea,input,select{width:100%;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
+textarea{min-height:110px;resize:vertical}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{flex:1;border:0;background:none;color:inherit;padding:6px;cursor:pointer;font:inherit}
+.seg button.on{background:var(--acc);color:#fff}
+button.go{width:100%;margin-top:12px;padding:10px;border:0;border-radius:6px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+button.go:disabled{opacity:.5;cursor:default}
+.hint{color:var(--mute);font-size:12px;margin:4px 0 0}
+main{padding:16px}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{border:1px solid var(--line);background:var(--panel);color:inherit;border-radius:999px;padding:4px 14px;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--ink);color:var(--bg)}
+.wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative}
+.card img,.card video{width:100%;display:block;aspect-ratio:auto;background:#000}
+.card .cap{padding:6px 8px;font-size:12px;color:var(--mute);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .acts{position:absolute;inset:auto 0 auto 0;top:0;display:flex;gap:6px;padding:6px;opacity:0;transition:opacity .15s}
+.card:hover .acts,.card:focus-within .acts{opacity:1}
+.acts button{border:0;border-radius:4px;padding:4px 8px;cursor:pointer;background:rgba(0,0,0,.72);color:#fff;font:inherit;font-size:12px}
+.badge{position:absolute;right:6px;bottom:34px;background:rgba(0,0,0,.72);color:#fff;border-radius:4px;padding:0 6px;font-size:11px}
+.empty{color:var(--mute);padding:48px 0;text-align:center}
+#drawer{position:fixed;top:0;right:0;height:100vh;width:340px;max-width:100vw;background:var(--panel);border-left:1px solid var(--line);padding:16px;transform:translateX(100%);transition:transform .2s;overflow:auto;z-index:5}
+#drawer.open{transform:none}
+#drawer img{width:100%;border-radius:6px}
+.check{display:flex;gap:6px;align-items:center;margin:4px 0}.check input{width:auto}
+#queue{margin-top:12px;font-size:13px}.qi{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)}
+#bar{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:12px;align-items:center;z-index:4}
+#bar .msg{flex:1}#bar .warn{color:var(--warn);font-weight:600}
+#bar button{border:1px solid var(--line);background:none;color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);max-width:460px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog pre{white-space:pre-wrap;font:inherit;background:var(--bg);padding:8px;border-radius:6px}
+dialog .row{margin-top:12px}dialog button{padding:8px;border-radius:6px;border:1px solid var(--line);background:none;color:inherit;cursor:pointer;font:inherit}
+dialog button.ok{background:var(--acc);color:#fff;border:0}
+@media (max-width:760px){body{grid-template-columns:1fr}aside{position:static;height:auto}}
+</style>
+</head>
+<body>
+<aside>
+  <h1>圖片轉影片工作室</h1>
+  <h2>1. 描述畫面（中文或英文）</h2>
+  <textarea id="prompt" placeholder="例如：一位二十多歲的女性站在咖啡廳窗邊，午後陽光，自然光"></textarea>
+  <h2>比例</h2>
+  <div class="seg" id="aspect"><button data-v="9:16" class="on">9:16</button><button data-v="16:9">16:9</button><button data-v="1:1">1:1</button></div>
+  <h2>張數</h2>
+  <div class="seg" id="count"><button data-v="1">1</button><button data-v="2" class="on">2</button><button data-v="4">4</button></div>
+  <h2>生圖引擎</h2>
+  <div class="seg" id="backend"><button data-v="local" class="on">本機顯卡</button><button data-v="colab">Colab</button></div>
+  <p class="hint" id="backendHint">本機：不花錢，但每張前會等顯示卡降到 60°C。</p>
+  <div class="check"><label><input type="checkbox" id="solo" checked> 只有一個人</label></div>
+  <button class="go" id="goImages">生成圖片</button>
+  <p class="hint">按下後會先顯示預估與實際送出的英文 prompt，確認才開始。</p>
+
+  <h2>待送影片清單</h2>
+  <div id="queue"><div class="hint">在圖片上按「生成影片」，把它加進來。</div></div>
+  <button class="go" id="goVideos" disabled>送出影片（MiniMax H3，Colab）</button>
+</aside>
+
+<main>
+  <div class="tabs" id="filter"><button data-v="" class="on">全部</button><button data-v="image">圖片</button><button data-v="video">影片</button></div>
+  <div class="wall" id="wall"></div>
+</main>
+
+<div id="drawer" aria-label="影片設定">
+  <h1>用這張圖生成影片</h1>
+  <img id="dImg" alt="首幀">
+  <h2>動作與鏡頭（英文或中文）</h2>
+  <textarea id="dDesc" placeholder="她轉頭看向鏡頭微笑，頭髮被微風吹動。鏡頭緩慢推近。"></textarea>
+  <h2>聲音（選填）</h2>
+  <textarea id="dSound" style="min-height:56px" placeholder="咖啡廳的輕聲背景音、杯盤碰撞聲"></textarea>
+  <h2>秒數</h2>
+  <div class="seg" id="dDur"><button data-v="5" class="on">5</button><button data-v="8">8</button><button data-v="10">10</button></div>
+  <div class="check"><label><input type="checkbox" id="dLock"> 鎖定鏡頭</label></div>
+  <div class="check"><label><input type="checkbox" id="dStatic"> 主體不動（只有細微動作）</label></div>
+  <p class="hint">H3 沒有負面詞，所以首幀只能用這面牆上生成的圖，描述會先過內容篩選。</p>
+  <div class="row" style="margin-top:12px"><button class="go" id="dAdd">加入待送清單</button><button class="go" id="dClose" style="background:var(--mute)">關閉</button></div>
+</div>
+
+<div id="bar"><span class="msg" id="barMsg">沒有進行中的工作</span><button id="barConsent" hidden>我按好了 Drive 同意</button><button id="barCancel" hidden>取消</button></div>
+
+<dialog id="confirm"><h1 id="cTitle">確認</h1><pre id="cBody"></pre><div class="row"><button id="cNo">取消</button><button class="ok" id="cYes">確認開始</button></div></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = {aspect:'9:16', count:'2', backend:'local', filter:'', queue:[], drawerImage:null, job:null};
+const hints = {local:'本機：不花錢，但每張前會等顯示卡降到 60°C。', colab:'Colab：花少量 CU，每台新 VM 要按一次 Google Drive 同意。'};
+
+async function api(path, opts){
+  const r = await fetch(path, opts && {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(opts)});
+  const data = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || r.status));
+  return data;
+}
+function seg(id, key, after){
+  $('#'+id).addEventListener('click', e => {
+    const b = e.target.closest('button'); if(!b) return;
+    state[key] = b.dataset.v;
+    [...$('#'+id).children].forEach(c => c.classList.toggle('on', c === b));
+    after && after();
+  });
+}
+seg('aspect','aspect'); seg('count','count'); seg('backend','backend', () => $('#backendHint').textContent = hints[state.backend]);
+seg('filter','filter', loadWall);
+$('#dDur').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; [...$('#dDur').children].forEach(c => c.classList.toggle('on', c === b)); });
+
+function ask(title, body){
+  $('#cTitle').textContent = title; $('#cBody').textContent = body;
+  const d = $('#confirm'); d.showModal();
+  return new Promise(res => { $('#cYes').onclick = () => { d.close(); res(true); }; $('#cNo').onclick = () => { d.close(); res(false); }; d.oncancel = () => res(false); });
+}
+function fmtEstimate(e){
+  const cu = e.compute_units === null ? '' : `\n預估 CU：${e.compute_units}`;
+  return `預估時間：約 ${e.minutes} 分鐘${cu}\n${e.where || (e.note || '')}` + (e.user_actions ? '\n需要你做：' + e.user_actions.join('、') : '');
+}
+
+$('#goImages').onclick = async () => {
+  const body = {prompt:$('#prompt').value, aspect:state.aspect, count:+state.count, backend:state.backend, solo:$('#solo').checked};
+  try{
+    const pre = await api('/api/images', body);
+    if(!await ask(`生成 ${body.count} 張圖`, `實際送出的英文 prompt：\n${pre.english_prompt}\n\n${fmtEstimate(pre.estimate)}`)) return;
+    const job = await api('/api/images', {...body, confirm:true});
+    track(job.job_id);
+  }catch(e){ alert(e.message); }
+};
+
+function addToQueue(){
+  const desc = $('#dDesc').value.trim();
+  if(!desc){ alert('請描述要發生的動作'); return; }
+  state.queue.push({image_id:state.drawerImage.image_id, url:state.drawerImage.url, description:desc, soundscape:$('#dSound').value,
+    duration:+$('#dDur .on').dataset.v, locked_camera:$('#dLock').checked, static_subject:$('#dStatic').checked});
+  $('#drawer').classList.remove('open'); $('#dDesc').value=''; renderQueue();
+}
+$('#dAdd').onclick = addToQueue; $('#dClose').onclick = () => $('#drawer').classList.remove('open');
+
+function renderQueue(){
+  const q = $('#queue'); q.textContent = '';
+  if(!state.queue.length){ q.innerHTML = '<div class="hint">在圖片上按「生成影片」，把它加進來。</div>'; }
+  state.queue.forEach((c, i) => {
+    const row = document.createElement('div'); row.className = 'qi';
+    const t = document.createElement('span'); t.textContent = `${i+1}. ${c.duration} 秒｜${c.description.slice(0,28)}`;
+    const x = document.createElement('button'); x.textContent = '移除'; x.onclick = () => { state.queue.splice(i,1); renderQueue(); };
+    row.append(t, x); q.append(row);
+  });
+  $('#goVideos').disabled = !state.queue.length;
+}
+$('#goVideos').onclick = async () => {
+  const clips = state.queue.map(({url, ...c}) => c);
+  try{
+    const pre = await api('/api/videos', {clips});
+    if(!await ask(`送出 ${clips.length} 支影片到 Colab`, fmtEstimate(pre.estimate) + '\n\n會花 Colab 運算單位。')) return;
+    const job = await api('/api/videos', {clips, confirm:true});
+    state.queue = []; renderQueue(); track(job.job_id);
+  }catch(e){ alert(e.message); }
+};
+
+function openDrawer(item){
+  state.drawerImage = item; $('#dImg').src = item.url; $('#drawer').classList.add('open'); $('#dDesc').focus();
+}
+function card(item){
+  const c = document.createElement('div'); c.className = 'card';
+  const m = document.createElement(item.kind === 'video' ? 'video' : 'img'); m.src = item.url;
+  if(item.kind === 'video'){ m.controls = true; m.preload = 'metadata'; } else m.loading = 'lazy';
+  c.append(m);
+  const acts = document.createElement('div'); acts.className = 'acts';
+  const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; acts.append(b); };
+  if(item.kind === 'image'){
+    btn('生成影片', () => openDrawer(item));
+    btn('複製 prompt', () => navigator.clipboard && navigator.clipboard.writeText(item.prompt || ''));
+    c.append(acts);
+  }
+  const cap = document.createElement('div'); cap.className = 'cap';
+  cap.textContent = item.kind === 'video' ? `${item.duration} 秒｜${item.description}` : (item.prompt || '');
+  c.append(cap);
+  if(item.kind === 'image' && item.backend){ const b = document.createElement('span'); b.className = 'badge'; b.textContent = item.backend === 'colab' ? 'Colab' : '本機'; c.append(b); }
+  return c;
+}
+async function loadWall(){
+  const {items} = await api('/api/library' + (state.filter ? '?kind=' + state.filter : ''));
+  const w = $('#wall'); w.textContent = '';
+  if(!items.length){ w.innerHTML = '<div class="empty">作品牆還是空的。從左邊描述一個畫面開始。</div>'; return; }
+  items.forEach(i => w.append(card(i)));
+}
+
+let timer = null;
+function track(id){ state.job = id; clearInterval(timer); timer = setInterval(poll, 3000); poll(); }
+async function poll(){
+  if(!state.job) return;
+  try{
+    const j = await api('/api/jobs/' + state.job);
+    const active = ['queued','running','waiting_for_user'].includes(j.status);
+    const p = j.progress || {};
+    $('#barMsg').textContent = `${j.status === 'waiting_for_user' ? '' : ''}${j.message}${p.total ? `（${p.done||0}/${p.total}）` : ''}${j.error ? '｜' + j.error : ''}`;
+    $('#barMsg').classList.toggle('warn', !!j.needs_user_action || j.status === 'failed');
+    if(j.needs_user_action) $('#barMsg').textContent += '｜' + j.needs_user_action;
+    $('#barConsent').hidden = j.status !== 'waiting_for_user'; $('#barCancel').hidden = !active;
+    loadWall();
+    if(!active){ clearInterval(timer); state.job = null; }
+  }catch(e){ $('#barMsg').textContent = e.message; }
+}
+$('#barCancel').onclick = () => state.job && api(`/api/jobs/${state.job}/cancel`, {}).then(poll).catch(e => alert(e.message));
+$('#barConsent').onclick = () => state.job && api(`/api/jobs/${state.job}/consent-done`, {}).then(poll).catch(e => alert(e.message));
+
+(async () => {
+  loadWall();
+  const {jobs} = await api('/api/jobs?limit=1').catch(() => ({jobs:[]}));
+  if(jobs[0] && ['queued','running','waiting_for_user'].includes(jobs[0].status)) track(jobs[0].job_id);
+})();
+</script>
+</body>
+</html>

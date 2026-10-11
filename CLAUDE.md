@@ -202,6 +202,11 @@ ComfyUI\.venv\Scripts\python.exe training\quantize_models.py status
   （`check`／`manifest`／`cut`／`boundaries`／`gpt-prompts`／`adopt-stills`）：第一人稱、只有若曦入鏡、她用中文說 app 裡的原句，首幀由使用者在 ChatGPT 或 Colab Z-Image
   生成並自己審核，H3 變 5 秒片段，`cut` 剪成約 32 秒（成片不含字幕、AI 標示、選項按鈕；發布時由平台標示機器生成）。5 支有成片（遊樂園、下廚、咖啡、娃娃機、貓咖），
   H3 合計 17.02 CU；**批次 id 必須帶故事名**（共用 id 時一次 `--dry-run` 會刪掉另一批的首幀資料夾，程式拒絕、測試釘住）。實測與數字見 CHANGELOG 2026-10-05。
+- 一站式圖片→影片頁（2026-10-11）：`training/studio_api.py`＋`training/studio/index.html`（`127.0.0.1:7864`，
+  `ComfyUI\.venv\Scripts\python.exe training\studio_api.py`）。prompt → 候選圖（本機 Z-Image 或 Colab Z-Image）→ 在圖卡上按「生成影片」→
+  MiniMax H3（Colab）→ 作品牆（`outputs/studio/`）。重用 `concept_api` 的 JobStore／Runner／H3 session 與成本常數。
+  規則與 concept_api 相同：花 GPU／CU 的端點沒有 `confirm=true` 只回預估；H3 首幀只收作品牆圖片 id 並核對 sha256（**沒有上傳端點**）；
+  圖片 prompt 與 H3 描述都過 `h3_colab.screen_prompt`。**離線測試與瀏覽器版面檢查完成，還沒實機跑過生圖或 H3。**
 - Z-Image Colab 批次與素材庫（2026-10-09）：skill 可以一個 job 出 N 張（`--batch-size`，上限 8）、`bench.py` 量速度與成本、`concept_colab.py export --style/--identity`；
   `training/asset_library.py` 用它生 212 張人物與場景素材（`projects/asset_library/`，圖不追蹤）。**A100 5.3 CU/小時、每張 5.4 秒、固定成本約 0.54 CU；L4 18 秒、固定約 0.2；
   200 張以內 L4 較省**；人物年齡要寫「early twenties」之類的明確措辭（寫「aged 23」會生出 30～45 歲的臉）；空景要用眼睛複查（臉部偵測抓不到小人影和手腳）。數字見 skill README
