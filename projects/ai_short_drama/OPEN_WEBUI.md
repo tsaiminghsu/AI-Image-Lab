@@ -58,7 +58,8 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    ```
    你是短劇概念片的製作助理，用繁體中文回答，透過工具操作流程。
    規則：
-   1. 不替使用者選圖或核准。只有使用者明確說出「Scene N 核准第 M 張」或「Scene N 重生」時才呼叫 review_scene。
+   1. 不替使用者選圖或核准。只有使用者明確說出「Scene N 核准第 M 張」或「Scene N 重生」時才呼叫 review_scene，
+      並把使用者那句話原文放進 user_quote。「看起來不錯」「第 2 張好像比較好看」這類話不是決定，要反問使用者。
    2. generate_candidates 與 make_videos 要先不帶 confirm 呼叫一次，把預估（張數、分鐘、CU、需要的人工動作）告訴使用者，
       使用者說好之後才帶 confirm=true 再呼叫。
    3. 工作排入後用 get_job 查進度；needs_user_action 有內容時，原文告訴使用者要做什麼。
@@ -74,7 +75,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 | `list_stories` | 五個故事的狀態、圖片數、影片數 | 不會 |
 | `list_scenes` | 一個故事的 7 個 Scene：劇情、狀態、候選圖、要核對的畫面文字 | 不會 |
 | `generate_candidates` | 排入本機生圖。預設只生每個 Scene 的候選 1（7 張）；`candidates: [2]` 補第二張，`[3, 4]` 只給判定重生的 Scene | **本機 GPU**，每張約 2.3 分鐘 |
-| `review_scene` | 記錄你的決定：核准第幾張（變成 `master.png`）或判定重生 | 不會 |
+| `review_scene` | 記錄你的決定：核准第幾張（變成 `master.png`）或判定重生。**必須附上你的原話**（`user_quote`） | 不會 |
 | `set_video_prompt` | 存一個 Scene 的 H3 鏡頭描述（英文） | 不會 |
 | `make_videos` | 把**已核准**的 Scene 送 H3，每個 session 最多 4 支 | **Colab CU**，要 Docker、要按 Drive 同意 |
 | `make_cut` | 7 支片段接成一支，音量調平到約 −14 LUFS，可加結尾字幕 | CPU，約 1 分鐘 |
@@ -107,7 +108,10 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 
 ## 五、這層保證不了的事
 
-- **「是你決定的」驗不了。** 伺服器看不到是誰下的決定，只能靠工具說明與系統提示約束模型，並在 `review.json` 記
-  `decided_via: open-webui`。核准之後請自己看一眼 `review_sheet.html` 或 `list_scenes` 的結果。
+- **「是你決定的」只能部分驗證。** 實測 9B 模型（Q4_K_M 與 Q8_0）會把「Scene 3 看起來還不錯」「第 2 張好像比較好看」
+  當成核准，還會自己編故事名稱，所以光靠系統提示不夠。`review_scene` 現在必須附 `user_quote`（你的原話），伺服器檢查：
+  有明確的決定用語（核准／批准、重生／重新生成／重做／重跑）、沒有猶豫或比較或提問的字眼（好像、看起來、要不要、嗎、比較…）、
+  提到的 Scene 與候選編號和呼叫的一致；不合就回 422，不會記錄。原話會寫進 `review.json` 的 `notes`，`decided_via: open-webui`。
+  **這驗的是話，不是人**：模型仍可能編出一句符合格式的原話。核准之後請自己看一眼 `review_sheet.html` 或 `list_scenes` 的結果。
 - 9B 的模型可能選錯工具或漏參數；工具回傳的錯誤訊息是中文，會說明缺什麼。
 - H3 仍然需要你在場：Docker Desktop 要開著、每個 session 要按一次 Drive 同意。

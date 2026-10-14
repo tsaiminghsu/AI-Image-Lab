@@ -535,8 +535,49 @@ def generate_candidates(story: int, body: GenerateBody):
     return {"queued": True, "job_id": job["job_id"], "estimate": estimate, "message": "已排入佇列，用 get_job 查進度"}
 
 
+# A 9B chat model approved scenes on "Scene 3 looks fine" and "the 2nd one seems nicer" and invented story names
+# (measured 2026-10-14: 0/3 and 1/3 correct refusals), so the system prompt alone cannot keep the decision with the
+# user. review_scene therefore needs the user's own words and checks that they are an explicit decision.
+APPROVE_WORDS = ("核准", "批准")
+REGENERATE_WORDS = ("重生", "重新生成", "重做", "重跑")
+HEDGE_WORDS = ("好像", "也許", "或許", "可能", "看起來", "感覺", "應該", "要不要", "是不是", "比較", "如果", "嗎", "？", "?")
+CHINESE_DIGITS = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4}
+MAX_QUOTE_CHARS = 200
+
+
+def _digit(text):
+    return CHINESE_DIGITS.get(text) or int(text)
+
+
+def quote_problem(decision, candidate, scene, quote):
+    """Why `quote` is not an explicit decision by the user for this scene, or None. This checks the words, not who
+    typed them: a model could still invent a matching quote, which the review record keeps so it can be audited."""
+    q = (quote or "").strip()
+    if not q:
+        return "需要 user_quote：使用者這次說的原話，例如「Scene 3 核准第 2 張」"
+    if len(q) > MAX_QUOTE_CHARS:
+        return f"user_quote 太長（上限 {MAX_QUOTE_CHARS} 字）：只貼使用者下決定的那句話"
+    hedge = next((w for w in HEDGE_WORDS if w in q), None)
+    if hedge:
+        return f"這句話含「{hedge}」，像是猶豫、比較或提問，不是明確決定。請問使用者要核准第幾張，或要不要重生"
+    words = APPROVE_WORDS if decision == "approve" else REGENERATE_WORDS
+    if not any(w in q for w in words):
+        return f"這句話裡沒有明確的決定用語（{'、'.join(words)}）。使用者沒有明說就不要記錄"
+    mentioned = {_digit(a or b) for a, b in re.findall(r"[Ss]cene\s*(\d+)|場景\s*(\d+)", q)}
+    if mentioned and mentioned != {scene}:
+        return f"這句話提到的是 Scene {'、'.join(map(str, sorted(mentioned)))}，不是 Scene {scene}"
+    if decision == "approve":
+        picked = {_digit(a or b) for a, b in re.findall(r"第\s*([1-4一二三四兩])\s*[張个]|候選\s*([1-4一二三四兩])", q)}
+        if picked != {candidate}:
+            return f"這句話沒有明確說出第 {candidate} 張（找到的編號：{sorted(picked) or '無'}）"
+    return None
+
+
 class ReviewBody(BaseModel):
     decision: str = Field(description="'approve' or 'regenerate'.", pattern="^(approve|regenerate)$")
+    user_quote: str = Field(description="The user's own words from their latest message that state this decision, copied "
+                                        "exactly, e.g. 'Scene 3 核准第 2 張' or 'Scene 3 重生'. Required; rejected if it "
+                                        "is hesitant, a comparison or a question.")
     candidate: int | None = Field(default=None, ge=1, le=4, description="For approve: the candidate number the USER "
                                                                         "chose (1-4).")
     notes: str = Field(default="", description="The user's reason, in their words.")
@@ -545,15 +586,21 @@ class ReviewBody(BaseModel):
 @app.post("/stories/{story}/scenes/{scene}/review", operation_id="review_scene", dependencies=AUTH,
           summary="Record the USER's decision for one scene: approve a candidate (it becomes the master image) or "
                   "mark the scene for regeneration. Call this only when the user explicitly stated the decision and, "
-                  "for approve, the candidate number. Never decide for the user.")
+                  "for approve, the candidate number; pass their exact words as user_quote. Remarks such as 'looks "
+                  "fine', 'the second one seems nicer' or a question are NOT a decision: ask the user instead. "
+                  "Never decide for the user.")
 def review_scene(story: int, scene: int, body: ReviewBody):
     st = _story(story)
     _scene(st, scene)
     if body.decision == "approve" and body.candidate is None:
         raise HTTPException(status_code=422, detail="核准需要使用者指定的候選編號（1-4）")
+    problem = quote_problem(body.decision, body.candidate, scene, body.user_quote)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    notes = f"{body.notes.strip()} ｜使用者原話：{body.user_quote.strip()}".strip(" ｜")
     try:
         result = cs.review(st, scene, approve=body.candidate if body.decision == "approve" else None,
-                           regenerate=body.decision == "regenerate", notes=body.notes, decided_via="open-webui")
+                           regenerate=body.decision == "regenerate", notes=notes, decided_via="open-webui")
     except gc.UsageError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     cs.build_index(cs.load_stories(runner.root), runner.root)

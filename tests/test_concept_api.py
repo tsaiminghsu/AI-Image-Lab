@@ -130,11 +130,21 @@ def web(env):
     return TestClient(api.app)
 
 
+def approve_body(candidate, scene, **extra):
+    """A review request carrying the user's own words, the way the chat model must send it."""
+    return {
+        "decision": "approve",
+        "candidate": candidate,
+        "user_quote": f"Scene {scene} 核准第 {candidate} 張",
+        **extra,
+    }
+
+
 def approve_all(web, runner, story=1):
     assert web.post(f"/stories/{story}/candidates", json={"candidates": [1, 2], "confirm": True}).json()["queued"]
     assert runner.run_next()["status"] == api.COMPLETED
     for scene in range(1, 8):
-        r = web.post(f"/stories/{story}/scenes/{scene}/review", json={"decision": "approve", "candidate": 2})
+        r = web.post(f"/stories/{story}/scenes/{scene}/review", json=approve_body(2, scene))
         assert r.status_code == 200, r.text
 
 
@@ -209,7 +219,10 @@ def test_extra_candidates_need_the_users_regenerate_decision(web, env):
     env.run_next()
     r = web.post("/stories/1/candidates", json={"candidates": [3, 4], "scenes": [4], "confirm": True})
     assert r.status_code == 409 and "REGENERATE" in r.json()["detail"]
-    web.post("/stories/1/scenes/4/review", json={"decision": "regenerate", "notes": "手機看不清楚"})
+    web.post(
+        "/stories/1/scenes/4/review",
+        json={"decision": "regenerate", "user_quote": "Scene 4 重生", "notes": "手機看不清楚"},
+    )
     assert (
         web.post("/stories/1/candidates", json={"candidates": [3, 4], "scenes": [4]}).json()["estimate"]["images"] == 2
     )
@@ -226,14 +239,63 @@ def test_only_one_job_at_a_time(web, env):
 def test_approval_needs_the_candidate_number_and_is_tagged_as_coming_from_the_chat(web, env):
     web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [2], "confirm": True})
     env.run_next()
-    assert web.post("/stories/1/scenes/2/review", json={"decision": "approve"}).status_code == 422
+    assert (
+        web.post("/stories/1/scenes/2/review", json={"decision": "approve", "user_quote": "Scene 2 核准"}).status_code
+        == 422
+    )
     assert web.post("/stories/1/scenes/2/review", json={"decision": "pick the best"}).status_code == 422
-    r = web.post("/stories/1/scenes/2/review", json={"decision": "approve", "candidate": 1, "notes": "表情對"})
+    r = web.post("/stories/1/scenes/2/review", json=approve_body(1, 2, notes="表情對"))
     assert r.json() == {"story": 1, "scene": 2, "status": cs.APPROVED, "approved_candidate": "candidate_01.png"}
     story = cs.load_stories(env.root)[0]
     assert cs.load_review(story, 2)["decided_via"] == "open-webui"
+    assert "Scene 2 核准第 1 張" in cs.load_review(story, 2)["notes"]  # the user's words stay in the record
     assert os.path.isfile(os.path.join(story.scene_dir(2), "master.png"))
-    assert web.post("/stories/1/scenes/3/review", json={"decision": "approve", "candidate": 1}).status_code == 409
+    assert web.post("/stories/1/scenes/3/review", json=approve_body(1, 3)).status_code == 409
+
+
+HESITANT_OR_UNCLEAR = [
+    "Scene 3 看起來還不錯",  # the sentence a 9B model turned into an approval
+    "Scene 3 的第 2 張好像比較好看",  # a comparison, not a decision
+    "Scene 3 要不要核准第 2 張？",  # a question
+    "我覺得第 2 張可以",  # no decision word
+    "",  # nothing said
+]
+
+
+@pytest.mark.parametrize("quote", HESITANT_OR_UNCLEAR)
+def test_a_hesitant_or_missing_quote_is_not_an_approval(web, env, quote):
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [3], "confirm": True})
+    env.run_next()
+    r = web.post("/stories/1/scenes/3/review", json={"decision": "approve", "candidate": 2, "user_quote": quote})
+    assert r.status_code == 422
+    story = cs.load_stories(env.root)[0]
+    assert cs.load_review(story, 3)["status"] == cs.HUMAN_REVIEW and not cs.load_review(story, 3)["approved_candidate"]
+
+
+def test_the_quote_must_match_the_scene_and_the_candidate_that_were_sent(web, env):
+    web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [3], "confirm": True})
+    env.run_next()
+    wrong_scene = {"decision": "approve", "candidate": 2, "user_quote": "Scene 5 核准第 2 張"}
+    assert "不是 Scene 3" in web.post("/stories/1/scenes/3/review", json=wrong_scene).json()["detail"]
+    wrong_candidate = {"decision": "approve", "candidate": 1, "user_quote": "Scene 3 核准第 2 張"}
+    assert web.post("/stories/1/scenes/3/review", json=wrong_candidate).status_code == 422
+    assert (
+        web.post(
+            "/stories/1/scenes/3/review", json={"decision": "regenerate", "user_quote": "Scene 3 核准第 2 張"}
+        ).status_code
+        == 422
+    )  # an approval quote cannot justify a regenerate
+    assert web.post("/stories/1/scenes/3/review", json=approve_body(2, 3)).status_code == 200
+
+
+@pytest.mark.parametrize("quote", ["Scene 3 核准第 2 張", "核准第二張", "scene 3 核准候選 2", "場景 3 批准第 2 張"])
+def test_the_ways_a_user_plainly_approves_are_accepted(quote):
+    assert api.quote_problem("approve", 2, 3, quote) is None
+
+
+@pytest.mark.parametrize("quote", ["Scene 3 重生", "scene 3 重新生成", "幫我重做 Scene 3"])
+def test_the_ways_a_user_plainly_asks_for_a_regenerate_are_accepted(quote):
+    assert api.quote_problem("regenerate", None, 3, quote) is None
 
 
 # --- H3 -----------------------------------------------------------------------------------------------------
@@ -287,7 +349,7 @@ def test_unapproved_scenes_and_scenes_without_a_shot_description_cannot_go_to_h3
     assert web.post("/stories/1/videos", json={"confirm": True}).status_code == 409  # nothing approved yet
     web.post("/stories/1/candidates", json={"candidates": [1, 2], "scenes": [1, 2], "confirm": True})
     env.run_next()
-    web.post("/stories/1/scenes/1/review", json={"decision": "approve", "candidate": 2})
+    web.post("/stories/1/scenes/1/review", json=approve_body(2, 1))
     r = web.post("/stories/1/videos", json={"scenes": [1, 2], "confirm": True})
     assert r.status_code == 409 and "Scene 2 還沒有核准的 master" in r.json()["detail"]
     approve_all(web, env, story=2)  # story 2 has no video blocks
@@ -682,7 +744,7 @@ def test_the_first_batch_is_one_image_per_scene_and_that_is_enough_to_review(web
     assert job["status"] == api.COMPLETED and job["result"]["images"] == 7
     scenes = web.get("/stories/4/scenes").json()["scenes"]
     assert [len(s["candidates"]) for s in scenes] == [1] * 7 and {s["status"] for s in scenes} == {cs.HUMAN_REVIEW}
-    assert web.post("/stories/4/scenes/1/review", json={"decision": "approve", "candidate": 1}).status_code == 200
+    assert web.post("/stories/4/scenes/1/review", json=approve_body(1, 1)).status_code == 200
     # the second batch skips the approved scene: it already has its master
     r = web.post("/stories/4/candidates", json={"candidates": [2], "scenes": [1, 2, 3]}).json()
     assert r["estimate"]["images"] == 2
