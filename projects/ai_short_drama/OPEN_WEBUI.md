@@ -29,8 +29,10 @@ URL 填 `http://host.docker.internal:21434`。另外環境變數 `OLLAMA_MODELS`
 
 **上下文長度**：Ollama 在 8 GB 的卡上預設只開 4096 個 token，但 Open WebUI 每則訊息都會附上 11 個工具的說明和系統提示
 （約 6,200 token），會報 `exceed_context_size_error`（`request (6198 tokens) exceeds the available context size (4096 tokens)`）。
-腳本因此用 `OLLAMA_CONTEXT_LENGTH=16384` 啟動 Ollama（`CONCEPT_OLLAMA_CTX` 可改）。實測 `qwen3.5:9b` 載入後約 6.6 GB、
-其中 5.7 GB 在 VRAM；換成更長的上下文會吃更多記憶體，生圖前一樣會卸載。
+腳本因此用 `OLLAMA_CONTEXT_LENGTH=32768` 啟動 Ollama（`CONCEPT_OLLAMA_CTX` 可改）。16384 在長對話裡會被塞滿（工具定義約 6,000 token，加上一次 `list_scenes` 約 3,800 token），塞滿時模型寫工具參數寫到一半被截斷，Open WebUI 會顯示
+`llama-server returned invalid tool call arguments ... unexpected end of JSON input`。實測 32768 只比 16384 多佔約 0.6 GB
+（Q4_K_M 6.15 → 6.72 GB、Q6_K 7.62 → 8.19 GB，16 GB 顯示卡）。**Open WebUI 的模型進階參數 `num_ctx (Ollama)` 也要改成 32768**，
+它每次都會明確送出自己的值，只改 Ollama 的預設不會生效。對話還是要一件事一個對話，太長就開新的。
 
 ## 一、啟動工具伺服器（手動）
 
