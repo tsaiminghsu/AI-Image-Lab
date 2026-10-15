@@ -298,6 +298,18 @@ def test_the_ways_a_user_plainly_asks_for_a_regenerate_are_accepted(quote):
     assert api.quote_problem("regenerate", None, 3, quote) is None
 
 
+def test_the_access_log_records_calls_but_never_bodies_or_file_requests(env, tmp_path):
+    log = tmp_path / "logs" / "access.log"
+    web = TestClient(api.AccessLog(api.app, str(log)))
+    assert web.get("/stories").status_code == 200
+    web.post("/stories/1/scenes/3/review", json={"decision": "approve", "candidate": 1, "user_quote": "SECRET-WORDS"})
+    web.get("/files/anything.png")
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2  # /files/ is skipped
+    assert " GET /stories 200 " in lines[0] and " POST /stories/1/scenes/3/review " in lines[1]
+    assert "SECRET-WORDS" not in log.read_text(encoding="utf-8")
+
+
 # --- H3 -----------------------------------------------------------------------------------------------------
 
 

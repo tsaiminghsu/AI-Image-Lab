@@ -767,6 +767,46 @@ def check_bind(host, token):
         raise gc.UsageError("CONCEPT_API_HOST 不是 127.0.0.1 時一定要設定 CONCEPT_API_TOKEN")
 
 
+class AccessLog:
+    """ASGI wrapper that appends one line per request (time, client, method, path, status, ms) to a file. It never
+    records request bodies, so a user_quote or a token cannot leak into it; /files/ is skipped (every thumbnail would
+    add a line). It exists so a chat-side problem can be told apart: did Open WebUI call a tool at all?"""
+
+    def __init__(self, app, path):
+        self.app = app
+        self.path = path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["path"].startswith("/files/"):
+            return await self.app(scope, receive, send)
+        status = [0]
+        started = time.time()
+
+        async def _send(message):
+            if message["type"] == "http.response.start":
+                status[0] = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, _send)
+        finally:
+            query = scope.get("query_string", b"").decode("latin-1")
+            client = (scope.get("client") or ("-",))[0]
+            target = scope["path"] + ("?" + query if query else "")
+            line = (f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {client} {scope['method']} {target} "
+                    f"{status[0]} {(time.time() - started) * 1000:.0f}ms\n")
+            try:
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(line)
+            except OSError:
+                pass  # logging must never break a request
+
+
+ACCESS_LOG_PATH = os.environ.get(
+    "CONCEPT_API_ACCESS_LOG", os.path.join(REPO_ROOT, "outputs", "logs", "concept_api_access.log"))
+
+
 if __name__ == "__main__":
     import uvicorn
 
@@ -774,4 +814,4 @@ if __name__ == "__main__":
         check_bind(HOST, os.environ.get("CONCEPT_API_TOKEN"))
     except gc.UsageError as exc:
         raise SystemExit(str(exc)) from None
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run(AccessLog(app, ACCESS_LOG_PATH), host=HOST, port=PORT)
