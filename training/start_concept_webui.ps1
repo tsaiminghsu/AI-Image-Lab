@@ -133,5 +133,5 @@ if ($reachOllama -eq "200") { Write-Host "  容器連得到 Ollama" } else { Wri
 Write-Host ""
 Write-Host "完成。顯示卡沒有被動用；要生圖時由聊天裡的工具啟動 ComfyUI。" -ForegroundColor Green
 Write-Host "Open WebUI 的 Ollama 連線要指向 http://host.docker.internal:$ollamaPort（只要設一次）。"
-Write-Host "提醒：生圖期間盡量不要聊天（聊天模型和生圖共用同一張 8 GB 顯示卡）。"
+Write-Host "提醒：生圖期間盡量不要聊天（聊天模型和生圖共用同一張 16 GB 顯示卡）。"
 if (-not $NoBrowser) { Start-Process $webUrl }
