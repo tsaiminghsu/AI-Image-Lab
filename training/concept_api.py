@@ -633,6 +633,114 @@ def set_video_prompt(story: int, scene: int, body: VideoPromptBody):
     return {"story": st.number, "scene": scene, "saved": True}
 
 
+# What a chat user may change about a still. Characters, solo and the style stay fixed (they define the story and the
+# safety path); only the scene's own picture description can be edited, and never after the scene has its master.
+VISUAL_ENGLISH_FIELDS = ("action", "setting", "lighting")
+VISUAL_TEXT_FIELDS = VISUAL_ENGLISH_FIELDS + ("on_screen_text", "negative_extra")
+MAX_VISUAL_FIELD_CHARS = 700
+MAX_VISUAL_QUOTE_CHARS = 300
+VISUAL_EDIT_LOG = "visual_edits.jsonl"
+_CJK = re.compile(r"[一-鿿]")
+_h3 = None
+# h3_colab.screen_prompt refuses "15 years old", "15 yo" and "15歲" but lets "aged 15" through; a free-text edit must not
+# be able to write that, so this tool adds the phrase itself.
+_AGE_PHRASE = re.compile(r"(?<![a-z])(?:aged?|age\s+of)\s*[:\-]?\s*(\d{1,2})(?!\d)", re.IGNORECASE)
+
+
+def _screen(*texts):
+    """The same positive-term screen the H3 prompts and the studio's picture prompts go through (no bypass)."""
+    global _h3
+    if _h3 is None:
+        sys.path.insert(0, H3_SCRIPTS)
+        try:
+            import h3_colab
+        finally:
+            sys.path.remove(H3_SCRIPTS)
+        _h3 = h3_colab
+    for text in texts:
+        young = [m.group(0) for m in _AGE_PHRASE.finditer(text or "") if int(m.group(1)) < 18]
+        if young:
+            raise HTTPException(status_code=422, detail=f"畫面描述不能寫出未滿 18 歲的年齡：{young}")
+        try:
+            _h3.screen_prompt(text or "")
+        except _h3.H3Error as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+class SceneVisualBody(BaseModel):
+    user_quote: str = Field(description="The user's own words asking for this change, copied exactly. Required.")
+    action: str | None = Field(default=None, description="English. Who does what in this one still moment: pose, "
+                                                         "expression, hands. Omit to keep it.")
+    setting: str | None = Field(default=None, description="English. The place and its props. Omit to keep it.")
+    lighting: str | None = Field(default=None, description="English. Light sources and colour. Omit to keep it.")
+    on_screen_text: str | None = Field(default=None, description="Exact words that must be legible in the image "
+                                                                 "(any language), as short as possible; '' removes "
+                                                                 "them. Omit to keep it.")
+    negative_extra: str | None = Field(default=None, description="English. Extra things to keep out of this scene.")
+    compositions: dict[str, str] | None = Field(
+        default=None, description="English camera framing per candidate letter, e.g. {'C': 'low angle close-up ...'}. "
+                                  "Only letters that have no image yet.")
+
+
+@app.put("/stories/{story}/scenes/{scene}/visual", operation_id="set_scene_visual", dependencies=AUTH,
+         summary="Change the picture description of one scene (action, setting, lighting, on-screen text, extra "
+                 "negatives, camera framing) in the words the USER asked for. Pass their exact words as user_quote and "
+                 "only the fields they asked to change. It does not draw anything: only images generated afterwards use "
+                 "the new description, existing candidates stay as they are, and an approved scene cannot be edited. "
+                 "Never invent changes the user did not ask for.")
+def set_scene_visual(story: int, scene: int, body: SceneVisualBody):
+    st = _story(story)
+    sc = _scene(st, scene)
+    quote = body.user_quote.strip()
+    if not quote or len(quote) > MAX_VISUAL_QUOTE_CHARS:
+        raise HTTPException(status_code=422, detail=f"需要 user_quote：使用者要求修改的原話（上限 {MAX_VISUAL_QUOTE_CHARS} 字）")
+    changes = {f: getattr(body, f).strip() for f in VISUAL_TEXT_FIELDS if getattr(body, f) is not None}
+    compositions = {k.strip().upper(): v.strip() for k, v in (body.compositions or {}).items()}
+    if not changes and not compositions:
+        raise HTTPException(status_code=422, detail="沒有要改的欄位：請問使用者想改畫面的哪一部分")
+    for letter, text in compositions.items():
+        if letter not in cs.LETTERS or not text:
+            raise HTTPException(status_code=422, detail="compositions 的鍵要是 A、B、C、D，內容不能是空的")
+    for field in VISUAL_ENGLISH_FIELDS:
+        if field in changes and not changes[field]:
+            raise HTTPException(status_code=422, detail=f"{field} 不能是空的")
+    for field, text in {**changes, **compositions}.items():
+        if len(text) > MAX_VISUAL_FIELD_CHARS:
+            raise HTTPException(status_code=422, detail=f"{field} 太長（上限 {MAX_VISUAL_FIELD_CHARS} 字）")
+    for field, text in {**{f: changes[f] for f in VISUAL_ENGLISH_FIELDS + ("negative_extra",) if f in changes},
+                        **{f"composition {k}": v for k, v in compositions.items()}}.items():
+        if _CJK.search(text):
+            raise HTTPException(status_code=422, detail=f"{field} 要用英文寫（畫面文字才可以是中文，請放在 on_screen_text）")
+    status = cs.load_review(st, scene)["status"]
+    if status == cs.APPROVED:
+        raise HTTPException(status_code=409, detail=f"Scene {scene} 已經核准，master 對得上它現在的描述，不能再改")
+    running = [j for j in _busy() if j.get("story") == st.number]
+    if running:
+        raise HTTPException(status_code=409, detail=f"故事 {st.number} 有工作在進行（{running[0]['job_id']}），等它結束再改")
+    taken = [x for x in compositions if x in cs.existing_letters(st, scene)]
+    if taken:
+        raise HTTPException(status_code=409, detail=f"候選 {', '.join(taken)} 已經生成，改它的構圖不會改變那張圖")
+    _screen(*changes.values(), *compositions.values())
+    before = {f: sc.get(f) for f in changes}
+    before_compositions = {k: sc["compositions"].get(k) for k in compositions}
+    sc.update(changes)
+    sc["compositions"].update(compositions)
+    cs.save_story(st)
+    with open(os.path.join(st.dir, VISUAL_EDIT_LOG), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"at": _now(), "scene": scene, "user_quote": quote, "before": before,
+                            "before_compositions": before_compositions, "after": changes,
+                            "after_compositions": compositions, "decided_via": "open-webui"}, ensure_ascii=False) + "\n")
+    if status == cs.REGENERATE:
+        nxt = "新描述會用在接下來補的候選 3、4。可以直接問使用者要不要生"
+    elif status == cs.NO_CANDIDATES:
+        nxt = "還沒有候選圖，之後生的圖都會用新描述"
+    else:
+        nxt = ("已經有的候選圖不會改變。要用新描述得到新的圖，必須由使用者自己說「Scene "
+               f"{scene} 重生」（你不能替他決定），之後再補候選 3、4")
+    return {"story": st.number, "scene": scene, "saved": True, "changed": sorted({**changes, **{
+        f"composition_{k}": v for k, v in compositions.items()}}), "status": status, "next": nxt}
+
+
 class VideosBody(BaseModel):
     scenes: list[int] | None = Field(default=None, description="Scene numbers; omit for every approved scene.")
     confirm: bool = Field(default=False, description="false returns the estimate only. Set true only after the "

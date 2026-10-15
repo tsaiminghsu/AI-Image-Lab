@@ -24,6 +24,7 @@ TOOLS = {
     "generate_candidates",
     "review_scene",
     "set_video_prompt",
+    "set_scene_visual",
     "make_videos",
     "make_cut",
     "list_jobs",
@@ -308,6 +309,91 @@ def test_the_access_log_records_calls_but_never_bodies_or_file_requests(env, tmp
     assert len(lines) == 2  # /files/ is skipped
     assert " GET /stories 200 " in lines[0] and " POST /stories/1/scenes/3/review " in lines[1]
     assert "SECRET-WORDS" not in log.read_text(encoding="utf-8")
+
+
+def visual_body(**fields):
+    return {"user_quote": "Scene 2 的男主要抓著被子，手機在床邊亮著藍光", **fields}
+
+
+def read_scene(env, story_number, scene):
+    story = cs.select_stories(cs.load_stories(env.root), story_number)[0]
+    return story, story.scene(scene)
+
+
+def test_a_scene_description_can_be_changed_from_the_chat_and_the_edit_is_logged(web, env):
+    r = web.put(
+        "/stories/4/scenes/2/visual",
+        json=visual_body(
+            action="The man bolts upright in bed, one hand gripping the blanket, mouth slightly open.",
+            lighting="cold blue phone light on his face, warm lamp glow from the right",
+            compositions={"C": "low angle close-up of his hand on the blanket"},
+        ),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["changed"] == ["action", "composition_C", "lighting"] and body["status"] == cs.NO_CANDIDATES
+    story, scene = read_scene(env, 4, 2)
+    assert "gripping the blanket" in scene["action"] and scene["compositions"]["C"].startswith("low angle")
+    assert scene["setting"] and scene["solo"] is True  # untouched fields and solo stay
+    line = json.loads(open(os.path.join(story.dir, api.VISUAL_EDIT_LOG), encoding="utf-8").read().splitlines()[-1])
+    assert line["user_quote"].startswith("Scene 2") and line["before"]["action"].startswith("The man bolts upright")
+    assert line["decided_via"] == "open-webui"
+    cs.validate_story(story)  # the edited spec is still a usable story
+
+
+def test_the_new_description_reaches_the_prompt_of_the_next_image(web, env):
+    web.put(
+        "/stories/4/scenes/2/visual", json=visual_body(setting="a narrow Taipei apartment bedroom with a red quilt")
+    )
+    story, _ = read_scene(env, 4, 2)
+    request = cs.build_request(cs.load_bible(env.root), story, 2, "A")
+    assert "red quilt" in request["prompt"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},  # nothing to change
+        {"action": ""},  # an English field cannot be emptied
+        {"action": "男主坐在床上"},  # English fields stay English
+        {"compositions": {"E": "wide shot"}},  # not a candidate letter
+        {"setting": "x" * (api.MAX_VISUAL_FIELD_CHARS + 1)},
+    ],
+)
+def test_a_malformed_visual_edit_is_refused_and_changes_nothing(web, env, fields):
+    before = read_scene(env, 4, 2)[1]["action"]
+    assert web.put("/stories/4/scenes/2/visual", json=visual_body(**fields)).status_code == 422
+    assert read_scene(env, 4, 2)[1]["action"] == before
+
+
+def test_a_visual_edit_needs_the_users_words(web, env):
+    r = web.put("/stories/4/scenes/2/visual", json={"user_quote": "  ", "action": "The man sits on the bed."})
+    assert r.status_code == 422 and "user_quote" in r.json()["detail"]
+    assert web.put("/stories/4/scenes/2/visual", json={"action": "The man sits."}).status_code == 422
+
+
+def test_screened_terms_cannot_be_written_into_a_scene(web, env):
+    r = web.put("/stories/4/scenes/2/visual", json=visual_body(action="A schoolgirl sits on the bed."))
+    assert r.status_code == 422 and "never sends" in r.json()["detail"]
+    for young in ("A girl aged 15 sits.", "A woman, age 16, sits.", "A woman at the age of 12 sits."):
+        assert web.put("/stories/4/scenes/2/visual", json=visual_body(action=young)).status_code == 422
+    assert web.put("/stories/4/scenes/2/visual", json=visual_body(action="A woman aged 28 sits.")).status_code == 200
+    assert (
+        "schoolgirl" not in read_scene(env, 4, 2)[1]["action"] and "aged 15" not in read_scene(env, 4, 2)[1]["action"]
+    )
+
+
+def test_an_approved_scene_a_rendered_composition_and_a_running_job_block_the_edit(web, env):
+    web.post("/stories/4/candidates", json={"candidates": [1, 2], "scenes": [2], "confirm": True})
+    assert web.put("/stories/4/scenes/2/visual", json=visual_body(action="The man sits.")).status_code == 409  # queued
+    env.run_next()
+    taken = web.put("/stories/4/scenes/2/visual", json=visual_body(compositions={"A": "wide shot"}))
+    assert taken.status_code == 409 and "已經生成" in taken.json()["detail"]
+    sat = web.put("/stories/4/scenes/2/visual", json=visual_body(action="The man sits up."))
+    assert sat.status_code == 200 and "Scene 2 重生" in sat.json()["next"]  # images exist: only the user can start over
+    assert web.post("/stories/4/scenes/2/review", json=approve_body(1, 2)).status_code == 200
+    approved = web.put("/stories/4/scenes/2/visual", json=visual_body(action="The man stands."))
+    assert approved.status_code == 409 and "已經核准" in approved.json()["detail"]
 
 
 # --- H3 -----------------------------------------------------------------------------------------------------

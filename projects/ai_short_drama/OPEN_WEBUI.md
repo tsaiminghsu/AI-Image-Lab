@@ -27,7 +27,7 @@ ComfyUI 的 8188 也是。所以 ComfyUI 改用 9188（`COMFYUI_URL`），Ollama
 URL 填 `http://host.docker.internal:21434`。另外環境變數 `OLLAMA_MODELS` 指向的資料夾可能是空的（這台是 `D:\AI\Models\Ollama`，
 `qwen3.5:9b` 實際在 `D:\Ollama\Models`），腳本會自動挑第一個真的有模型的資料夾。
 
-**上下文長度**：Ollama 在 8 GB 的卡上預設只開 4096 個 token，但 Open WebUI 每則訊息都會附上 11 個工具的說明和系統提示
+**上下文長度**：Ollama 在 8 GB 的卡上預設只開 4096 個 token，但 Open WebUI 每則訊息都會附上 12 個工具的說明和系統提示
 （約 6,200 token），會報 `exceed_context_size_error`（`request (6198 tokens) exceeds the available context size (4096 tokens)`）。
 腳本因此用 `OLLAMA_CONTEXT_LENGTH=32768` 啟動 Ollama（`CONCEPT_OLLAMA_CTX` 可改）。16384 在長對話裡會被塞滿（工具定義約 6,000 token，加上一次 `list_scenes` 約 3,800 token），塞滿時模型寫工具參數寫到一半被截斷，Open WebUI 會顯示
 `llama-server returned invalid tool call arguments ... unexpected end of JSON input`。實測 32768 只比 16384 多佔約 0.6 GB
@@ -53,7 +53,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    （Open WebUI 0.11.4 的後端設定是 `tool_server.connections`；選單的中文名稱我沒有在畫面上核對過，找不到時搜尋
    「OpenAPI」或「Tool Server」。）
 2. 類型 OpenAPI；URL `http://host.docker.internal:7863`；路徑 `openapi.json`；驗證選「無」
-   （有設 `CONCEPT_API_TOKEN` 就選 Bearer 並填入）。儲存後應該看到 11 個工具。
+   （有設 `CONCEPT_API_TOKEN` 就選 Bearer 並填入）。儲存後應該看到 12 個工具。
 3. 模型 `qwen3.5:9b` 的進階參數：Function Calling 設成 Native（原生）。
 4. 建議在「工作區 → 模型」建一個「短劇概念片助理」：基礎模型 `qwen3.5:9b`、勾選上面的工具伺服器，系統提示：
 
@@ -68,6 +68,9 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    4. 給使用者看候選圖時，直接貼出 list_scenes 回傳的 markdown。
    5. 生候選圖時先只生每個 Scene 的第 1 張（預設值）；使用者看過、指名要第二張的 Scene 才用 candidates=[2] 補。
    6. 工具回傳錯誤時，照實轉述，不要自己猜原因。
+   7. 使用者想改某個 Scene 的畫面（動作、場景、光線、畫面文字、構圖）時，用 set_scene_visual，只改他說到的欄位，
+      user_quote 放他的原話；動作、場景、光線、構圖要用英文寫。改完要說清楚：已有的候選圖不會變，
+      要用新描述得到新圖，必須由使用者自己說「Scene N 重生」，不要替他決定。不要自己加使用者沒要求的改動。
    ```
 
 ## 三、工具
@@ -79,6 +82,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 | `generate_candidates` | 排入本機生圖。預設只生每個 Scene 的候選 1（7 張）；`candidates: [2]` 補第二張，`[3, 4]` 只給判定重生的 Scene | **本機 GPU**，每張約 2.3 分鐘 |
 | `review_scene` | 記錄你的決定：核准第幾張（變成 `master.png`）或判定重生。**必須附上你的原話**（`user_quote`） | 不會 |
 | `set_video_prompt` | 存一個 Scene 的 H3 鏡頭描述（英文） | 不會 |
+| `set_scene_visual` | 用你的話改一個 Scene 的**圖片描述**：動作、場景、光線、畫面文字、額外負面詞、構圖。不會畫圖，只影響之後生的圖 | 不會 |
 | `make_videos` | 把**已核准**的 Scene 送 H3，每個 session 最多 4 支 | **Colab CU**，要 Docker、要按 Drive 同意 |
 | `make_cut` | 7 支片段接成一支，音量調平到約 −14 LUFS，可加結尾字幕 | CPU，約 1 分鐘 |
 | `get_job`／`list_jobs` | 進度、結果、是否在等你 | 不會 |
@@ -117,3 +121,16 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
   **這驗的是話，不是人**：模型仍可能編出一句符合格式的原話。核准之後請自己看一眼 `review_sheet.html` 或 `list_scenes` 的結果。
 - 9B 的模型可能選錯工具或漏參數；工具回傳的錯誤訊息是中文，會說明缺什麼。
 - H3 仍然需要你在場：Docker Desktop 要開著、每個 session 要按一次 Drive 同意。
+
+## 六、在聊天裡改圖片細節（`set_scene_visual`）
+
+圖片的提示詞不是你寫的，而是伺服器用每個 Scene 的規格組出來的。`set_scene_visual` 讓你在聊天裡改這些規格，例如：
+「故事 4 Scene 2，男主要抓著被子，手機在床邊亮著藍光。」
+
+- **可以改**：`action`（誰在做什麼）、`setting`（場景）、`lighting`（光線）、`on_screen_text`（畫面上的字，可以是中文）、
+  `negative_extra`（這一場額外不要的東西）、`compositions`（C、D 的構圖）。**不能改**：角色設定、`solo`、整體風格。
+- **要附你的原話**（`user_quote`），原話連同改前改後記在該故事資料夾的 `visual_edits.jsonl`，可以查。
+- **只影響之後生的圖**：已經有的候選圖不會變。要用新描述得到新圖，要由你說「Scene N 重生」，再補候選 3、4。
+- **拒絕的情況**：Scene 已核准、這個故事有工作在跑、要改的構圖那一張已經生出來、英文欄位寫了中文、欄位空白或太長（700 字）。
+- **過濾**：所有文字都要通過 `h3_colab.screen_prompt`（兒童、未成年、露骨等詞，沒有繞過的參數），另外本工具自己擋「aged 15」
+  「age 16」這類未滿 18 歲的年齡寫法（共用的過濾器擋不到這種寫法）。
