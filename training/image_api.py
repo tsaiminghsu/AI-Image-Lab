@@ -20,6 +20,10 @@ machine's live state first. A cloud suggestion is a 409 carrying the reasons - t
 work to a paid GPU on its own; the caller either retries with force_local=true or does nothing.
 Outside the configured image window the job is deferred (queued with not_before) and job_scheduler,
 started with the app, runs it when the window opens. GET /v2/route previews the decision.
+
+POST /v2/zimage is the route for the commercial AI Creative Studio (d:\\ai-creative-studio): Z-Image Turbo only
+(Apache-2.0), no character/anchor/tier/checkpoint fields; the PNG comes from GET /v2/jobs/{job_id}/image.
+/generate stays bound to the Pony checkpoint, which that product may not use commercially.
 """
 
 import contextlib
@@ -27,12 +31,14 @@ import glob
 import hmac
 import os
 import random
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
 import capability_catalog as catalog
@@ -347,6 +353,117 @@ def generate(req: GenerateRequest, x_owner_id: str | None = Header(default=None,
         return {"job_id": record["job_id"], "route": decision.route, "not_before": decision.not_before}
     _executor.submit(_run_job, owner_id, record["job_id"], req, decision)
     return {"job_id": record["job_id"], "route": decision.route}
+
+
+ZIMAGE_CHECKPOINT = "z_image_turbo"
+ZIMAGE_MIN_SIDE, ZIMAGE_MAX_SIDE = 512, 1536
+_JOB_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
+class ZImageRequest(BaseModel):
+    """Plain text -> image with Z-Image Turbo (Apache-2.0, so usable by the commercial studio).
+
+    Deliberately narrower than GenerateRequest: no character, anchor, tier or checkpoint field. The
+    checkpoint is fixed here, and gen_custom still assembles the prompt through
+    _build_prompt_and_negative, so AGE_SAFETY_NEGATIVE and the cfg floor apply exactly as on every
+    other path - nothing in this model can switch them off.
+    """
+
+    prompt: str
+    width: int = 1024
+    height: int = 1024
+    seed: int | None = None
+    force_local: bool = False
+
+    @field_validator("prompt")
+    @classmethod
+    def _validate_prompt(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("prompt must not be empty")
+        if len(v) > gc.MAX_PROMPT_CHARS:
+            raise ValueError(f"prompt must be at most {gc.MAX_PROMPT_CHARS} characters")
+        return v
+
+    @field_validator("width", "height")
+    @classmethod
+    def _validate_side(cls, v: int) -> int:
+        if not ZIMAGE_MIN_SIDE <= v <= ZIMAGE_MAX_SIDE or v % 16:
+            raise ValueError(f"must be a multiple of 16 between {ZIMAGE_MIN_SIDE} and {ZIMAGE_MAX_SIDE}")
+        return v
+
+    @field_validator("seed")
+    @classmethod
+    def _validate_seed(cls, v: int | None) -> int | None:
+        if v is not None and not 0 <= v < 2**31:
+            raise ValueError("seed must be between 0 and 2147483647")
+        return v
+
+
+@app.post("/v2/zimage")
+def generate_zimage(req: ZImageRequest, x_owner_id: str | None = Header(default=None, alias="X-Owner-Id")):
+    """Same routing, job record and polling as /generate, for the Z-Image Turbo checkpoint.
+
+    Poll GET /v2/jobs/{job_id}; when it is completed, fetch the PNG from /v2/jobs/{job_id}/image.
+    """
+    owner_id = _owner(x_owner_id)
+    kind = rp.image_kind(ZIMAGE_CHECKPOINT, False)
+    decision = rp.decide(kind, rp.load_settings(), rp.probe(), force_local=req.force_local)
+    if decision.route == rp.CLOUD:
+        raise HTTPException(status_code=409, detail={"error": "cloud_suggested", **decision.to_dict()})
+
+    _evict_jobs(time.time())
+    seed = req.seed if req.seed is not None else random.randint(0, 2**31 - 1)
+    job_id = uuid.uuid4().hex
+    kwargs = {
+        "prompt": req.prompt,
+        "extra_negative": "",
+        "tier": "safe",
+        "trigger": None,
+        "anchor_path": None,
+        "out_dir": OUTPUT_DIR,
+        "seed": seed,
+        "filename": job_id,
+        "ip_adapter_weight": gc.client.IP_ADAPTER_WEIGHT,
+        "checkpoint": ZIMAGE_CHECKPOINT,
+        "width": req.width,
+        "height": req.height,
+        "hq": False,
+    }
+    spec = job_scheduler.call_spec(
+        "gen_custom", kwargs, output_path=os.path.join(OUTPUT_DIR, f"{job_id}.png"), force_local=req.force_local,
+    )
+    deferred = decision.route == rp.DEFER
+    record = _service.create(
+        owner_id,
+        mode=catalog.MODE_TXT2IMG,
+        catalog_id=f"{ZIMAGE_CHECKPOINT}:{catalog.MODE_TXT2IMG}",
+        params={"prompt": req.prompt, "seed": seed, "width": req.width, "height": req.height,
+                "checkpoint": ZIMAGE_CHECKPOINT},
+        request=spec,
+        job_id=job_id,
+        not_before=decision.not_before if deferred else None,
+        route=decision.to_dict(),
+    )
+    if deferred:
+        return {"job_id": record["job_id"], "route": decision.route, "not_before": decision.not_before, "seed": seed}
+    _executor.submit(_run_job, owner_id, record["job_id"], req, decision)
+    return {"job_id": record["job_id"], "route": decision.route, "seed": seed}
+
+
+@app.get("/v2/jobs/{job_id}/image")
+def get_job_image(job_id: str, x_owner_id: str | None = Header(default=None, alias="X-Owner-Id")):
+    """The finished PNG. Only a completed job owned by the caller has one; the id is matched against a
+    strict pattern before it is ever used to build a path."""
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+    record = _store.get(_owner(x_owner_id), job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+    path = os.path.join(OUTPUT_DIR, f"{job_id}.png")
+    if record["status"] != jc.COMPLETED or not os.path.isfile(path):
+        raise HTTPException(status_code=409, detail=f"Job is {record['status']}, no image to fetch")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/v2/route")

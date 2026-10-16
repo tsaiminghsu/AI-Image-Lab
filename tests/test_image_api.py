@@ -523,3 +523,111 @@ def test_v2_route_previews_without_creating_a_job(api, monkeypatch):
     assert body["route"] == "local"
     assert body["kind"] == "txt2img"
     assert image_api._store.list_by_owner("local") == []
+
+
+# ---------------------------------------------------------------- /v2/zimage (commercial studio)
+
+
+def test_zimage_runs_gen_custom_with_the_fixed_checkpoint_and_size(api, monkeypatch):
+    client, image_api = api
+    seen = []
+
+    def fake_gen_custom(*args, **kwargs):
+        seen.append(kwargs)
+        with open(os.path.join(image_api.OUTPUT_DIR, f"{kwargs['filename']}.png"), "wb") as handle:
+            handle.write(make_png(8, 8))
+
+    monkeypatch.setattr(image_api.gc, "gen_custom", fake_gen_custom)
+    body = client.post(
+        "/v2/zimage", json={"prompt": "a lantern festival", "width": 768, "height": 1280, "seed": 7}
+    ).json()
+
+    assert body["seed"] == 7
+    kwargs = seen[0]
+    assert kwargs["checkpoint"] == "z_image_turbo"
+    assert (kwargs["width"], kwargs["height"], kwargs["seed"]) == (768, 1280, 7)
+    assert kwargs["tier"] == "safe" and kwargs["trigger"] is None and kwargs["anchor_path"] is None
+    record = client.get(f"/v2/jobs/{body['job_id']}").json()
+    assert record["status"] == "completed"
+    assert record["catalog_id"] == "z_image_turbo:txt2img"
+
+
+def test_zimage_request_cannot_choose_another_checkpoint_or_tier(api, monkeypatch):
+    """The commercial studio may not reach a Pony checkpoint through this route, whatever it sends."""
+    client, image_api = api
+    seen = []
+    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: seen.append(k))
+    client.post(
+        "/v2/zimage",
+        json={
+            "prompt": "x",
+            "checkpoint": "cyberrealistic_pony",
+            "tier": "suggestive",
+            "trigger": "mylora",
+            "anchor_path": "C:/x.png",
+        },
+    )
+    assert seen[0]["checkpoint"] == "z_image_turbo"
+    assert seen[0]["tier"] == "safe"
+    assert seen[0]["trigger"] is None and seen[0]["anchor_path"] is None
+
+
+def test_zimage_keeps_the_age_safety_negative_and_cfg_floor_through_the_real_generator(api, monkeypatch, tmp_path):
+    """Real gen_custom prompt assembly, only the ComfyUI call replaced: what Z-Image would receive."""
+    client, image_api = api
+    gc = image_api.gc
+    captured = {}
+
+    def fake_submit(**kwargs):
+        captured.update(kwargs)
+        raw = tmp_path / "raw.png"
+        raw.write_bytes(make_png(8, 8))
+        return str(raw)
+
+    monkeypatch.setattr(gc.client, "submit_txt2img_generation_zimage", fake_submit)
+    job_id = client.post("/v2/zimage", json={"prompt": "a lantern festival"}).json()["job_id"]
+
+    assert client.get(f"/v2/jobs/{job_id}").json()["status"] == "completed"
+    assert gc.AGE_SAFETY_NEGATIVE in captured["negative_prompt"]
+    assert captured["model"] == "z_image_turbo"
+    assert "cfg" not in captured  # the client default applies, and it is floored by SAFETY_MIN_CFG
+    assert gc.client.ZIMAGE_CFG >= gc.client.SAFETY_MIN_CFG
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"prompt": "   "},
+        {"prompt": "x", "width": 1000},
+        {"prompt": "x", "width": 256},
+        {"prompt": "x", "height": 4096},
+        {"prompt": "x", "seed": -1},
+        {"prompt": "x", "seed": 2**31},
+    ],
+)
+def test_zimage_rejects_bad_input_before_creating_a_job(api, payload):
+    client, image_api = api
+    assert client.post("/v2/zimage", json=payload).status_code == 422
+    assert image_api._store.list_by_owner("local") == []
+
+
+def test_job_image_is_served_only_for_a_completed_job_of_the_caller(api, monkeypatch):
+    client, image_api = api
+    writes_a_real_png(image_api, monkeypatch, 16, 16)
+    job_id = client.post("/v2/zimage", json={"prompt": "x"}).json()["job_id"]
+
+    ok = client.get(f"/v2/jobs/{job_id}/image")
+    assert ok.status_code == 200
+    assert ok.headers["content-type"] == "image/png"
+    assert ok.content[:8] == b"\x89PNG\r\n\x1a\n"
+    # Another owner sees nothing, and ids that are not job ids never reach the filesystem.
+    assert client.get(f"/v2/jobs/{job_id}/image", headers={"X-Owner-Id": "someone-else"}).status_code == 404
+    for bad in ("..%2f..%2fsecret", "ABCDEF", "x" * 31, "g" * 32):
+        assert client.get(f"/v2/jobs/{bad}/image").status_code == 404
+
+
+def test_job_image_of_a_failed_job_is_a_409_not_a_stale_file(api, monkeypatch):
+    client, image_api = api
+    monkeypatch.setattr(image_api.gc, "gen_custom", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("comfy down")))
+    job_id = client.post("/v2/zimage", json={"prompt": "x"}).json()["job_id"]
+    assert client.get(f"/v2/jobs/{job_id}/image").status_code == 409
