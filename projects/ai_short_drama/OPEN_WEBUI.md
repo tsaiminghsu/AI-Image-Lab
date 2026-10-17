@@ -68,11 +68,14 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    4. 使用者想看圖片時（剛生完圖、或說「給我看」），呼叫 show_images：圖會直接顯示在聊天裡。看新生的圖用 newest_only=true。不要用文字描述圖片，也不要自己貼圖片連結。
    5. 生候選圖時先只生每個 Scene 的第 1 張（預設值）；使用者看過、指名要第二張的 Scene 才用 candidates=[2] 補。
    6. 工具回傳錯誤時，照實轉述，不要自己猜原因。
-   8. generate_candidates 預設用 z_image。只有使用者明說要用 Qwen（Qwen-Image 2.1）時才帶 image_model=qwen_image_2_1；
-      這時預估裡有 license_warning，要把那句話原文告訴使用者（只能內部測試，不能商用）。
    7. 使用者想改某個 Scene 的畫面（動作、場景、光線、畫面文字、構圖）時，用 set_scene_visual，只改他說到的欄位，
       user_quote 放他的原話；動作、場景、光線、構圖要用英文寫。改完要說清楚：已有的候選圖不會變，
       要用新描述得到新圖，必須由使用者自己說「Scene N 重生」，不要替他決定。不要自己加使用者沒要求的改動。
+   8. generate_candidates 預設用 z_image。只有使用者明說要用 Qwen（Qwen-Image 2.1）時才帶 image_model=qwen_image_2_1；
+      這時預估裡有 license_warning，要把那句話原文告訴使用者（只能內部測試，不能商用）。
+   9. generate_candidates 的預估裡如果寫「Google Colab 雲端 GPU」，表示本機顯示卡記憶體不夠；要把原因、預估時間、
+      CU 費用與要使用者做的事（Docker 開著、按 Drive 同意）原文告訴使用者，使用者同意才帶 confirm=true。
+      不要自己把 backend 改成 colab。
    ```
 
 ## 三、工具
@@ -82,7 +85,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 | `list_stories` | 五個故事的狀態、圖片數、影片數 | 不會 |
 | `list_scenes` | 一個故事的 7 個 Scene：劇情、狀態、候選圖、要核對的畫面文字 | 不會 |
 | `show_images` | **把候選圖直接顯示在聊天裡**（圖片畫廊，標註 Scene、候選編號、模型、授權警告）。可指定 scene，或 newest_only=true 只看每個 Scene 最新的一張 | 不會 |
-| `generate_candidates` | 排入本機生圖。預設只生每個 Scene 的候選 1（7 張）；`candidates: [2]` 補第二張，`[3, 4]` 只給判定重生的 Scene | **本機 GPU**，每張約 2.3 分鐘 |
+| `generate_candidates` | 排入生圖，**本機優先、記憶體不夠才改 Colab**（見六之二）。預設只生每個 Scene 的候選 1（7 張）；`candidates: [2]` 補第二張，`[3, 4]` 只給判定重生的 Scene；`image_model` 選模型，`backend` 可指定 local／colab | **本機 GPU**（Z-Image bf16 每張約 30 秒、Qwen 約 2 分鐘）；改 Colab 時花 **Colab CU** |
 | `review_scene` | 記錄你的決定：核准第幾張（變成 `master.png`）或判定重生。**必須附上你的原話**（`user_quote`） | 不會 |
 | `set_video_prompt` | 存一個 Scene 的 H3 鏡頭描述（英文） | 不會 |
 | `set_scene_visual` | 用你的話改一個 Scene 的**圖片描述**：動作、場景、光線、畫面文字、額外負面詞、構圖。不會畫圖，只影響之後生的圖 | 不會 |
@@ -90,7 +93,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 | `make_cut` | 7 支片段接成一支，音量調平到約 −14 LUFS，可加結尾字幕 | CPU，約 1 分鐘 |
 | `get_job`／`list_jobs` | 進度、結果、是否在等你 | 不會 |
 | `cancel_job` | 取消（見下） | 不會 |
-| `consent_done` | 你按完 Drive 同意後，通知 H3 繼續 | 不會 |
+| `consent_done` | 你按完 Drive 同意後，通知 H3 或 Colab 生圖繼續 | 不會 |
 
 ## 四、要知道的行為
 
@@ -152,3 +155,21 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 - **拒絕的情況**：Scene 已核准、這個故事有工作在跑、要改的構圖那一張已經生出來、英文欄位寫了中文、欄位空白或太長（700 字）。
 - **過濾**：所有文字都要通過 `h3_colab.screen_prompt`（兒童、未成年、露骨等詞，沒有繞過的參數），另外本工具自己擋「aged 15」
   「age 16」這類未滿 18 歲的年齡寫法（共用的過濾器擋不到這種寫法）。
+## 六之二、本機優先，記憶體不夠才改 Colab（`generate_candidates` 的 `backend`）
+
+預設 `backend=auto`：生圖前先算**這台電腦的顯示卡放不放得下這次的模型**，放得下就用本機，放不下才改用 Colab。
+
+| 項目 | 做法 |
+| --- | --- |
+| 怎麼判斷 | 讀 `nvidia-smi` 的總量與已用量；聊天模型（Ollama）佔的部分生圖前會被卸載，所以不算；**其他程式**佔的才算。剩下的記憶體要大於這個模型的需求加 1,000 MiB 緩衝 |
+| 模型需求（實測） | Z-Image bf16：約 12,700 MiB（峰值 13.4 GB 扣掉桌面）；Qwen-Image 2.1：估計 9,500 MiB（cfg 2.0 沒有實測峰值） |
+| 夠用 | 預估寫「本機顯示卡」，並列出可用與需要的記憶體 |
+| 不夠 | 預估改寫「Google Colab 雲端 GPU（L4）」，附 `why_not_local`（原因）、預估分鐘與 **CU 費用**（實測一個 session 約 0.24～0.40 CU）、要你做的事（Docker Desktop 開著、按一次 Google Drive 同意） |
+| 一律要你同意 | 花 CU 的工作一定先回預估，你說好才開始（`confirm=true`）；助理被要求不能自己把 backend 改成 colab |
+| 只有 Z-Image 能走 Colab | Qwen-Image 2.1 在 Colab 沒有流程：記憶體不夠時回 409 並說明，請你先關掉佔顯示卡的程式或改用 Z-Image |
+| 開始之後 | 先做免費的檢查（`setup_colab.py preflight`）→ 匯出清單 → 送進 Colab 佇列 → 才啟動 Colab（這一步才花 CU）→ 等圖 → 存回 `images/scene_NN/`（記錄檔 `backend: colab`）；檢查沒過就停，沒花 CU |
+| Drive 同意 | 狀態會變成「等使用者」，你按完同意後說一聲，助理呼叫 `consent_done`，Colab 會繼續 |
+| 取消 | `cancel_job` 會要求結束 Colab session，避免繼續計費 |
+| 本機途中失敗 | 本機工作已經開始後若顯示卡被占住（`GpuBusy`）只會失敗並說明，**不會自動改走 Colab**，因為那會在你不知道的情況下花 CU；請重新要求並指定 `backend=colab` |
+
+要強制本機：`backend=local`；要強制雲端：`backend=colab`（只對 Z-Image）。Colab 用官方 bf16 權重，同一個種子的畫面跟本機不會逐像素一樣（見記憶體實測報告）。

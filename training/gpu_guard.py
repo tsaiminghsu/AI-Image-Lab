@@ -40,6 +40,16 @@ def loaded_models(http=requests, url=None):
         return []
 
 
+def loaded_vram_mib(http=requests, url=None):
+    """Video memory (MiB) the models Ollama holds in memory occupy. An Ollama that is not running holds none."""
+    try:
+        r = http.get(f"{url or OLLAMA_URL}/api/ps", timeout=5)
+        r.raise_for_status()
+        return sum(float(m.get("size_vram") or 0) for m in r.json().get("models", [])) / (1024 * 1024)
+    except (requests.exceptions.RequestException, ValueError):
+        return 0.0
+
+
 def unload_models(http=requests, url=None, *, timeout=UNLOAD_TIMEOUT_SECONDS, sleep=time.sleep, clock=time.monotonic):
     """Ask Ollama to drop every loaded model (keep_alive 0) and wait until /api/ps is empty. Returns the names
     that were unloaded; raises GpuBusy when a model is still loaded after `timeout` (someone keeps chatting)."""

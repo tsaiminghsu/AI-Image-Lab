@@ -99,6 +99,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "REPO_ROOT", str(tmp_path))
     monkeypatch.setattr(api, "OUTPUT_ROOT", str(tmp_path / "output"))
     monkeypatch.delenv("CONCEPT_API_TOKEN", raising=False)
+    # The local-or-Colab choice reads the real card: pin a roomy, idle 16 GB one so tests never depend on this machine.
+    monkeypatch.setattr(
+        gpu_guard, "gpu_state", lambda run=None: {"temp_c": 45.0, "used_mib": 900.0, "total_mib": 16311.0}
+    )
+    monkeypatch.setattr(gpu_guard, "loaded_vram_mib", lambda http=None, url=None: 0.0)
     store = api.JobStore(str(tmp_path / "jobs"))
     runner = api.Runner(store, root=str(root))
     made = []
@@ -451,6 +456,196 @@ def test_the_finished_image_job_tells_the_assistant_to_show_the_pictures(web, en
     assert "show_images" in job["result"]["next"]
 
 
+# --- local first, Colab when the card cannot hold the render ---------------------------------------------------
+
+
+def card(monkeypatch, used, chat=0.0, total=16311.0):
+    monkeypatch.setattr(
+        gpu_guard, "gpu_state", lambda run=None: {"temp_c": 45.0, "used_mib": float(used), "total_mib": total}
+    )
+    monkeypatch.setattr(gpu_guard, "loaded_vram_mib", lambda http=None, url=None: float(chat))
+
+
+def test_a_card_the_chat_model_is_the_only_thing_filling_still_renders_locally(web, env, monkeypatch):
+    card(monkeypatch, used=9000, chat=8200)  # what the chat model holds is unloaded before the batch
+    estimate = web.post("/stories/5/candidates", json={"scenes": [2]}).json()["estimate"]
+    assert (
+        estimate["backend"] == "本機顯示卡" and "夠用" in estimate["local_memory"] and "compute_units" not in estimate
+    )
+
+
+def test_a_card_held_by_something_else_switches_the_estimate_to_colab_and_says_what_it_costs(web, env, monkeypatch):
+    card(monkeypatch, used=9000, chat=0)  # 9 GB belongs to another program: 7.3 GB left, 13.7 GB needed
+    r = web.post("/stories/5/candidates", json={"scenes": [2, 3]}).json()
+    estimate = r["estimate"]
+    assert r["queued"] is False and r["needs_confirmation"] is True  # spending compute units always waits for a yes
+    assert "Colab" in estimate["backend"] and "本機顯示卡記憶體不夠" in estimate["why_not_local"]
+    assert estimate["compute_units"] > 0 and "Docker Desktop 要開著" in estimate["user_actions"]
+    assert "花 Colab 運算單元" in estimate["cost_note"] and "local_memory" not in estimate
+    assert api.store.all() == []  # nothing was queued
+
+
+def test_qwen_is_never_sent_to_colab_and_local_can_be_forced(web, env, monkeypatch):
+    card(monkeypatch, used=9000)
+    refused = web.post("/stories/5/candidates", json={"scenes": [2], "image_model": "qwen_image_2_1"})
+    assert refused.status_code == 409 and "沒有雲端版本" in refused.json()["detail"]
+    explicit = web.post(
+        "/stories/5/candidates", json={"scenes": [2], "image_model": "qwen_image_2_1", "backend": "colab"}
+    )
+    assert explicit.status_code == 422
+    forced = web.post("/stories/5/candidates", json={"scenes": [2], "backend": "local"}).json()["estimate"]
+    assert forced["backend"] == "本機顯示卡"
+    assert web.post("/stories/5/candidates", json={"scenes": [2], "backend": "cloud"}).status_code == 422
+
+
+def test_an_unreadable_card_is_not_a_reason_to_leave_the_machine(web, env, monkeypatch):
+    monkeypatch.setattr(gpu_guard, "gpu_state", lambda run=None: None)
+    estimate = web.post("/stories/5/candidates", json={"scenes": [2]}).json()["estimate"]
+    assert estimate["backend"] == "本機顯示卡" and "local_memory" not in estimate
+
+
+class FakeZimage:
+    """The z-image-colab scripts as the runner calls them. `worker.py up` stands in for the whole Colab session: it
+    marks every submitted job COMPLETED with a PNG on this machine, the way the controller does."""
+
+    def __init__(self, env, tmp_path, preflight_rc=0, states=("running",)):
+        self.calls, self.env, self.tmp, self.preflight_rc = [], env, tmp_path, preflight_rc
+        self.states, self.manifest = list(states), None
+        env.zimage_jobs_dir = str(tmp_path / "zimage_jobs")
+        env.zimage_sessions_log = str(tmp_path / "sessions.jsonl")
+        env.sleep = lambda seconds: None
+        with open(env.zimage_sessions_log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"cu_used_measured": 0.27}) + "\n")
+
+    def __call__(self, cmd, **kw):
+        script, args = os.path.basename(cmd[1]), cmd[2:]
+        self.calls.append((script, *args))
+        out, rc = {"ok": True}, 0
+        if script == "setup_colab.py":
+            rc = self.preflight_rc
+        elif script == "submit.py":
+            self.manifest = json.load(open(args[1], encoding="utf-8"))
+        elif script == "worker.py" and args[0] == "up":
+            os.makedirs(self.env.zimage_jobs_dir, exist_ok=True)
+            for i, spec in enumerate(self.manifest["jobs"]):
+                png = self.tmp / f"colab_{i}.png"
+                png.write_bytes(b"\x89PNG colab " + str(i).encode())
+                job = {
+                    "job_id": f"zj-{i}",
+                    "batch": self.manifest["batch"],
+                    "seed": spec["seed"],
+                    "status": "COMPLETED",
+                    "output": str(png),
+                    "prompt": spec["prompt"],
+                    "negative_prompt": spec["negative"],
+                    "cfg": spec["cfg"],
+                    "gpu": "NVIDIA L4",
+                    "generation_seconds": 18.0,
+                }
+                with open(os.path.join(self.env.zimage_jobs_dir, f"zj-{i}.json"), "w", encoding="utf-8") as f:
+                    json.dump(job, f)
+        elif script == "status.py":
+            state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+            out = {"controller": {"state": state}, "controller_live": True}
+        return subprocess.CompletedProcess(cmd, rc, stdout=json.dumps(out), stderr="")
+
+
+def test_a_confirmed_colab_job_exports_submits_starts_the_worker_and_files_the_pictures(
+    web, env, monkeypatch, tmp_path
+):
+    card(monkeypatch, used=9000)
+    env.run = fake = FakeZimage(env, tmp_path)
+    r = web.post("/stories/5/candidates", json={"scenes": [2, 3], "confirm": True}).json()
+    assert r["queued"] is True and "Colab" in r["estimate"]["backend"]
+    job = env.run_next()
+    assert job["status"] == api.COMPLETED, job["error"]
+    order = [c[0] + ("-" + c[1] if c[0] == "worker.py" else "") for c in fake.calls]
+    assert order[:3] == ["setup_colab.py", "submit.py", "worker.py-up"]  # the free steps first, the paid one last
+    assert fake.calls[0][1] == "preflight" and fake.calls[1][1] == "--manifest"
+    assert env.guard.calls == [] and env.submitted == [] and not env.server_state["up"]  # the local card is untouched
+    assert job["result"]["backend"] == "colab" and job["result"]["images"] == 2 and job["result"]["cu_used"] == 0.27
+    assert "show_images" in job["result"]["next"]
+    story = cs.load_stories(env.root)[4]
+    for scene in (2, 3):
+        meta = cs._read_json(cs.candidate_paths(story, scene, "A")["meta"])
+        assert meta["backend"] == "colab" and os.path.isfile(cs.candidate_paths(story, scene, "A")["png"])
+        assert cs.load_review(story, scene)["status"] == cs.HUMAN_REVIEW  # handed to the user, as for a local render
+
+
+def test_a_failed_colab_preflight_spends_nothing_and_never_starts_the_worker(web, env, monkeypatch, tmp_path):
+    card(monkeypatch, used=9000)
+    env.run = fake = FakeZimage(env, tmp_path, preflight_rc=1)
+    web.post("/stories/5/candidates", json={"scenes": [2], "confirm": True})
+    job = env.run_next()
+    assert job["status"] == api.FAILED and "沒有花 CU" in job["error"]
+    assert [c[0] for c in fake.calls] == ["setup_colab.py"]
+
+
+def test_the_drive_consent_pause_is_shown_to_the_user_and_cleared_afterwards(web, env, monkeypatch, tmp_path):
+    card(monkeypatch, used=9000)
+    seen = []
+    env.run = fake = FakeZimage(env, tmp_path, states=("drive_consent", "running"))
+    original_update = env._update
+
+    def spy(job_id, **fields):
+        if "status" in fields:
+            seen.append(fields["status"])
+        return original_update(job_id, **fields)
+
+    env._update = spy
+    original_script = env._zimage_script
+
+    def script_that_delays_the_jobs(name, *args):
+        # the controller only finishes the jobs after the first status poll
+        done = original_script(name, *args)
+        if name == "worker.py" and args[0] == "up":
+            for path in os.listdir(env.zimage_jobs_dir):
+                p = os.path.join(env.zimage_jobs_dir, path)
+                job = json.load(open(p, encoding="utf-8"))
+                job["status"] = "RUNNING"
+                json.dump(job, open(p, "w", encoding="utf-8"))
+            fake.finish_after_polls = 2
+        if name == "status.py" and getattr(fake, "finish_after_polls", 0):
+            fake.finish_after_polls -= 1
+            if fake.finish_after_polls == 0:
+                for path in os.listdir(env.zimage_jobs_dir):
+                    p = os.path.join(env.zimage_jobs_dir, path)
+                    job = json.load(open(p, encoding="utf-8"))
+                    job["status"] = "COMPLETED"
+                    json.dump(job, open(p, "w", encoding="utf-8"))
+        return done
+
+    env._zimage_script = script_that_delays_the_jobs
+    web.post("/stories/5/candidates", json={"scenes": [2], "confirm": True})
+    job = env.run_next()
+    assert job["status"] == api.COMPLETED, job["error"]
+    assert (
+        api.WAITING in seen
+        and seen.index(api.WAITING) < len(seen) - 1
+        and api.RUNNING in seen[seen.index(api.WAITING) :]
+    )
+    assert api.store.get(job["job_id"])["needs_user_action"] is None
+
+
+def test_cancelling_a_colab_job_stops_the_session(web, env, monkeypatch, tmp_path):
+    card(monkeypatch, used=9000)
+    env.run = fake = FakeZimage(env, tmp_path, states=("running",))
+    original_script = env._zimage_script
+
+    def script(name, *args):
+        done = original_script(name, *args)
+        if name == "worker.py" and args[0] == "up":
+            for path in os.listdir(env.zimage_jobs_dir):  # a session that never delivers
+                os.remove(os.path.join(env.zimage_jobs_dir, path))
+            env.cancel_requested.add(job_id)
+        return done
+
+    env._zimage_script = script
+    job_id = web.post("/stories/5/candidates", json={"scenes": [2], "confirm": True}).json()["job_id"]
+    env.run_next()
+    assert ("worker.py", "stop") in fake.calls  # the VM must not keep billing
+
+
 # --- H3 -----------------------------------------------------------------------------------------------------
 
 
@@ -551,7 +746,13 @@ def test_consent_done_is_refused_unless_a_job_is_waiting_for_it(web, env):
     assert web.post(f"/jobs/{job_id}/consent-done").status_code == 409
     calls = []
     env.run = ok_run(calls)
+    # an image job that waits is a Colab render: the z-image-colab worker waits for the same click
     api.store.save(dict(api.store.get(job_id), status=api.WAITING))
+    assert web.post(f"/jobs/{job_id}/consent-done").status_code == 200
+    assert calls[0][-2].endswith("worker.py") and calls[0][-1] == "consent-done"
+    # a video job that waits is an H3 session
+    calls.clear()
+    api.store.save(dict(api.store.get(job_id), kind="videos", status=api.WAITING))
     assert web.post(f"/jobs/{job_id}/consent-done").status_code == 200 and calls[0][-1].endswith("consent_done.py")
 
 

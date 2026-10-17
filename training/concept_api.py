@@ -39,6 +39,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 import comfyui_client as client
+import concept_colab as cc
 import concept_cut
 import concept_stills as cs
 import generate_character as gc
@@ -67,6 +68,21 @@ SECONDS_PER_IMAGE = 40
 # Qwen-Image 2.1 on the RTX 5060 Ti: 62.5 s warm at cfg 1; the pipeline runs it at cfg 2.0 (two passes per step), so
 # roughly double. An estimate until a chat-triggered batch has been measured.
 QWEN_SECONDS_PER_IMAGE = 125
+# Local first, Colab only when the card cannot hold the render. Peak VRAM growth of one render above what the card
+# already holds (nvidia-smi total at the peak minus the idle desktop, RTX 5060 Ti, 2026-10-17): Z-Image bf16 13.4 GB peak
+# -> 12,700 MiB; Qwen-Image 2.1 Q6_K 8.7 GB peak at cfg 1 -> about 8,000, and the pipeline runs cfg 2.0, so 9,500 is an
+# estimate. The margin keeps the check from passing a card that is a few hundred MiB short.
+LOCAL_VRAM_NEED_MIB = {"z_image": 12700, "qwen_image_2_1": 9500}
+LOCAL_VRAM_MARGIN_MIB = 1000
+# The Colab worker (.claude/skills/z-image-colab) renders Z-Image only, on an L4: 18 s per 720x1280 image; a session costs
+# 9-15 minutes of fixed time (install or model copy, idle timeout) and measured 0.24 CU (8 jobs) and 0.40 CU (3 jobs).
+COLAB_SESSION_MINUTES = 10
+COLAB_SECONDS_PER_IMAGE = 18
+COLAB_CU_PER_HOUR = 1.54
+COLAB_WAIT_SECONDS = 45 * 60         # a session that has not delivered by then is stopped
+COLAB_POLL_SECONDS = 10
+ZIMAGE_SCRIPTS = os.path.join(REPO_ROOT, ".claude", "skills", "z-image-colab", "scripts")
+ZIMAGE_TERMINAL = ("COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "INVALID_OUTPUT")
 SESSION_OVERHEAD_MINUTES = 6.5       # measured: fresh Colab session, models downloaded
 INFERENCE_SECONDS_PER_VIDEO_SECOND = 39.5   # measured: 8 s clip ~315 s
 CU_PER_HOUR = 5.2                    # measured average; batches ranged 3.1-6.1
@@ -83,6 +99,43 @@ def _now():
 def file_url(path):
     rel = os.path.relpath(path, REPO_ROOT).replace("\\", "/")
     return f"{PUBLIC_URL}/files/{rel}"
+
+
+def local_capacity(image_model, guard=None):
+    """Can THIS machine's card hold the render once the chat model is unloaded? Video memory held by anything other than
+    Ollama (a game, another render, the desktop) stays; what Ollama holds is released before the batch starts. An
+    unreadable nvidia-smi is not a reason to refuse: the batch's own guard still decides."""
+    guard = guard or gpu_guard
+    state = guard.gpu_state()
+    if state is None:
+        return {"ok": True, "known": False}
+    chat = guard.loaded_vram_mib()
+    others = max(0.0, state["used_mib"] - chat)
+    need = LOCAL_VRAM_NEED_MIB[image_model] + LOCAL_VRAM_MARGIN_MIB
+    free = state["total_mib"] - others
+    return {"ok": free >= need, "known": True, "total_mib": round(state["total_mib"]),
+            "held_by_others_mib": round(others), "chat_model_mib": round(chat),
+            "free_after_unload_mib": round(free), "needed_mib": need}
+
+
+def choose_backend(requested, image_model):
+    """('local' | 'colab', capacity, reason). `auto` is local unless the card cannot hold the render; Colab can only draw
+    Z-Image, so a Qwen render that does not fit is refused instead of being sent anywhere."""
+    cap = local_capacity(image_model)
+    if requested == "colab":
+        chosen, reason = "colab", "使用者指定用 Colab"
+    elif requested == "local" or cap["ok"]:
+        return "local", cap, None
+    else:
+        chosen = "colab"
+        reason = (f"本機顯示卡記憶體不夠：卸載聊天模型後只剩 {cap['free_after_unload_mib']} MiB 可用，"
+                  f"這次要約 {cap['needed_mib']} MiB（其他程式佔了 {cap['held_by_others_mib']} MiB）")
+    if chosen == "colab" and image_model != "z_image":
+        raise HTTPException(
+            status_code=409 if requested == "auto" else 422,
+            detail=("Qwen-Image 2.1 沒有雲端版本，" + (reason + "。請先關掉佔用顯示卡的程式，或改用 Z-Image"
+                                                      if requested == "auto" else "不能用 Colab")))
+    return chosen, cap, reason
 
 
 # ---------------------------------------------------------------- jobs
@@ -144,6 +197,10 @@ class Runner:
         self.guard = gpu_guard
         self.assemble = concept_cut.assemble
         self.thermal_log = gpu_guard.ThermalLog
+        self.sleep = time.sleep
+        self.clock = time.monotonic
+        self.zimage_jobs_dir = cc.ZIMAGE_JOBS_DIR                 # where the z-image-colab queue keeps its job files
+        self.zimage_sessions_log = os.path.join(REPO_ROOT, "output", "zimage", "zimage_sessions.jsonl")
 
     # -- lifecycle
     def start(self):
@@ -201,6 +258,8 @@ class Runner:
 
     # -- local Z-Image candidates
     def _run_images(self, job):
+        if job["params"].get("backend") == "colab":
+            return self._run_colab_images(job)
         job_id, params = job["job_id"], job["params"]
         story = self._story(job)
         bible = cs.load_bible(self.root)
@@ -267,6 +326,91 @@ class Runner:
                 "review_sheet": file_url(os.path.join(self.root, "review_sheet.html")),
                 "next": "請呼叫 show_images（newest_only=true）把新圖顯示在聊天裡，不要用文字描述圖片；"
                         "使用者看圖後再決定每個 Scene 核准哪一張，或判定重生"}
+
+    # -- the same Z-Image candidates on the Colab worker, for when the local card cannot hold the render
+    def _zimage_script(self, name, *args):
+        env = dict(os.environ, ZIMG_MODEL_SOURCE="download", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+        return self.run([sys.executable, os.path.join(ZIMAGE_SCRIPTS, name), *args], capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", env=env, cwd=REPO_ROOT)
+
+    @staticmethod
+    def _json_tail(done):
+        for line in reversed((done.stdout or "").strip().splitlines()):
+            if line.strip().startswith("{"):
+                try:
+                    return json.loads(line)
+                except ValueError:
+                    break
+        try:
+            return json.loads(done.stdout)       # status.py prints one indented object
+        except (ValueError, TypeError):
+            return {}
+
+    def _run_colab_images(self, job):
+        """export -> submit (free) -> worker up (spends CU) -> wait -> import. Nothing here starts before the user said
+        yes to the estimate, and a failed pre-flight stops before any compute unit is spent."""
+        job_id, params = job["job_id"], job["params"]
+        story = self._story(job)
+        bible = cs.load_bible(self.root)
+        letters = tuple(params["letters"])
+        scenes = set(params["scenes"]) if params["scenes"] else None
+
+        pre = self._zimage_script("setup_colab.py", "preflight")
+        if pre.returncode != 0:
+            raise RuntimeError("Colab 開始前的檢查沒過（沒有花 CU）：" + ((pre.stdout or pre.stderr).strip()[-400:]))
+        out = cc.export(bible, story, letters=letters, scene_numbers=scenes, batch=job_id)
+        sub = self._zimage_script("submit.py", "--manifest", out["manifest"])
+        if sub.returncode != 0:
+            raise RuntimeError("送進 Colab 佇列失敗（沒有花 CU）：" + ((sub.stdout or sub.stderr).strip()[-400:]))
+        up = self._zimage_script("worker.py", "up")
+        started = self._json_tail(up)
+        if up.returncode != 0 or not started.get("ok", True):
+            raise RuntimeError("Colab worker 沒有啟動：" + ((up.stdout or up.stderr).strip()[-400:]))
+        total = out["images"]
+        self._update(job_id, message="Colab 啟動中（約 4～14 分鐘，首張之後每張約 20 秒）", progress={"total": total})
+        deadline = self.clock() + COLAB_WAIT_SECONDS
+        waiting, dead_polls = False, 0
+        while True:
+            jobs = cc.find_jobs(job_id, self.zimage_jobs_dir)
+            finished = [j for j in jobs if j["status"] in ZIMAGE_TERMINAL]
+            self._update(job_id, progress={"done": sum(1 for j in jobs if j["status"] == "COMPLETED")})
+            if len(finished) >= total:
+                break
+            if job_id in self.cancel_requested:
+                self._zimage_script("worker.py", "stop")       # ends the session: it must not keep billing
+                break
+            if self.clock() >= deadline:
+                self._zimage_script("worker.py", "stop")
+                raise TimeoutError(f"Colab 超過 {COLAB_WAIT_SECONDS // 60} 分鐘沒有交出圖，已要求結束這個 session")
+            status = self._json_tail(self._zimage_script("status.py", "--local"))
+            controller = status.get("controller") or {}
+            if controller.get("state") == "drive_consent":
+                waiting = True
+                self._update(job_id, status=WAITING, message="等使用者按 Google Drive 同意",
+                             needs_user_action="請在瀏覽器按 Google Drive 的同意，按完後說一聲，再呼叫 consent_done")
+            elif waiting:
+                waiting = False
+                self._update(job_id, status=RUNNING, needs_user_action=None, message="Colab 生圖中")
+            dead_polls = 0 if status.get("controller_live", True) else dead_polls + 1
+            if dead_polls >= 3:
+                break                                          # the session ended with jobs left over; import what exists
+            self.sleep(COLAB_POLL_SECONDS)
+        report = cc.import_batch(bible, story, job_id, jobs_dir=self.zimage_jobs_dir)
+        cs.build_index(cs.load_stories(self.root), self.root)
+        cs.build_sheet(bible, cs.load_stories(self.root), self.root)
+        if not report["imported"] and not report["skipped"]:
+            raise RuntimeError("Colab 沒有交出任何圖：" + json.dumps(report, ensure_ascii=False)[:300])
+        cu = None
+        try:
+            with open(self.zimage_sessions_log, encoding="utf-8") as f:
+                last = [json.loads(line) for line in f if line.strip()][-1]
+            cu = last.get("cu_used_measured")
+        except (OSError, ValueError, IndexError):
+            pass
+        return {"backend": "colab", "images": len(report["imported"]), "imported": report["imported"],
+                "failed": report["failed"] + report["missing"], "cu_used": cu,
+                "next": "請呼叫 show_images（newest_only=true）把新圖顯示在聊天裡；Colab 用官方 bf16 權重，"
+                        "同一個種子的畫面跟本機不會逐像素一樣"}
 
     # -- MiniMax H3 clips on Colab
     def _run_videos(self, job):
@@ -584,13 +728,21 @@ class GenerateBody(BaseModel):
                                          "pipeline's own model) or 'qwen_image_2_1' (slower, better lettering; "
                                          "INTERNAL TEST ONLY, non-commercial licence). Use qwen_image_2_1 only when "
                                          "the user asked for Qwen by name.")
+    backend: str = Field(default="auto", pattern="^(auto|local|colab)$",
+                         description="Where to draw. 'auto' (the default) uses this computer's graphics card and "
+                                     "switches to the Google Colab cloud GPU only when the card cannot hold the render; "
+                                     "the estimate then says so and states the compute-unit cost. Use 'colab' or 'local' "
+                                     "only when the user asked for one by name. Colab draws Z-Image only.")
     confirm: bool = Field(default=False, description="false returns the estimate only. Set true only after the "
                                                      "user has seen the estimate and said yes.")
 
 
 @app.post("/stories/{story}/candidates", operation_id="generate_candidates", dependencies=AUTH,
-          summary="Queue local GPU generation of candidate stills for a story. Without confirm=true it only returns "
-                  "the estimate (number of images, minutes, model and any licence warning); nothing is generated.")
+          summary="Queue generation of candidate stills for a story: on this computer's GPU first, on the Colab cloud "
+                  "GPU when the local card is too full for the render. Without confirm=true it only returns the "
+                  "estimate (images, minutes, model, where it will run and why, compute units for Colab, any licence "
+                  "warning); nothing is generated and nothing is spent. Tell the user the estimate, including "
+                  "when it says Colab.")
 def generate_candidates(story: int, body: GenerateBody):
     st = _story(story)
     numbers = sorted(set(body.candidates))
@@ -604,21 +756,35 @@ def generate_candidates(story: int, body: GenerateBody):
     if not todo:
         return {"queued": False, "message": "這些候選圖都已經存在，沒有要生的"}
     model = cs.IMAGE_MODELS[body.image_model]
-    seconds = QWEN_SECONDS_PER_IMAGE if body.image_model == "qwen_image_2_1" else SECONDS_PER_IMAGE
-    estimate = {"images": len(todo), "image_model": model["label"],
-                "minutes": round(len(todo) * (seconds + COOLDOWN_SECONDS_PER_IMAGE) / 60),
-                "gpu": "本機顯示卡；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
-                       "生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
+    backend, capacity, reason = choose_backend(body.backend, body.image_model)
+    if backend == "colab":
+        minutes = round(COLAB_SESSION_MINUTES + len(todo) * COLAB_SECONDS_PER_IMAGE / 60)
+        estimate = {"images": len(todo), "image_model": model["label"], "backend": "Google Colab 雲端 GPU（L4）",
+                    "why_not_local": reason, "minutes": minutes,
+                    "compute_units": round(minutes / 60 * COLAB_CU_PER_HOUR, 2),
+                    "cost_note": "這會花 Colab 運算單元（CU）。實測一個 session 約 0.24～0.40 CU；估計值僅供參考",
+                    "user_actions": ["Docker Desktop 要開著", "每個 session 要在瀏覽器按一次 Google Drive 同意"],
+                    "note": "Colab 用官方 bf16 權重，同一個種子的畫面跟本機不會逐像素一樣；聊天模型不用卸載"}
+    else:
+        seconds = QWEN_SECONDS_PER_IMAGE if body.image_model == "qwen_image_2_1" else SECONDS_PER_IMAGE
+        estimate = {"images": len(todo), "image_model": model["label"], "backend": "本機顯示卡",
+                    "minutes": round(len(todo) * (seconds + COOLDOWN_SECONDS_PER_IMAGE) / 60),
+                    "gpu": "本機顯示卡；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
+                           "生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
+        if capacity.get("known"):
+            estimate["local_memory"] = (f"可用 {capacity['free_after_unload_mib']} MiB（卸載聊天模型後），"
+                                        f"需要約 {capacity['needed_mib']} MiB，夠用")
     if model["license"]:
         estimate["license_warning"] = (f"這個模型的授權是 {model['license']}：只能內部測試，產出的圖不要放進商用流程。"
                                        "請把這句話告訴使用者")
     if not body.confirm:
         return {"queued": False, "needs_confirmation": True, "estimate": estimate,
-                "message": "還沒開始。請把預估告訴使用者，使用者同意後再用 confirm=true 呼叫一次"}
+                "message": "還沒開始，也沒有花任何資源。請把預估告訴使用者（改用 Colab 時要特別講明會花 CU），"
+                           "使用者同意後再用 confirm=true 呼叫一次"}
     if _busy():
         raise HTTPException(status_code=409, detail=f"已有工作在進行：{_busy()[0]['job_id']}，請等它結束")
     job = runner.enqueue("images", st, {"letters": list(letters), "scenes": sorted(set(body.scenes or [])),
-                                        "image_model": body.image_model}, len(todo))
+                                        "image_model": body.image_model, "backend": backend}, len(todo))
     return {"queued": True, "job_id": job["job_id"], "estimate": estimate, "message": "已排入佇列，用 get_job 查進度"}
 
 
@@ -923,11 +1089,17 @@ def consent_done(job_id: str):
         raise HTTPException(status_code=404, detail="沒有這個 job_id")
     if job["status"] != WAITING:
         raise HTTPException(status_code=409, detail="這個工作目前沒有在等 Drive 同意")
-    done = runner.run([sys.executable, os.path.join(H3_SCRIPTS, "consent_done.py")], capture_output=True, text=True,
-                      encoding="utf-8", errors="replace", cwd=REPO_ROOT)
+    if job["kind"] == "images":     # a Colab image job: the z-image-colab worker waits for the same click
+        done = runner.run([sys.executable, os.path.join(ZIMAGE_SCRIPTS, "worker.py"), "consent-done"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT)
+        what = "Colab 生圖"
+    else:
+        done = runner.run([sys.executable, os.path.join(H3_SCRIPTS, "consent_done.py")], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT)
+        what = "H3"
     if done.returncode != 0:
         raise HTTPException(status_code=500, detail=(done.stdout or done.stderr).strip()[-300:])
-    return {"job_id": job_id, "message": "已通知，H3 會繼續"}
+    return {"job_id": job_id, "message": f"已通知，{what}會繼續"}
 
 
 def _allowed_file(path):
