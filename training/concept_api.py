@@ -75,7 +75,7 @@ QWEN_SECONDS_PER_IMAGE = 125
 # only a practically full card (nothing below 2 GB free was measured) is sent to Colab. The tiers are the project's canvas,
 # 80% of it and 60% of it (720x1280 -> 576x1024 -> 432x768) and the free-memory limits are read off those three runs.
 RESOLUTION_TIERS = ((9500, 1.0, "全解析度"), (5000, 0.8, "中解析度"), (0, 0.6, "小解析度"))
-LOCAL_MIN_FREE_MIB = 1500
+LOCAL_MIN_FREE_MIB = gpu_guard.START_MIN_FREE_MIB     # one number: the estimate and the batch's own check must agree
 REDUCED_SECONDS_PER_IMAGE = 45       # 576x1024 / 432x768 while the card is partly held: 32-38 s measured, with margin
 # The Colab worker (.claude/skills/z-image-colab) renders Z-Image only, on an L4: 18 s per 720x1280 image; a session costs
 # 9-15 minutes of fixed time (install or model copy, idle timeout) and measured 0.24 CU (8 jobs) and 0.40 CU (3 jobs).

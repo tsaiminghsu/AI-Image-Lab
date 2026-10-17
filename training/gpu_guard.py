@@ -21,7 +21,11 @@ import requests
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 UNLOAD_TIMEOUT_SECONDS = 120
-START_MAX_USED_MIB = 2500   # desktop apps alone were measured at 0.6-1.9 GB; above this something else holds the card
+# A batch needs this much of the card free once the chat model is unloaded. It used to be an absolute "at most 2,500 MiB
+# used", a figure from the 8 GB RTX 2070 (desktop apps alone 0.6-1.9 GB), which refused a 16 GB card that was half empty:
+# a stand-in program holding 14 GB of the RTX 5060 Ti (2 GB free) still drew a Z-Image picture, only slower
+# (2026-10-17). 1,500 MiB is below the smallest free amount that was measured, so a card that tight goes to Colab.
+START_MIN_FREE_MIB = 1500
 START_WAIT_SECONDS = 300
 POLL_SECONDS = 3
 
@@ -96,13 +100,15 @@ def before_batch(*, max_start_temp_c, http=requests, run=subprocess.run, sleep=t
         if state is None:
             return {"unloaded": unloaded, "gpu": None}
         hot = state["temp_c"] >= max_start_temp_c
-        full = state["used_mib"] > START_MAX_USED_MIB
+        free = state["total_mib"] - state["used_mib"]
+        full = free < START_MIN_FREE_MIB
         if not hot and not full:
             return {"unloaded": unloaded, "gpu": state}
         if clock() >= deadline:
             why = []
             if full:
-                why.append(f"VRAM 已用 {state['used_mib']:.0f} MiB（上限 {START_MAX_USED_MIB}），有別的程式佔著顯示卡")
+                why.append(f"VRAM 已用 {state['used_mib']:.0f} MiB，只剩 {free:.0f} MiB 可用"
+                           f"（至少要剩 {START_MIN_FREE_MIB}），有別的程式佔著顯示卡")
             if hot:
                 why.append(f"GPU {state['temp_c']:.0f}°C，還沒降到 {max_start_temp_c}°C")
             raise GpuBusy("；".join(why))

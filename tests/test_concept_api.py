@@ -1057,6 +1057,27 @@ def test_the_batch_waits_for_a_free_cool_card_and_gives_up_with_the_reason():
     )
 
 
+def test_a_half_held_16_gb_card_is_not_refused_by_the_batch_check_but_a_practically_full_one_is():
+    """2026-10-17: the estimate said 'draw locally at 576x1024' while the batch refused with 'VRAM 8002 MiB used (limit
+    2500)', a limit from the 8 GB card. The batch check now asks for free memory, the same 1,500 MiB the estimate uses."""
+    got = gpu_guard.before_batch(
+        max_start_temp_c=55, http=FakeOllama([]), run=smi(["45, 8002, 16311"]), sleep=lambda s: None, log=lambda m: None
+    )
+    assert got["gpu"]["used_mib"] == 8002.0
+    clock = Clock()
+    with pytest.raises(gpu_guard.GpuBusy, match="只剩 811 MiB"):
+        gpu_guard.before_batch(
+            max_start_temp_c=55,
+            http=FakeOllama([]),
+            run=smi(["45, 15500, 16311"]),
+            sleep=clock.sleep,
+            clock=clock,
+            wait_seconds=20,
+            log=lambda m: None,
+        )
+    assert gpu_guard.START_MIN_FREE_MIB == api.LOCAL_MIN_FREE_MIB  # the estimate and the batch can no longer disagree
+
+
 def test_a_model_reloaded_by_the_chat_reply_during_the_wait_is_unloaded_again():
     """2026-10-17: the model was unloaded when the job started, the chat reply loaded it again, and the batch waited
     out Ollama's 5-minute keep_alive and failed one second early with GpuBusy."""
@@ -1068,24 +1089,24 @@ def test_a_model_reloaded_by_the_chat_reply_during_the_wait_is_unloaded_again():
         seen["n"] += 1
         if seen["n"] == 1:
             ollama.loaded.append("qwen3.5:9b")  # the chat reply loads the model right after the first unload
-        used = 8189 if ollama.loaded else 900
+        used = 16200 if ollama.loaded else 8000  # another program holds 8 GB; with the chat model back the card is full
         return subprocess.CompletedProcess(cmd, 0, stdout=f"45, {used}, 16311\n", stderr="")
 
     logged = []
     got = gpu_guard.before_batch(
         max_start_temp_c=55, http=ollama, run=run, sleep=clock.sleep, clock=clock, log=logged.append
     )
-    assert got["gpu"]["used_mib"] == 900 and clock.t < 30  # seconds, not the 300 s of the wait window
+    assert got["gpu"]["used_mib"] == 8000 and clock.t < 30  # seconds, not the 300 s of the wait window
     assert {"model": "qwen3.5:9b", "keep_alive": 0} in ollama.posts and any("再卸載" in line for line in logged)
 
 
 def test_a_card_held_by_something_else_still_stops_the_batch_after_re_unloading():
     clock = Clock()
-    with pytest.raises(gpu_guard.GpuBusy, match="8189 MiB"):
+    with pytest.raises(gpu_guard.GpuBusy, match="15500 MiB"):
         gpu_guard.before_batch(
             max_start_temp_c=55,
             http=FakeOllama([]),
-            run=smi(["45, 8189, 16311"]),
+            run=smi(["45, 15500, 16311"]),
             sleep=clock.sleep,
             clock=clock,
             wait_seconds=20,
