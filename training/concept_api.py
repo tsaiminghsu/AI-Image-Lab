@@ -21,6 +21,7 @@ model reads those to decide which tool to call.
 import contextlib
 import datetime
 import hmac
+import html as html_lib
 import json
 import math
 import os
@@ -34,7 +35,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 import comfyui_client as client
@@ -264,7 +265,8 @@ class Runner:
         self._update(job_id, progress={"done": made, "current": None})
         return {"images": made, "comfyui_restarts": restarts, "temperature": temperature,
                 "review_sheet": file_url(os.path.join(self.root, "review_sheet.html")),
-                "next": "請使用者看圖後決定每個 Scene 核准哪一張，或判定重生"}
+                "next": "請呼叫 show_images（newest_only=true）把新圖顯示在聊天裡，不要用文字描述圖片；"
+                        "使用者看圖後再決定每個 Scene 核准哪一張，或判定重生"}
 
     # -- MiniMax H3 clips on Colab
     def _run_videos(self, job):
@@ -510,6 +512,65 @@ def list_scenes(story: int):
                        "clip_url": file_url(os.path.join(REPO_ROOT, clip["path"])) if clip else None})
     return {"story": st.number, "title": st.data.get("title_zh"), "scenes": scenes,
             "review_checklist": cs.load_bible(runner.root)["review_checklist"]}
+
+
+def _gallery_page(story, picked, note=""):
+    """A self-contained HTML page of candidate pictures. Open WebUI embeds an external tool's text/html answer that
+    carries Content-Disposition: inline in the chat as a frame, so the user SEES the pictures instead of a chat model's
+    description of them. The page only references /files/ URLs (read-only, confined) and needs no script."""
+    esc = html_lib.escape
+    figures = []
+    for entry in picked:
+        label = f"Scene {entry['scene']} 候選 {entry['candidate']}"
+        extra = f" · {esc(entry['image_model'])}" if entry.get("image_model") else ""
+        warn = f"<div class='w'>{esc(entry['license_warning'])}</div>" if entry.get("license_warning") else ""
+        figures.append(
+            f"<figure><a href='{esc(entry['url'])}' target='_blank' rel='noopener'><img src='{esc(entry['url'])}' "
+            f"alt='{esc(label)}' loading='lazy'></a><figcaption><b>{esc(label)}</b>{extra}<br>"
+            f"<span class='s'>{esc(entry['title'])} · {esc(entry['status'])}</span>{warn}</figcaption></figure>")
+    body = "".join(figures) or "<p>這個範圍還沒有候選圖。</p>"
+    return (
+        "<!doctype html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content="
+        "'width=device-width,initial-scale=1'><style>body{margin:0;padding:8px;font:13px/1.45 'Microsoft JhengHei',"
+        "sans-serif;color:#222;background:transparent}.t{font-weight:600;margin:0 0 8px}.g{display:grid;"
+        "grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}figure{margin:0;border:1px solid #d0d5dd;"
+        "border-radius:8px;overflow:hidden;background:#fff}img{display:block;width:100%;height:auto}"
+        "figcaption{padding:6px 8px}.s{color:#667085}.w{margin-top:4px;color:#9a5b00;font-size:12px}</style></head>"
+        f"<body><p class='t'>{esc(story.data.get('title_zh') or story.data['title'])}{esc(note)}</p>"
+        f"<div class='g'>{body}</div></body></html>")
+
+
+@app.get("/stories/{story}/gallery", operation_id="show_images", dependencies=AUTH, response_class=HTMLResponse,
+         summary="SHOW the candidate pictures of a story to the user as an image gallery inside the chat (all scenes, or "
+                 "one scene; newest_only=true shows just the latest picture of each scene, e.g. right after a "
+                 "generation finished). Call this whenever the user wants to see pictures. The pictures appear by "
+                 "themselves: do not describe them or paste links, just say that they are shown.")
+def show_images(story: int, scene: int | None = None, newest_only: bool = False):
+    st = _story(story)
+    scenes = [_scene(st, scene)] if scene else st.data["scenes"]
+    picked = []
+    for s in scenes:
+        n = s["scene"]
+        review = cs.load_review(st, n)
+        found = []
+        for letter in cs.existing_letters(st, n):
+            paths = cs.candidate_paths(st, n, letter)
+            try:
+                meta = cs._read_json(paths["meta"])
+            except (OSError, ValueError):
+                meta = {}
+            entry = {"scene": n, "candidate": cs.LETTERS.index(letter) + 1, "url": file_url(paths["png"]),
+                     "title": s["title"], "status": review["status"], "mtime": os.path.getmtime(paths["png"])}
+            if meta.get("image_model") and meta["image_model"] != cs.DEFAULT_IMAGE_MODEL:
+                entry["image_model"] = cs.IMAGE_MODELS.get(meta["image_model"], {}).get("label", meta["image_model"])
+            if meta.get("license"):
+                entry["license_warning"] = f"授權 {meta['license']}：只能內部測試，不要放進商用流程"
+            found.append(entry)
+        if newest_only and found:
+            found = [max(found, key=lambda e: e["mtime"])]
+        picked.extend(found)
+    note = "（每個 Scene 最新的一張）" if newest_only else ""
+    return HTMLResponse(_gallery_page(st, picked, note), headers={"Content-Disposition": "inline"})
 
 
 class GenerateBody(BaseModel):

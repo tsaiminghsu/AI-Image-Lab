@@ -25,6 +25,7 @@ TOOLS = {
     "review_scene",
     "set_video_prompt",
     "set_scene_visual",
+    "show_images",
     "make_videos",
     "make_cut",
     "list_jobs",
@@ -415,6 +416,39 @@ def test_a_confirmed_qwen_job_renders_with_qwen_and_the_scene_listing_carries_th
     assert candidate["image_model"].startswith("Qwen-Image 2.1") and "內部測試" in candidate["license_warning"]
     plain = web.get("/stories/5/scenes").json()["scenes"][2]
     assert plain["candidates"] == []  # nothing else was drawn
+
+
+def test_show_images_answers_with_an_inline_html_gallery_that_open_webui_embeds(web, env):
+    web.post(
+        "/stories/5/candidates",
+        json={"scenes": [2], "candidates": [1, 2], "image_model": "qwen_image_2_1", "confirm": True},
+    )
+    assert env.run_next()["status"] == api.COMPLETED
+    r = web.get("/stories/5/gallery", params={"scene": 2})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    assert "inline" in r.headers["content-disposition"]  # the header that makes Open WebUI show it in the chat
+    page = r.text
+    assert page.count("<img ") == 2 and "Scene 2 候選 1" in page and "Scene 2 候選 2" in page
+    assert "/files/" in page and "Qwen-Image 2.1" in page and "內部測試" in page  # the licence warning travels along
+    assert "<script" not in page.lower()
+
+
+def test_show_images_can_show_only_the_newest_picture_and_handles_a_scene_without_any(web, env):
+    web.post("/stories/5/candidates", json={"scenes": [2, 3], "candidates": [1, 2], "confirm": True})
+    env.run_next()
+    one = web.get("/stories/5/gallery", params={"scene": 2, "newest_only": True}).text
+    assert one.count("<img ") == 1
+    every_scene_newest = web.get("/stories/5/gallery", params={"newest_only": True}).text
+    assert every_scene_newest.count("<img ") == 2  # scenes 2 and 3 only: the others have no picture yet
+    empty = web.get("/stories/5/gallery", params={"scene": 6})
+    assert empty.status_code == 200 and "還沒有候選圖" in empty.text and "<img " not in empty.text
+    assert web.get("/stories/5/gallery", params={"scene": 9}).status_code == 404
+
+
+def test_the_finished_image_job_tells_the_assistant_to_show_the_pictures(web, env):
+    web.post("/stories/5/candidates", json={"scenes": [2], "confirm": True})
+    job = env.run_next()
+    assert "show_images" in job["result"]["next"]
 
 
 # --- H3 -----------------------------------------------------------------------------------------------------

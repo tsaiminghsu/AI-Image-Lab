@@ -27,7 +27,7 @@ ComfyUI 的 8188 也是。所以 ComfyUI 改用 9188（`COMFYUI_URL`），Ollama
 URL 填 `http://host.docker.internal:21434`。另外環境變數 `OLLAMA_MODELS` 指向的資料夾可能是空的（這台是 `D:\AI\Models\Ollama`，
 `qwen3.5:9b` 實際在 `D:\Ollama\Models`），腳本會自動挑第一個真的有模型的資料夾。
 
-**上下文長度**：Ollama 在 8 GB 的卡上預設只開 4096 個 token，但 Open WebUI 每則訊息都會附上 12 個工具的說明和系統提示
+**上下文長度**：Ollama 在 8 GB 的卡上預設只開 4096 個 token，但 Open WebUI 每則訊息都會附上 13 個工具的說明和系統提示
 （約 6,200 token），會報 `exceed_context_size_error`（`request (6198 tokens) exceeds the available context size (4096 tokens)`）。
 腳本因此用 `OLLAMA_CONTEXT_LENGTH=32768` 啟動 Ollama（`CONCEPT_OLLAMA_CTX` 可改）。16384 在長對話裡會被塞滿（工具定義約 6,000 token，加上一次 `list_scenes` 約 3,800 token），塞滿時模型寫工具參數寫到一半被截斷，Open WebUI 會顯示
 `llama-server returned invalid tool call arguments ... unexpected end of JSON input`。實測 32768 只比 16384 多佔約 0.6 GB
@@ -53,7 +53,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    （Open WebUI 0.11.4 的後端設定是 `tool_server.connections`；選單的中文名稱我沒有在畫面上核對過，找不到時搜尋
    「OpenAPI」或「Tool Server」。）
 2. 類型 OpenAPI；URL `http://host.docker.internal:7863`；路徑 `openapi.json`；驗證選「無」
-   （有設 `CONCEPT_API_TOKEN` 就選 Bearer 並填入）。儲存後應該看到 12 個工具。
+   （有設 `CONCEPT_API_TOKEN` 就選 Bearer 並填入）。儲存後應該看到 13 個工具。
 3. 模型 `qwen3.5:9b` 的進階參數：Function Calling 設成 Native（原生）。
 4. 建議在「工作區 → 模型」建一個「短劇概念片助理」：基礎模型 `qwen3.5:9b`、勾選上面的工具伺服器，系統提示：
 
@@ -65,7 +65,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    2. generate_candidates 與 make_videos 要先不帶 confirm 呼叫一次，把預估（張數、分鐘、CU、需要的人工動作）告訴使用者，
       使用者說好之後才帶 confirm=true 再呼叫。
    3. 工作排入後用 get_job 查進度；needs_user_action 有內容時，原文告訴使用者要做什麼。
-   4. 給使用者看候選圖時，直接貼出 list_scenes 回傳的 markdown。
+   4. 使用者想看圖片時（剛生完圖、或說「給我看」），呼叫 show_images：圖會直接顯示在聊天裡。看新生的圖用 newest_only=true。不要用文字描述圖片，也不要自己貼圖片連結。
    5. 生候選圖時先只生每個 Scene 的第 1 張（預設值）；使用者看過、指名要第二張的 Scene 才用 candidates=[2] 補。
    6. 工具回傳錯誤時，照實轉述，不要自己猜原因。
    8. generate_candidates 預設用 z_image。只有使用者明說要用 Qwen（Qwen-Image 2.1）時才帶 image_model=qwen_image_2_1；
@@ -81,6 +81,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 | --- | --- | --- |
 | `list_stories` | 五個故事的狀態、圖片數、影片數 | 不會 |
 | `list_scenes` | 一個故事的 7 個 Scene：劇情、狀態、候選圖、要核對的畫面文字 | 不會 |
+| `show_images` | **把候選圖直接顯示在聊天裡**（圖片畫廊，標註 Scene、候選編號、模型、授權警告）。可指定 scene，或 newest_only=true 只看每個 Scene 最新的一張 | 不會 |
 | `generate_candidates` | 排入本機生圖。預設只生每個 Scene 的候選 1（7 張）；`candidates: [2]` 補第二張，`[3, 4]` 只給判定重生的 Scene | **本機 GPU**，每張約 2.3 分鐘 |
 | `review_scene` | 記錄你的決定：核准第幾張（變成 `master.png`）或判定重生。**必須附上你的原話**（`user_quote`） | 不會 |
 | `set_video_prompt` | 存一個 Scene 的 H3 鏡頭描述（英文） | 不會 |
