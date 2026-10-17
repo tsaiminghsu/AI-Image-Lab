@@ -1425,21 +1425,21 @@ python generate_character.py --variant quant custom --checkpoint cyberrealistic_
 版本，所以不能用 anchor 鎖臉，也沒有骨架姿勢控制、HQ 兩段式、臉部/手部精修跟批次 GIF，
 選了這些會直接跳錯誤。`--character` 可以用，但只會加上角色的文字描述。
 
-安裝：三個檔案共約 11.3 GB，都在官方 [Comfy-Org/z_image_turbo](https://huggingface.co/Comfy-Org/z_image_turbo)。
+安裝：三個檔案共約 17.9 GB（8 GB 卡改用 int8 主模型 5.78 GB，共約 11.3 GB，見下），都在官方 [Comfy-Org/z_image_turbo](https://huggingface.co/Comfy-Org/z_image_turbo)。
 
 | 檔案 | 大小 | 放到 |
 |---|---|---|
-| `z_image_turbo_int8_convrot.safetensors` | 5.78 GB | `ComfyUI/models/diffusion_models/` |
+| `z_image_turbo_bf16.safetensors` | 12.31 GB | `ComfyUI/models/diffusion_models/` |
 | `qwen_3_4b_fp8_mixed.safetensors` | 5.24 GB | `ComfyUI/models/text_encoders/` |
 | `ae.safetensors` | 0.31 GB | `ComfyUI/models/vae/` |
 
 ```powershell
-curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\diffusion_models\z_image_turbo_int8_convrot.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors
+curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\diffusion_models\z_image_turbo_bf16.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors
 curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\text_encoders\qwen_3_4b_fp8_mixed.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors
 curl.exe -L -o "D:\AI-Image-Lab\ComfyUI\models\vae\ae.safetensors" https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
 ```
 
-選 int8 / fp8 而不是 bf16 完整版（11.46 GB + 7.49 GB）是因為 8 GB 卡放不下 bf16。RTX 2070
+預設主模型是 bf16 完整版：16 GB 卡（RTX 5060 Ti）實測比 int8 快（720×1280、8 步、cfg 2.0，暖機每張 26.3 秒對 36.5 秒），畫質沒有看得出的差異，顯示卡峰值約 13.2 GB。文字編碼器仍是 fp8 版。8 GB 卡（RTX 2070）放不下 bf16，要把 `comfyui_client.ZIMAGE_MODELS` 的 `unet` 改回 `z_image_turbo_int8_convrot.safetensors`（5.78 GB，`resolve/main/split_files/diffusion_models/` 下同名檔案）。RTX 2070
 沒有原生 bf16，ComfyUI 會自動改用 fp16 運算，不會退回很慢的 fp32；int8 權重在 Windows 上
 走 comfy_kitchen 的 eager（純 PyTorch）路徑，比理想值慢，但可以用。
 

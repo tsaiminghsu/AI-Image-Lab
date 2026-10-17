@@ -122,13 +122,17 @@ SD15_WIDTH, SD15_HEIGHT = 512, 768
 # CHECKPOINTS on purpose: it loads as three separate files (diffusion model / Qwen3-4B text encoder /
 # Flux VAE) rather than one CheckpointLoaderSimple file, and pose_pack.py / model_prompt_test.py / the
 # GIF path treat every CHECKPOINTS value as such a file. No IP-Adapter/FaceID, ControlNet or
-# FaceDetailer wiring exists for it. int8 + fp8 builds because the bf16 ones (11.5 + 7.5 GB) do not
-# fit 8 GB; on the RTX 2070 ComfyUI computes it in fp16 (no native bf16) and the int8 layers go through
-# comfy_kitchen's eager backend (no triton on Windows). Measured there: ~9 s/step, ~75 s per 1024^2
-# image at cfg 1 once loaded; the first image after startup took 5-7 min and every prompt change adds
-# a text-encoder swap, because encoder (5.4 GB) and diffusion model (5.9 GB) do not fit together.
+# FaceDetailer wiring exists for it.
+# History: the 8 GB RTX 2070 needed int8 (z_image_turbo_int8_convrot.safetensors, 5.8 GB) + fp8 builds because the
+# bf16 ones (12.3 + 8.0 GB) did not fit; there ComfyUI computed in fp16 (no native bf16) and the int8 layers went
+# through comfy_kitchen's eager backend: ~9 s/step, 131-141 s per 720x1280 image, and a text-encoder swap on every
+# prompt change. On the RTX 5060 Ti (16 GB, driver 617.42, 2026-10-17, 720x1280, 8 steps, cfg 2.0) the official bf16
+# diffusion model measured 26.3 s warm (48.5 s cold, VRAM peak 13.2 GB) against 36.5 s warm (56.7 s cold, 8.0 GB) for
+# int8, with no visible quality difference, so bf16 is the default. The text encoder is still the fp8 build; the
+# official bf16 encoder (qwen_3_4b.safetensors, 8.0 GB) is what the Colab worker uses. On an 8 GB card set unet back to
+# z_image_turbo_int8_convrot.safetensors (README "Z-Image Turbo").
 ZIMAGE_MODELS = {
-    "z_image_turbo": dict(unet="z_image_turbo_int8_convrot.safetensors",
+    "z_image_turbo": dict(unet="z_image_turbo_bf16.safetensors",
                           text_encoder="qwen_3_4b_fp8_mixed.safetensors",
                           vae="ae.safetensors"),
 }

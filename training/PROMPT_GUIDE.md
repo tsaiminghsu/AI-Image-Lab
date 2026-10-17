@@ -48,7 +48,7 @@
 
 | key | unet | text_encoder | vae |
 |---|---|---|---|
-| `z_image_turbo` | `z_image_turbo_int8_convrot.safetensors` | `qwen_3_4b_fp8_mixed.safetensors` | `ae.safetensors` |
+| `z_image_turbo` | `z_image_turbo_bf16.safetensors` | `qwen_3_4b_fp8_mixed.safetensors` | `ae.safetensors` |
 | `wan22_ti2v_5b` | `wan2.2_ti2v_5B_fp16.safetensors` | `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | `wan2.2_vae.safetensors` |
 
 ControlNet 模型 `control-lora-openposeXL2-rank256.safetensors`，強度 0.8。
