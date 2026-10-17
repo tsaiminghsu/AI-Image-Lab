@@ -68,6 +68,8 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    4. 給使用者看候選圖時，直接貼出 list_scenes 回傳的 markdown。
    5. 生候選圖時先只生每個 Scene 的第 1 張（預設值）；使用者看過、指名要第二張的 Scene 才用 candidates=[2] 補。
    6. 工具回傳錯誤時，照實轉述，不要自己猜原因。
+   8. generate_candidates 預設用 z_image。只有使用者明說要用 Qwen（Qwen-Image 2.1）時才帶 image_model=qwen_image_2_1；
+      這時預估裡有 license_warning，要把那句話原文告訴使用者（只能內部測試，不能商用）。
    7. 使用者想改某個 Scene 的畫面（動作、場景、光線、畫面文字、構圖）時，用 set_scene_visual，只改他說到的欄位，
       user_quote 放他的原話；動作、場景、光線、構圖要用英文寫。改完要說清楚：已有的候選圖不會變，
       要用新描述得到新圖，必須由使用者自己說「Scene N 重生」，不要替他決定。不要自己加使用者沒要求的改動。
@@ -121,6 +123,21 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
   **這驗的是話，不是人**：模型仍可能編出一句符合格式的原話。核准之後請自己看一眼 `review_sheet.html` 或 `list_scenes` 的結果。
 - 9B 的模型可能選錯工具或漏參數；工具回傳的錯誤訊息是中文，會說明缺什麼。
 - H3 仍然需要你在場：Docker Desktop 要開著、每個 session 要按一次 Drive 同意。
+
+## 六之一、選圖片模型（`generate_candidates` 的 `image_model`）
+
+| 說法 | 用的模型 | 預估 | 說明 |
+| --- | --- | --- | --- |
+| 沒特別說（預設） | Z-Image Turbo | 每張約 40 秒（新顯卡實測暖機 36.5 秒） | 專案原本的模型 |
+| 「用 Qwen 生」 | Qwen-Image 2.1（社群 GGUF Q6_K，25 步） | 每張約 2 分鐘（實測暖機 119 秒、首張 185 秒） | 中文畫面文字更準；**授權是 Qwen Research，只能內部測試，不能商用** |
+
+- **安全規則不破例**：Qwen 官方設定是 cfg 1（負面詞不生效），這裡一律用基礎版、真 cfg 2.0，並加跟 Z-Image 同一套安全負面詞；
+  Turbo 版是為 cfg 1 訓練的，沒有開放。測試釘住：每個故事每個 Scene 的 Qwen 請求都帶全部年齡安全詞、cfg 不低於 1.5，
+  工作流過 `workflow_safety` 的檢查。
+- **授權標記**：Qwen 產的每張圖，記錄檔有 `license: qwen-research (non-commercial)`、`image_model`、模型檔名；生圖預估和
+  `list_scenes` 的每張候選圖都會帶 `license_warning`。程式擋不了你之後把圖拿去商用，那要你自己注意。
+- 兩個模型共用同一個種子規則與提示詞組裝，只有畫圖的模型不同，所以同一個 Scene 可以直接比較。
+- 一次只能選一個模型，同一批圖用同一個模型；先有 Z-Image 的候選 1、2，要補 Qwen 的就要走「Scene N 重生」再補候選 3、4。
 
 ## 六、在聊天裡改圖片細節（`set_scene_visual`）
 

@@ -59,7 +59,13 @@ IMAGE_STALL_SECONDS = 600           # a longer image is a hang (normal: 100-330 
 MAX_COMFYUI_RESTARTS = 3
 MAX_CLIPS_PER_SESSION = 4            # the conservative split from the story 1 report (4+3)
 COOLDOWN_SECONDS_PER_IMAGE = 200     # an estimate until a gated batch has been measured: ~80 C back to 60 C
-SECONDS_PER_IMAGE = 140              # measured on the RTX 2070: 131-141 s mean per 720x1280 image
+# Z-Image at 720x1280: 131-141 s on the old RTX 2070; on the RTX 5060 Ti (driver 617.42) 36.5 s warm, 56.7 s for the
+# first image after ComfyUI starts (2026-10-17). COOLDOWN_SECONDS_PER_IMAGE above is still the 2070 figure: the new
+# card peaks near 69 C, so the 60 C gate probably waits far less, but that has not been measured.
+SECONDS_PER_IMAGE = 40
+# Qwen-Image 2.1 on the RTX 5060 Ti: 62.5 s warm at cfg 1; the pipeline runs it at cfg 2.0 (two passes per step), so
+# roughly double. An estimate until a chat-triggered batch has been measured.
+QWEN_SECONDS_PER_IMAGE = 125
 SESSION_OVERHEAD_MINUTES = 6.5       # measured: fresh Colab session, models downloaded
 INFERENCE_SECONDS_PER_VIDEO_SECOND = 39.5   # measured: 8 s clip ~315 s
 CU_PER_HOUR = 5.2                    # measured average; batches ranged 3.1-6.1
@@ -233,7 +239,8 @@ class Runner:
                 try:
                     cs.generate(bible, [story], letters=letters, scene_numbers=scenes, submit=self.submit,
                                 server_up=self.server_up, before_each=before_each,
-                                should_stop=lambda: job_id in self.cancel_requested)
+                                should_stop=lambda: job_id in self.cancel_requested,
+                                image_model=params.get("image_model", cs.DEFAULT_IMAGE_MODEL))
                     break
                 except (TimeoutError, client.ComfyUIUnavailable) as exc:
                     # Only a ComfyUI this job started can be restarted; someone else's is not ours to kill.
@@ -485,8 +492,16 @@ def list_scenes(story: int):
         for letter in cs.existing_letters(st, n):
             url = file_url(cs.candidate_paths(st, n, letter)["png"])
             number = cs.LETTERS.index(letter) + 1
-            candidates.append({"candidate": number, "url": url,
-                               "markdown": f"![Scene {n} 候選 {number}]({url})"})
+            entry = {"candidate": number, "url": url, "markdown": f"![Scene {n} 候選 {number}]({url})"}
+            try:
+                meta = cs._read_json(cs.candidate_paths(st, n, letter)["meta"])
+            except (OSError, ValueError):
+                meta = {}
+            if meta.get("image_model") and meta["image_model"] != cs.DEFAULT_IMAGE_MODEL:
+                entry["image_model"] = cs.IMAGE_MODELS.get(meta["image_model"], {}).get("label", meta["image_model"])
+            if meta.get("license"):
+                entry["license_warning"] = f"授權 {meta['license']}：只能內部測試，不要放進商用流程"
+            candidates.append(entry)
         clip = clips.get(f"scene_{n:02d}")
         scenes.append({"scene": n, "title": s["title"], "plot": s["beat_zh"], "status": review["status"],
                        "approved_candidate": review.get("approved_candidate"), "notes": review.get("notes") or None,
@@ -503,13 +518,18 @@ class GenerateBody(BaseModel):
                                                        "default - one image per scene), [2] or [1, 2] when the user "
                                                        "wants a second option, [3, 4] only for scenes the user marked "
                                                        "for regeneration.")
+    image_model: str = Field(default="z_image", pattern="^(z_image|qwen_image_2_1)$",
+                             description="Which picture model draws the images: 'z_image' (the default and the "
+                                         "pipeline's own model) or 'qwen_image_2_1' (slower, better lettering; "
+                                         "INTERNAL TEST ONLY, non-commercial licence). Use qwen_image_2_1 only when "
+                                         "the user asked for Qwen by name.")
     confirm: bool = Field(default=False, description="false returns the estimate only. Set true only after the "
                                                      "user has seen the estimate and said yes.")
 
 
 @app.post("/stories/{story}/candidates", operation_id="generate_candidates", dependencies=AUTH,
           summary="Queue local GPU generation of candidate stills for a story. Without confirm=true it only returns "
-                  "the estimate (number of images, minutes); nothing is generated.")
+                  "the estimate (number of images, minutes, model and any licence warning); nothing is generated.")
 def generate_candidates(story: int, body: GenerateBody):
     st = _story(story)
     numbers = sorted(set(body.candidates))
@@ -522,16 +542,22 @@ def generate_candidates(story: int, body: GenerateBody):
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if not todo:
         return {"queued": False, "message": "這些候選圖都已經存在，沒有要生的"}
-    estimate = {"images": len(todo),
-                "minutes": round(len(todo) * (SECONDS_PER_IMAGE + COOLDOWN_SECONDS_PER_IMAGE) / 60),
-                "gpu": "本機 RTX 2070；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
+    model = cs.IMAGE_MODELS[body.image_model]
+    seconds = QWEN_SECONDS_PER_IMAGE if body.image_model == "qwen_image_2_1" else SECONDS_PER_IMAGE
+    estimate = {"images": len(todo), "image_model": model["label"],
+                "minutes": round(len(todo) * (seconds + COOLDOWN_SECONDS_PER_IMAGE) / 60),
+                "gpu": "本機顯示卡；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
                        "生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
+    if model["license"]:
+        estimate["license_warning"] = (f"這個模型的授權是 {model['license']}：只能內部測試，產出的圖不要放進商用流程。"
+                                       "請把這句話告訴使用者")
     if not body.confirm:
         return {"queued": False, "needs_confirmation": True, "estimate": estimate,
                 "message": "還沒開始。請把預估告訴使用者，使用者同意後再用 confirm=true 呼叫一次"}
     if _busy():
         raise HTTPException(status_code=409, detail=f"已有工作在進行：{_busy()[0]['job_id']}，請等它結束")
-    job = runner.enqueue("images", st, {"letters": list(letters), "scenes": sorted(set(body.scenes or []))}, len(todo))
+    job = runner.enqueue("images", st, {"letters": list(letters), "scenes": sorted(set(body.scenes or [])),
+                                        "image_model": body.image_model}, len(todo))
     return {"queued": True, "job_id": job["job_id"], "estimate": estimate, "message": "已排入佇列，用 get_job 查進度"}
 
 

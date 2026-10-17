@@ -396,6 +396,27 @@ def test_an_approved_scene_a_rendered_composition_and_a_running_job_block_the_ed
     assert approved.status_code == 409 and "已經核准" in approved.json()["detail"]
 
 
+def test_the_qwen_model_is_a_choice_with_a_licence_warning_and_the_default_stays_z_image(web, env):
+    plain = web.post("/stories/5/candidates", json={"scenes": [2]}).json()["estimate"]
+    assert plain["image_model"].startswith("Z-Image") and "license_warning" not in plain
+    qwen = web.post("/stories/5/candidates", json={"scenes": [2], "image_model": "qwen_image_2_1"}).json()["estimate"]
+    assert qwen["image_model"].startswith("Qwen-Image 2.1") and "內部測試" in qwen["license_warning"]
+    assert qwen["minutes"] > plain["minutes"]  # cfg 2.0 costs two passes per step
+    assert web.post("/stories/5/candidates", json={"image_model": "flux"}).status_code == 422
+
+
+def test_a_confirmed_qwen_job_renders_with_qwen_and_the_scene_listing_carries_the_warning(web, env):
+    r = web.post("/stories/5/candidates", json={"scenes": [2], "image_model": "qwen_image_2_1", "confirm": True})
+    assert r.json()["queued"]
+    assert env.run_next()["status"] == api.COMPLETED
+    assert env.submitted and all(call["model"] == "qwen_image_2_1" for call in env.submitted)
+    assert all(call["cfg"] >= api.client.SAFETY_MIN_CFG for call in env.submitted)
+    candidate = web.get("/stories/5/scenes").json()["scenes"][1]["candidates"][0]
+    assert candidate["image_model"].startswith("Qwen-Image 2.1") and "內部測試" in candidate["license_warning"]
+    plain = web.get("/stories/5/scenes").json()["scenes"][2]
+    assert plain["candidates"] == []  # nothing else was drawn
+
+
 # --- H3 -----------------------------------------------------------------------------------------------------
 
 

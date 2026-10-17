@@ -39,6 +39,16 @@ import gpu_guard
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.join(REPO_ROOT, "projects", "ai_short_drama")
 MODEL_KEY = "z_image_turbo"
+# The still-image models a candidate can be rendered with. "z_image" is the default and the only one the pipeline was
+# built around. "qwen_image_2_1" is INTERNAL TEST ONLY (Qwen Research License, non-commercial): it runs at a true cfg of
+# 2.0 on the base model so the safety negatives stay effective, every image it makes is marked with its licence, and
+# nothing here can stop the user from taking such an image into commercial work afterwards.
+IMAGE_MODELS = {
+    "z_image": {"key": MODEL_KEY, "label": "Z-Image Turbo", "license": None},
+    "qwen_image_2_1": {"key": "qwen_image_2_1", "label": "Qwen-Image 2.1（社群 GGUF Q6_K）",
+                       "license": client.QWEN_IMAGE21_LICENSE},
+}
+DEFAULT_IMAGE_MODEL = "z_image"
 SCENES_PER_STORY = 7
 LETTERS = "ABCD"
 FIRST_ROUND = ("A", "B")
@@ -215,16 +225,22 @@ def scene_prompt_text(story, scene, composition):
     return ". ".join(parts)
 
 
-def build_request(bible, story, scene_number, letter):
+def build_request(bible, story, scene_number, letter, image_model=DEFAULT_IMAGE_MODEL):
     """Everything one candidate needs, with no I/O. The final prompt/negative come from the shared
     assembly so the safety path is identical to every other generator."""
+    if image_model not in IMAGE_MODELS:
+        raise gc.UsageError(f"沒有這個圖片模型：{image_model}（可用：{', '.join(IMAGE_MODELS)}）")
+    model_key = IMAGE_MODELS[image_model]["key"]
     scene = story.scene(scene_number)
     composition = composition_for(bible, scene, letter)
     scene_text = scene_prompt_text(story, scene, composition)
     prompt, negative = gc._build_prompt_and_negative(
         scene_text, scene.get("negative_extra"), "safe", None, bible["style_positive"], style_negative(bible),
-        MODEL_KEY, solo=scene["solo"], allow_text=bool(scene["on_screen_text"]),
+        model_key, solo=scene["solo"], allow_text=bool(scene["on_screen_text"]),
     )
+    steps, cfg = bible["sampler"]["steps"], bible["sampler"]["cfg"]
+    if image_model == "qwen_image_2_1":      # its own sampler settings; the cfg floor below still applies
+        steps, cfg = client.QWEN_IMAGE21_STEPS, client.QWEN_IMAGE21_CFG
     return {
         "story_id": story.id,
         "scene_id": f"scene_{scene_number:02d}",
@@ -237,9 +253,10 @@ def build_request(bible, story, scene_number, letter):
         "seed": candidate_seed(story, scene_number, letter),
         "width": bible["canvas"]["width"],
         "height": bible["canvas"]["height"],
-        "steps": bible["sampler"]["steps"],
-        "cfg": max(bible["sampler"]["cfg"], client.SAFETY_MIN_CFG),
-        "model": MODEL_KEY,
+        "steps": steps,
+        "cfg": max(cfg, client.SAFETY_MIN_CFG),
+        "model": model_key,
+        "image_model": image_model,
         "workflow": bible["workflow"],
     }
 
@@ -335,10 +352,15 @@ def pending(stories, letters=FIRST_ROUND, *, scene_numbers=None, force=False):
 
 def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=False, dry_run=False,
              submit=None, server_up=client.is_server_running,
-             before_each=None, should_stop=None):
+             before_each=None, should_stop=None, image_model=DEFAULT_IMAGE_MODEL):
     """Render candidates. Skips existing images (unless force). Letters C/D are refused for a scene whose
-    review is not REGENERATE, so the first round can never silently grow to four per scene."""
-    submit = submit or client.submit_txt2img_generation_zimage
+    review is not REGENERATE, so the first round can never silently grow to four per scene.
+    image_model picks the model for every image of this call (IMAGE_MODELS); each image's record says which."""
+    if image_model not in IMAGE_MODELS:
+        raise gc.UsageError(f"沒有這個圖片模型：{image_model}（可用：{', '.join(IMAGE_MODELS)}）")
+    qwen = image_model == "qwen_image_2_1"
+    submit = submit or (client.submit_txt2img_generation_qwen_image21 if qwen
+                        else client.submit_txt2img_generation_zimage)
     todo = pending(stories, letters, scene_numbers=scene_numbers, force=force)
     if dry_run:
         for story, n, letter in todo:
@@ -355,17 +377,23 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
                 break
             if before_each:
                 before_each(story, n, letter)   # e.g. gpu_guard.before_image; may raise to end the batch
-            req = build_request(bible, story, n, letter)
+            req = build_request(bible, story, n, letter, image_model)
             paths = candidate_paths(story, n, letter)
             os.makedirs(os.path.dirname(paths["png"]), exist_ok=True)
             prefix = f"{story.id}_s{n:02d}_{letter}"
-            print(f"{story.id} scene_{n:02d} {letter}: seed {req['seed']} {req['width']}x{req['height']}", flush=True)
-            graph = client.build_zimage_txt2img_workflow(
-                req["prompt"], req["negative_prompt"], req["seed"], prefix, client.ZIMAGE_MODELS[MODEL_KEY],
-                req["width"], req["height"], req["steps"], req["cfg"])
+            print(f"{story.id} scene_{n:02d} {letter}: seed {req['seed']} {req['width']}x{req['height']} "
+                  f"[{IMAGE_MODELS[image_model]['label']}]", flush=True)
+            if qwen:
+                graph = client.build_qwen_image21_txt2img_workflow(
+                    req["prompt"], req["negative_prompt"], req["seed"], prefix,
+                    client.QWEN_IMAGE21_MODELS[req["model"]], req["width"], req["height"], req["steps"], req["cfg"])
+            else:
+                graph = client.build_zimage_txt2img_workflow(
+                    req["prompt"], req["negative_prompt"], req["seed"], prefix, client.ZIMAGE_MODELS[MODEL_KEY],
+                    req["width"], req["height"], req["steps"], req["cfg"])
             started = time.time()
             raw = submit(prompt=req["prompt"], negative_prompt=req["negative_prompt"], seed=req["seed"],
-                         filename_prefix=prefix, model=MODEL_KEY, width=req["width"], height=req["height"],
+                         filename_prefix=prefix, model=req["model"], width=req["width"], height=req["height"],
                          steps=req["steps"], cfg=req["cfg"])
             elapsed = round(time.time() - started, 1)
             shutil.move(raw, paths["png"])
@@ -373,11 +401,18 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
                                         "width", "height", "steps", "model", "workflow")}
             meta.update({
                 "cfg": req["cfg"], "composition": req["composition"], "candidate_letter": letter,
-                "sampler": client.ZIMAGE_SAMPLER, "scheduler": client.ZIMAGE_SCHEDULER, "shift": client.ZIMAGE_SHIFT,
+                "image_model": image_model,
                 "workflow_graph": os.path.basename(paths["workflow"]),
-                "workflow_template_sha256": _sha256(client.WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH),
                 "image_sha256": _sha256(paths["png"]), "generation_seconds": elapsed, "created_at": _now(),
             })
+            if qwen:
+                meta.update({"sampler": client.QWEN_IMAGE21_SAMPLER, "scheduler": client.QWEN_IMAGE21_SCHEDULER,
+                             "license": IMAGE_MODELS[image_model]["license"],
+                             "model_files": client.QWEN_IMAGE21_MODELS[req["model"]]})
+            else:
+                meta.update({"sampler": client.ZIMAGE_SAMPLER, "scheduler": client.ZIMAGE_SCHEDULER,
+                             "shift": client.ZIMAGE_SHIFT,
+                             "workflow_template_sha256": _sha256(client.WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH)})
             _write_json(paths["meta"], meta)
             _write_json(paths["workflow"], graph)
             print(f"  saved {paths['png']} ({elapsed}s)", flush=True)

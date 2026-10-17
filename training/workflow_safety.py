@@ -35,6 +35,8 @@ INJECTED_CLASSES = frozenset({
     "ADE_MultivalDynamic",
     "LoraLoaderModelOnly",
     "RIFE VFI",
+    "TextEncodeQwenImage21",   # Qwen-Image 2.1 (comfyui_client.build_qwen_image21_txt2img_workflow)
+    "UnetLoaderGGUF",
 })
 
 # output class -> (file extension, MIME type) of what the local code downloads from it
@@ -116,6 +118,15 @@ def _trace_negative(wf, link, required, where, seen):
     cls = node["class_type"]
     if cls == "CLIPTextEncode":
         text = node["inputs"].get("text")
+        if not isinstance(text, str):
+            raise WorkflowRejected(f"{where}: negative text in node {node_id} is not literal text")
+        if required not in text:
+            raise WorkflowRejected(f"{where}: negative prompt in node {node_id} is missing the required "
+                                   "safety terms")
+        return
+    if cls == "TextEncodeQwenImage21" and index == 1:
+        # One node yields both conditionings; its second output is the encoded `negative_prompt` widget.
+        text = node["inputs"].get("negative_prompt")
         if not isinstance(text, str):
             raise WorkflowRejected(f"{where}: negative text in node {node_id} is not literal text")
         if required not in text:

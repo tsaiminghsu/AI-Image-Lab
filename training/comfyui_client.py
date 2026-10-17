@@ -1411,8 +1411,8 @@ def wan_missing_files(model: str = WAN_DEFAULT_MODEL) -> list:
     return _missing_loader_files(WAN_MODELS[model])
 
 
-def _missing_loader_files(files: dict) -> list:
-    need = [("UNETLoader", "unet_name", files["unet"]),
+def _missing_loader_files(files: dict, unet_node: str = "UNETLoader") -> list:
+    need = [(unet_node, "unet_name", files["unet"]),
             ("CLIPLoader", "clip_name", files["text_encoder"]),
             ("VAELoader", "vae_name", files["vae"])]
     missing = []
@@ -1501,6 +1501,84 @@ def build_zimage_txt2img_workflow(
     wf["3"]["inputs"]["scheduler"] = ZIMAGE_SCHEDULER
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
     return wf
+
+
+# --- Qwen-Image 2.1 ----------------------------------------------------------------------------
+# A second still-image model for the concept stills, INTERNAL TEST ONLY: its Qwen Research License is non-commercial.
+# Official sampler settings use cfg 1, where ComfyUI drops the negative prompt and with it the age-safety terms, so
+# this path never runs below SAFETY_MIN_CFG: the base (non-Turbo) model is used with a true cfg of 2.0 and the same
+# safety negatives as Z-Image; the Turbo variant is distilled for cfg 1 and is deliberately not offered. The graph
+# comes from Comfy-Org's official template (TextEncodeQwenImage21 yields positive and negative conditioning), with the
+# community GGUF loader instead of the int8 file. Measured 2026-10-17 at cfg 1: 62.5 s warm for 720x1280 / 25 steps.
+QWEN_IMAGE21_MODELS = {
+    "qwen_image_2_1": dict(unet="qwen_image_2.1-Q6_K.gguf", text_encoder="qwen3vl_8b_int8_convrot.safetensors",
+                           vae="qwen_image_2.1_vae_bf16.safetensors"),
+}
+QWEN_IMAGE21_STEPS = 25
+QWEN_IMAGE21_CFG = 2.0
+QWEN_IMAGE21_SAMPLER = "euler"
+QWEN_IMAGE21_SCHEDULER = "simple"
+QWEN_IMAGE21_LICENSE = "qwen-research (non-commercial)"
+POLL_TIMEOUT_SECONDS_QWEN_IMAGE21 = 1200
+
+
+def qwen_image21_missing_files(model: str = "qwen_image_2_1") -> list:
+    """Same check as zimage_missing_files, for a QWEN_IMAGE21_MODELS entry (its diffusion model is a GGUF)."""
+    return _missing_loader_files(QWEN_IMAGE21_MODELS[model], unet_node="UnetLoaderGGUF")
+
+
+def build_qwen_image21_txt2img_workflow(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    files: dict,
+    width: int = ZIMAGE_WIDTH,
+    height: int = ZIMAGE_HEIGHT,
+    steps: int = QWEN_IMAGE21_STEPS,
+    cfg: float = QWEN_IMAGE21_CFG,
+) -> dict:
+    """The filled Qwen-Image 2.1 txt2img graph, no I/O. cfg is floored at SAFETY_MIN_CFG here as well as by
+    enforce_min_cfg, because at cfg 1 the negative prompt (and its safety terms) would not be used at all."""
+    return {
+        "10": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": files["unet"]}},
+        "11": {"class_type": "CLIPLoader", "inputs": {"clip_name": files["text_encoder"], "type": "qwen_image",
+                                                      "device": "default"}},
+        "12": {"class_type": "VAELoader", "inputs": {"vae_name": files["vae"]}},
+        "6": {"class_type": "TextEncodeQwenImage21", "inputs": {"clip": ["11", 0], "prompt": prompt,
+                                                                "negative_prompt": negative_prompt,
+                                                                "resolution": 1024}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": _round16(width), "height": _round16(height),
+                                                           "batch_size": 1}},
+        "3": {"class_type": "KSampler", "inputs": {
+            "model": ["10", 0], "positive": ["6", 0], "negative": ["6", 1], "latent_image": ["5", 0], "seed": seed,
+            "steps": steps, "cfg": max(cfg, SAFETY_MIN_CFG), "sampler_name": QWEN_IMAGE21_SAMPLER,
+            "scheduler": QWEN_IMAGE21_SCHEDULER, "denoise": 1.0}},
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["12", 0]}},
+        "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix}},
+    }
+
+
+def submit_txt2img_generation_qwen_image21(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    model: str = "qwen_image_2_1",
+    width: int = ZIMAGE_WIDTH,
+    height: int = ZIMAGE_HEIGHT,
+    steps: int = QWEN_IMAGE21_STEPS,
+    cfg: float = QWEN_IMAGE21_CFG,
+) -> str:
+    """Plain txt2img with Qwen-Image 2.1 (see QWEN_IMAGE21_MODELS); the cfg floor and the safety negatives apply."""
+    missing = qwen_image21_missing_files(model)
+    if missing:
+        raise RuntimeError(f"Qwen-Image 2.1 model files not found by ComfyUI: {', '.join(missing)} - they belong in "
+                           "ComfyUI/models/{unet,text_encoders,vae} (and ComfyUI-GGUF must be installed)")
+    wf = build_qwen_image21_txt2img_workflow(prompt, negative_prompt, seed, filename_prefix,
+                                             QWEN_IMAGE21_MODELS[model], width=width, height=height, steps=steps,
+                                             cfg=cfg)
+    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_QWEN_IMAGE21)
 
 
 def _round_to(x: float, step: int, minimum: int) -> int:
