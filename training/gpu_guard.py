@@ -86,11 +86,40 @@ def gpu_state(run=subprocess.run):
         return None
 
 
+RUNNER_NAMES = ("llama-server.exe", "llama-server")
+
+
+def kill_orphan_runners(psutil_module=None, log=print):
+    """Stop Ollama model runners (llama-server) whose Ollama is gone. The runner is a child process: when Ollama is
+    force-killed or restarted the hard way it keeps running, keeps the chat model in video memory (7.4 GB of the 16 GB card
+    on 2026-10-17) and is invisible to Ollama's /api/ps, so nothing unloads it and every render that follows sees a
+    "busy" card. A runner whose parent no longer exists can serve nobody, so it is safe to stop. Needs psutil (the
+    ComfyUI environment has it); without it nothing is touched. Returns the pids it stopped."""
+    try:
+        ps = psutil_module or __import__("psutil")
+    except ImportError:
+        return []
+    stopped = []
+    for proc in ps.process_iter(["pid", "ppid", "name"]):
+        try:
+            if (proc.info.get("name") or "").lower() not in RUNNER_NAMES or ps.pid_exists(proc.info["ppid"]):
+                continue
+            proc.kill()
+            stopped.append(proc.info["pid"])
+        except (ps.NoSuchProcess, ps.AccessDenied):
+            continue
+    if stopped:
+        log(f"[gpu_guard] 清掉沒有 Ollama 管的模型程式（它們還佔著顯示卡）：{', '.join(map(str, stopped))}")
+    return stopped
+
+
 def before_batch(*, max_start_temp_c, http=requests, run=subprocess.run, sleep=time.sleep, clock=time.monotonic,
                  wait_seconds=START_WAIT_SECONDS, log=print):
     """Run once, before ComfyUI is started: unload the chat model, then wait for the card to be free and cool
     enough. Raises GpuBusy when it is not within wait_seconds. An unreadable nvidia-smi is not a reason to
-    refuse - the per-image unload still applies."""
+    refuse - the per-image unload still applies. A model runner left behind by a killed Ollama is stopped first: Ollama
+    cannot unload what it no longer knows about."""
+    kill_orphan_runners(log=log)
     unloaded = unload_models(http, sleep=sleep, clock=clock)
     if unloaded:
         log(f"[gpu_guard] 已請 Ollama 卸載：{', '.join(unloaded)}")

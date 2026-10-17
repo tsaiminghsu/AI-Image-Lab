@@ -29,6 +29,16 @@ function Show-Status {
         $p = $gpu -split ",\s*"
         Write-Host ("  {0}: {1}°C, 使用率 {2}%, 記憶體 {3}/{4} MiB, {5} W" -f $p[0], $p[1], $p[2], $p[3], $p[4], $p[5])
     } else { Write-Host "  讀不到 nvidia-smi" -ForegroundColor Red }
+    # who actually holds video memory (nvidia-smi cannot say on Windows); an orphaned model runner is the case Ollama itself cannot report
+    $holders = (Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples | Where-Object { $_.CookedValue -gt 300MB } | Sort-Object CookedValue -Descending | Select-Object -First 4
+    foreach ($h in $holders) {
+        if ($h.InstanceName -match 'pid_(\d+)') {
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$Matches[1])" -ErrorAction SilentlyContinue
+            $note = ""
+            if ($proc -and $proc.Name -match 'llama-server' -and -not (Get-Process -Id $proc.ParentProcessId -ErrorAction SilentlyContinue)) { $note = "  <- 孤兒：Ollama 已經不在，它還佔著顯示卡（啟動腳本會清掉）" }
+            Write-Host ("  佔用 {0,6:N0} MiB: {1} (pid {2}){3}" -f ($h.CookedValue / 1MB), $(if ($proc) { $proc.Name } else { "?" }), $Matches[1], $note) -ForegroundColor $(if ($note) { "Red" } else { "Gray" })
+        }
+    }
 
     Write-Host "`n[服務]" -ForegroundColor Yellow
     docker info *> $null

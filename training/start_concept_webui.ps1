@@ -72,6 +72,12 @@ Write-Host "  Open WebUI 已就緒 $webUrl"
 
 # 3. Ollama on the fixed port. `ollama serve` only opens the API; it loads no model, so the GPU stays idle.
 Write-Host "[3/5] Ollama（$ollamaUrl）"
+# A force-killed Ollama leaves its model runner (llama-server) behind: it keeps the chat model in video memory (7.4 GB on
+# 2026-10-17) where no Ollama can unload it. A runner whose parent is gone serves nobody, so stop it.
+Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" | Where-Object { -not (Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue) } | ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    Write-Host "  清掉沒有 Ollama 管的模型程式 pid $($_.ProcessId)（它佔著顯示卡）" -ForegroundColor Yellow
+}
 if (-not (Test-Url "$ollamaUrl/api/tags")) {
     $ollama = (Get-Command ollama -ErrorAction SilentlyContinue).Source
     if (-not $ollama) { Stop-Here "找不到 ollama 指令。" }
@@ -80,6 +86,11 @@ if (-not (Test-Url "$ollamaUrl/api/tags")) {
     # prompt (about 6,200 tokens) with every message, and tool results such as list_scenes (about 3,800 tokens for one story) add more, so a 16k window filled up and a
     # tool call was cut off mid-JSON (2026-10-15). 32k costs only ~0.6 GB more VRAM (measured: Q4_K_M 6.15 -> 6.72 GB).
     $env:OLLAMA_CONTEXT_LENGTH = if ($env:CONCEPT_OLLAMA_CTX) { $env:CONCEPT_OLLAMA_CTX } else { "32768" }
+    # Ollama keeps a model for 5 minutes after its last use. The chat reply that follows an image job loads the chat model
+    # straight back (6-8 GB of the 16 GB card) and it then sits there, which is also what made a job wait out Ollama's
+    # timer and fail on 2026-10-17. Two minutes covers the gap between two turns of a conversation and frees the card
+    # sooner; the cost is about 8-10 s to load the model again after a longer pause.
+    $env:OLLAMA_KEEP_ALIVE = if ($env:CONCEPT_OLLAMA_KEEP_ALIVE) { $env:CONCEPT_OLLAMA_KEEP_ALIVE } else { "2m" }
     # OLLAMA_MODELS can point at an empty folder while the pulled models sit elsewhere (seen here: D:\AI\Models\Ollama is
     # empty, qwen3.5:9b is in D:\Ollama\Models), so serve from the first candidate that actually holds a manifest.
     $candidates = @($env:OLLAMA_MODELS, [Environment]::GetEnvironmentVariable("OLLAMA_MODELS", "User"), "D:\Ollama\Models") |

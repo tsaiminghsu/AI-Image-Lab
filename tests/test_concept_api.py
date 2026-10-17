@@ -35,6 +35,15 @@ TOOLS = {
 }
 
 
+REAL_KILL_ORPHAN_RUNNERS = gpu_guard.kill_orphan_runners  # the autouse fixture below replaces the module attribute
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_real_processes(monkeypatch):
+    """before_batch sweeps orphaned Ollama runners; a test must not stop a real one on the machine running the suite."""
+    monkeypatch.setattr(gpu_guard, "kill_orphan_runners", lambda *a, **k: [])
+
+
 class FakeGuard:
     GpuBusy = gpu_guard.GpuBusy
 
@@ -1062,6 +1071,67 @@ def test_the_batch_waits_for_a_free_cool_card_and_gives_up_with_the_reason():
         gpu_guard.before_batch(max_start_temp_c=55, http=FakeOllama([]), run=smi([None]), log=lambda m: None)["gpu"]
         is None
     )
+
+
+class FakePsutil:
+    """Just enough of psutil: a list of (pid, ppid, name) processes, of which `alive` pids exist."""
+
+    class NoSuchProcess(Exception):
+        pass
+
+    class AccessDenied(Exception):
+        pass
+
+    def __init__(self, processes, alive):
+        self.processes, self.alive, self.killed = processes, set(alive), []
+
+    def process_iter(self, attrs=None):
+        fake = self
+
+        class P:
+            def __init__(self, pid, ppid, name):
+                self.info = {"pid": pid, "ppid": ppid, "name": name}
+
+            def kill(self):
+                fake.killed.append(self.info["pid"])
+
+        return [P(*p) for p in self.processes]
+
+    def pid_exists(self, pid):
+        return pid in self.alive
+
+
+def test_a_model_runner_whose_ollama_is_gone_is_stopped_and_a_live_one_is_left_alone():
+    """2026-10-17: a restart killed Ollama but not its llama-server, which kept the 7.4 GB chat model in video memory
+    where no unload could reach it, while /api/ps said nothing was loaded."""
+    ps = FakePsutil(
+        [
+            (100, 1, "llama-server.exe"),
+            (200, 20, "llama-server.exe"),
+            (300, 1, "chrome.exe"),
+            (400, 1, "LLAMA-SERVER.EXE"),
+        ],
+        alive=[20],  # pid 200's parent is a running Ollama; the parents of 100 and 400 are gone; chrome is not a runner
+    )
+    logged = []
+    assert REAL_KILL_ORPHAN_RUNNERS(ps, log=logged.append) == [100, 400]
+    assert ps.killed == [100, 400] and "100, 400" in logged[0]
+    assert REAL_KILL_ORPHAN_RUNNERS(FakePsutil([(200, 20, "llama-server.exe")], alive=[20]), log=logged.append) == []
+
+
+def test_the_batch_sweeps_orphaned_runners_before_it_looks_at_the_card(monkeypatch):
+    order = []
+    monkeypatch.setattr(gpu_guard, "kill_orphan_runners", lambda *a, **k: order.append("sweep") or [])
+    gpu_guard.before_batch(
+        max_start_temp_c=55,
+        http=FakeOllama([]),
+        run=lambda cmd, **kw: (
+            order.append("smi") or subprocess.CompletedProcess(cmd, 0, stdout="45, 800, 16311\n", stderr="")
+        ),
+        sleep=lambda s: None,
+        log=lambda m: None,
+    )
+    assert order[0] == "sweep" and "smi" in order
 
 
 def test_a_half_held_16_gb_card_is_not_refused_by_the_batch_check_but_a_practically_full_one_is():
