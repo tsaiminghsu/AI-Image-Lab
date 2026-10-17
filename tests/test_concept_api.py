@@ -497,6 +497,13 @@ def test_the_tiers_are_the_project_canvas_then_80_and_60_percent_in_multiples_of
     assert all(side % 16 == 0 for side in api._scaled(1000, 1777, 0.8))
 
 
+def test_one_small_local_picture_is_quoted_as_a_couple_of_minutes_not_four(web, env, monkeypatch):
+    """The quote used to add the old graphics card's 200 s cool-down to every picture: one 576x1024 image read as 4 minutes."""
+    card(monkeypatch, used=7500)
+    estimate = web.post("/stories/5/candidates", json={"scenes": [3], "candidates": [2]}).json()["estimate"]
+    assert estimate["minutes"] <= 3 and api.COOLDOWN_SECONDS_PER_IMAGE <= 30
+
+
 def test_a_reduced_local_job_draws_at_the_smaller_size_and_the_record_says_so(web, env, monkeypatch):
     card(monkeypatch, used=7500)
     queued = web.post("/stories/5/candidates", json={"scenes": [3], "confirm": True}).json()
@@ -1328,5 +1335,7 @@ def test_the_thermal_log_writes_a_curve_with_the_power_limit_and_image_marks(tmp
 
 def test_the_estimate_includes_the_cooldown_wait(web, env):
     r = web.post("/stories/4/candidates", json={}).json()
-    assert r["estimate"]["minutes"] == round(7 * (api.SECONDS_PER_IMAGE + api.COOLDOWN_SECONDS_PER_IMAGE) / 60)
+    assert r["estimate"]["minutes"] == round(
+        (api.LOCAL_BATCH_STARTUP_SECONDS + 7 * (api.SECONDS_PER_IMAGE + api.COOLDOWN_SECONDS_PER_IMAGE)) / 60
+    )
     assert "60°C" in r["estimate"]["gpu"]

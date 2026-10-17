@@ -60,7 +60,13 @@ FILE_EXTENSIONS = (".png", ".jpg", ".mp4", ".html")
 IMAGE_STALL_SECONDS = 600           # a longer image is a hang (normal: 100-330 s)
 MAX_COMFYUI_RESTARTS = 3
 MAX_CLIPS_PER_SESSION = 4            # the conservative split from the story 1 report (4+3)
-COOLDOWN_SECONDS_PER_IMAGE = 200     # an estimate until a gated batch has been measured: ~80 C back to 60 C
+# Waiting for the card to fall back under the 60 C start gate between images. The old figure, 200 s, was the RTX 2070's
+# (about 80 C back to 60 C) and made one picture look like a 4-minute job. On the RTX 5060 Ti a 576x1024 render ends at 61 C
+# and the card is under 60 C again within 6 s (the next one started at 51 C); full-size renders peak at 64-69 C. 15 s
+# leaves room for a longer batch, which has not been measured.
+COOLDOWN_SECONDS_PER_IMAGE = 15
+# ComfyUI starting (about 30 s) plus loading the models into the first render (about 20 s more than a warm one), once per batch.
+LOCAL_BATCH_STARTUP_SECONDS = 50
 # Z-Image at 720x1280: 131-141 s on the old RTX 2070; on the RTX 5060 Ti (driver 617.42) 36.5 s warm, 56.7 s for the
 # first image after ComfyUI starts (2026-10-17). COOLDOWN_SECONDS_PER_IMAGE above is still the 2070 figure: the new
 # card peaks near 69 C, so the 60 C gate probably waits far less, but that has not been measured.
@@ -76,7 +82,7 @@ QWEN_SECONDS_PER_IMAGE = 125
 # 80% of it and 60% of it (720x1280 -> 576x1024 -> 432x768) and the free-memory limits are read off those three runs.
 RESOLUTION_TIERS = ((9500, 1.0, "全解析度"), (5000, 0.8, "中解析度"), (0, 0.6, "小解析度"))
 LOCAL_MIN_FREE_MIB = gpu_guard.START_MIN_FREE_MIB     # one number: the estimate and the batch's own check must agree
-REDUCED_SECONDS_PER_IMAGE = 45       # 576x1024 / 432x768 while the card is partly held: 32-38 s measured, with margin
+REDUCED_SECONDS_PER_IMAGE = 55       # 576x1024 / 432x768 while the card is partly held: 32-38 s early on, 52.6 s warm with 9 GB held
 # The Colab worker (.claude/skills/z-image-colab) renders Z-Image only, on an L4: 18 s per 720x1280 image; a session costs
 # 9-15 minutes of fixed time (install or model copy, idle timeout) and measured 0.24 CU (8 jobs) and 0.40 CU (3 jobs).
 COLAB_SESSION_MINUTES = 10
@@ -836,7 +842,7 @@ def generate_candidates(story: int, body: GenerateBody):
             seconds = REDUCED_SECONDS_PER_IMAGE
         estimate = {"images": len(todo), "image_model": model["label"], "backend": "本機顯示卡",
                     "resolution": f"{(canvas or full_size)[0]}×{(canvas or full_size)[1]}",
-                    "minutes": round(len(todo) * (seconds + COOLDOWN_SECONDS_PER_IMAGE) / 60),
+                    "minutes": round((LOCAL_BATCH_STARTUP_SECONDS + len(todo) * (seconds + COOLDOWN_SECONDS_PER_IMAGE)) / 60),
                     "gpu": "本機顯示卡；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
                            "生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
         if capacity.get("known"):
