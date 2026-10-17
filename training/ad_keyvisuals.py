@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import sys
+import time
 
 import asset_library as al
 import concept_stills as cs
@@ -63,10 +64,113 @@ COLOUR = {
 # not used in ads: 19 and 18 are too young for an ad, 20 is under the owner's "21 and over"
 EXCLUDED = {"mei": 19, "wanling": 18, "minjun": 18, "junho": 20}
 
+# Faces beyond the app's seven characters (2026-10-11, the owner found the same few faces everywhere). Fictional adults
+# written for the ads only, not app characters: a different hair, face, build and a glasses / mole / freckles each, so
+# the text encoder has something else to draw. Same age wording rules as the characters (21 and over, youthful).
+EXTRA_FACES = {
+    "w1": (
+        "新女1",
+        "woman",
+        22,
+        "Taiwanese",
+        "short curly dark brown hair with curtain bangs, round glasses, soft round face, petite build",
+        "lavender",
+    ),
+    "w2": (
+        "新女2",
+        "woman",
+        24,
+        "Taiwanese",
+        "long straight black hair with a side part, a small mole beside the lip, narrow face, slender build",
+        "mustard",
+    ),
+    "w3": (
+        "新女3",
+        "woman",
+        25,
+        "Japanese",
+        "messy half-up bun with loose strands, light freckles across the nose, warm brown eyes, average build",
+        "terracotta",
+    ),
+    "w4": (
+        "新女4",
+        "woman",
+        23,
+        "Korean",
+        "shoulder-length hair dyed soft brown with see-through bangs, strong brows, square jaw, tall build",
+        "sky blue",
+    ),
+    "w5": (
+        "新女5",
+        "woman",
+        26,
+        "Hong Kong Chinese",
+        "low ponytail over one shoulder, thin-rimmed glasses, high cheekbones, athletic build",
+        "burgundy",
+    ),
+    "w6": (
+        "新女6",
+        "woman",
+        21,
+        "Taiwanese",
+        "twin low braids, wide-set eyes, full cheeks, tanned skin, sturdy build",
+        "coral",
+    ),
+    "m1": (
+        "新男1",
+        "man",
+        22,
+        "Taiwanese",
+        "short wavy hair with a centre part, round glasses, soft jaw, lean build",
+        "beige",
+    ),
+    "m2": (
+        "新男2",
+        "man",
+        24,
+        "Taiwanese",
+        "buzzed sides and a textured top, light stubble, strong brows, broad shoulders",
+        "forest green",
+    ),
+    "m3": (
+        "新男3",
+        "man",
+        25,
+        "Japanese",
+        "medium-length black hair tucked behind the ears, long narrow face, gentle eyes, slim build",
+        "rust",
+    ),
+    "m4": (
+        "新男4",
+        "man",
+        23,
+        "Korean",
+        "neat side-swept dark brown hair, a mole under one eye, defined jaw, tall build",
+        "slate grey",
+    ),
+    "m5": (
+        "新男5",
+        "man",
+        26,
+        "Hong Kong Chinese",
+        "short crop with a faint fade, thick eyebrows, square face, stocky build",
+        "denim blue",
+    ),
+    "m6": (
+        "新男6",
+        "man",
+        21,
+        "Taiwanese",
+        "curly dark hair, round face, dimples, tanned skin, medium build",
+        "mustard",
+    ),
+}
+EXTRA_SEED_BASE = SEED_BASE + 1000
+
 COMPOSITIONS = {
-    "a": "straight-on medium shot from the waist up, the person centred in the frame and looking at the camera",
+    "a": "straight-on medium shot from the waist up, the person centred in the frame and looking at the camera with a soft warm smile",
     "b": "three-quarter view from a slightly different angle, a medium-wide shot that shows more of the place, "
-    "the person glancing toward the camera",
+    "the person glancing toward the camera with a soft warm smile",
 }
 LETTERS = ("a", "b", "c", "d")  # c and d repeat a and b with other seeds
 COMPOSITION_OF = {"a": "a", "b": "b", "c": "a", "d": "b"}
@@ -150,7 +254,7 @@ OUTINGS = {
         "moment": "sitting on a picnic blanket beside a wicker basket, hugging the knees, a calm lake behind, "
         "looking at the camera",
         "light": "golden afternoon sun, a warm glow, gentle shade",
-        "women": "a {c} cotton blouse and a long skirt",
+        "women": "a {c} cotton blouse and long wide trousers",
         "men": "a {c} cotton shirt and light trousers",
         "negative": "other people, crowd, text on the basket",
     },
@@ -219,18 +323,27 @@ OUTINGS = {
 PERSON_NEGATIVE = f"{al.PERSON_NEGATIVE}, two people, a second person, group photo, watermark, logo, readable text"
 
 
-def look_for(key):
-    """Describes the character in words, always an adult; the age comes from generate_character.CHARACTERS."""
-    c = gc.CHARACTERS[key]
-    age, woman = c["age"], c["gender"] == "woman"
+def describe_person(age, gender, nationality, appearance):
+    """The words for an adult of 21 or over. Measured 2026-10-10: with "mature adult features" in the appearance, the
+    28-year-old read 40-50 (InsightFace mean 41.8) while the others read 23-26, so that phrase is dropped and everyone
+    gets the same youthful wording."""
     if age < 21:
-        raise gc.UsageError(f"{key} 只有 {age} 歲，廣告只用 21 歲以上的角色")
+        raise gc.UsageError(f"廣告只用 21 歲以上的角色，這個只有 {age} 歲")
     word = "early twenties" if age <= 23 else "mid-twenties" if age <= 26 else "late twenties"
-    who = "woman" if woman else "man"
-    pron = "her" if woman else "his"
-    base = f"a young adult Taiwanese {who} in {pron} {word}" if age <= 26 else f"a Taiwanese {who} in {pron} {word}"
-    skin = "with a youthful fresh face and smooth clear skin" if age <= 26 else "with a fresh smooth complexion"
-    return f"{base} {skin}, {c['appearance']}"
+    who, pron = ("woman", "her") if gender == "woman" else ("man", "his")
+    appearance = appearance.replace("mature adult features, ", "")
+    return (
+        f"a young adult {nationality} {who} in {pron} {word} with a youthful fresh face and smooth clear skin, "
+        f"{appearance}"
+    )
+
+
+def look_for(key):
+    """Describes an app character in words; the age and appearance come from generate_character.CHARACTERS."""
+    c = gc.CHARACTERS[key]
+    if c["age"] < 21:
+        raise gc.UsageError(f"{key} 只有 {c['age']} 歲，廣告只用 21 歲以上的角色")
+    return describe_person(c["age"], c["gender"], "Taiwanese", c["appearance"])
 
 
 def moment_text(outing, gender):
@@ -284,6 +397,48 @@ def build_catalog():
     return entries
 
 
+def build_extra_catalog():
+    """The new faces: one picture (composition A) per face and outing, seeds after the 308 so those never move."""
+    entries = []
+    index = 0
+    for outing_id, outing in OUTINGS.items():
+        for key, (zh, gender, age, nationality, appearance, colour) in EXTRA_FACES.items():
+            outfit = outing["women" if gender == "woman" else "men"].format(c=colour)
+            ident = f"kv-{key}-{outing_id}-a"
+            text = (
+                f"first-person point of view, {COMPOSITIONS['a']}. "
+                f"{describe_person(age, gender, nationality, appearance)}, wearing {outfit}. "
+                f"{moment_text(outing, gender)}. Lighting: {outing['light']}"
+            )
+            entries.append(
+                {
+                    "id": ident,
+                    "character": key,
+                    "name_zh": zh,
+                    "age": age,
+                    "gender": gender,
+                    "outing": outing_id,
+                    "outing_zh": outing["zh"],
+                    "letter": "a",
+                    "composition": "a",
+                    "outfit": outfit,
+                    "priority": False,
+                    "extra": True,
+                    "text": text,
+                    "negative": f"{PERSON_NEGATIVE}, {outing['negative']}",
+                    "solo": True,
+                    "seed": EXTRA_SEED_BASE + index + REVISION_SEED_OFFSET * REVISIONS.get(ident, 0),
+                    "summary_zh": f"{zh} {age} 歲｜{outing['zh']}｜A",
+                }
+            )
+            index += 1
+    return entries
+
+
+def build_all():
+    return build_catalog() + build_extra_catalog()
+
+
 def pilot_ids(entries=None):
     """28 pictures: every character in four outings (day, night, indoor with a prop, an animal), composition A."""
     entries = entries or build_catalog()
@@ -301,9 +456,16 @@ def job_spec(bible, entry):
 
 def export(which="all", *, ids=None, batch=None, directory=None):
     bible = cs.load_bible(BIBLE_ROOT)
-    entries = build_catalog()
+    entries = build_all()
     if ids is None:
-        ids = pilot_ids(entries) if which == "pilot" else [e["id"] for e in entries]
+        base = build_catalog()
+        ids = (
+            pilot_ids(base)
+            if which == "pilot"
+            else [e["id"] for e in build_extra_catalog()]
+            if which == "faces"
+            else [e["id"] for e in base]
+        )
     by_id = {e["id"]: e for e in entries}
     unknown = [i for i in ids if i not in by_id]
     if unknown:
@@ -369,7 +531,17 @@ def catalog_markdown(entries):
         "",
         "7 個角色 × 4 個情境（" + "、".join(OUTINGS[o]["zh"] for o in PILOT_OUTINGS) + "），取景 A。",
         "",
+        f"## 新面孔（{len(EXTRA_FACES)} 位 × 16 情境 = {len(EXTRA_FACES) * len(OUTINGS)} 張，取景 A）",
+        "",
+        "不是 app 的角色，是為廣告另外寫的虛構成人（21 歲以上），髮型、臉型、眼鏡或痣各不相同；"
+        "`export --set faces` 產生清單。",
+        "",
+        "| 代號 | 年齡 | 性別 | 國籍措辭 | 外觀 | 服裝主色 |",
+        "|---|---|---|---|---|---|",
     ]
+    for key, (zh, gender, age, nat, look, colour) in EXTRA_FACES.items():
+        lines.append(f"| {zh}（{key}） | {age} | {'女' if gender == 'woman' else '男'} | {nat} | {look} | {colour} |")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -377,7 +549,7 @@ def catalog_markdown(entries):
 
 
 def import_jobs(*, jobs_dir=ZIMAGE_JOBS_DIR, images_dir=IMAGES_DIR, force=False):
-    entries = build_catalog()
+    entries = build_all()
     done = al.finished_jobs(jobs_dir)
     report = {"imported": [], "skipped": [], "missing": []}
     index = []
@@ -461,13 +633,181 @@ r();
 """
 
 
+# ---------------------------------------------------------------- scripts per outing + the page to choose candidates
+
+STORYBOARDS_MD = os.path.join(REPO_ROOT, "projects", "activity_promo", "STORYBOARDS.md")
+SCRIPTS_MD = os.path.join(ROOT, "SCRIPTS.md")
+SELECT_HTML = os.path.join(ROOT, "select.html")
+# the storyboard heading of each outing ("## 3. 一起去貓咪咖啡廳"): the outing's Chinese name appears in it
+STORYBOARD_KEY = {
+    "amusement_park": "遊樂園",
+    "night_view": "夜景",
+    "cat_cafe": "貓咪咖啡廳",
+    "travel": "旅行",
+    "night_market": "夜市",
+    "cooking": "下廚",
+    "coffee": "喝咖啡",
+    "aquarium": "水族館",
+    "picnic": "野餐",
+    "photo": "拍照",
+    "concert": "演唱會",
+    "karaoke": "唱歌",
+    "movie": "電影",
+    "games": "遊戲",
+    "shopping": "逛街",
+    "exhibition": "看展",
+}
+# the storyboard shot each outing's key visual is closest to (not always the "高" shot: the cotton candy is shot 3, the
+# picnic blanket shot 2, ...); the first frame of that shot can be taken from the chosen picture
+VISUAL_SHOT = {
+    "amusement_park": 3, "night_view": 5, "cat_cafe": 5, "travel": 5, "night_market": 5, "cooking": 4,
+    "coffee": 4, "aquarium": 4, "picnic": 2, "photo": 3, "concert": 2, "karaoke": 1,
+    "movie": 4, "games": 1, "shopping": 6, "exhibition": 5,
+}  # fmt: skip
+PURPOSE_ZH = {"開": "開場", "選": "你的選擇", "過": "過場", "高": "高光", "收": "收尾"}
+
+
+def parse_storyboards(path=STORYBOARDS_MD):
+    """outing id -> {"title", "meta", "shots": [{n, purpose, scene, line, choice}], "cuts"} from STORYBOARDS.md."""
+    import re
+
+    text = open(path, encoding="utf-8").read()
+    blocks = re.split(r"\n(?=## \d+\. )", text)
+    out = {}
+    for block in blocks:
+        head = re.match(r"## \d+\. (.+)", block)
+        if not head:
+            continue
+        for outing_id, key in STORYBOARD_KEY.items():
+            if key in head.group(1) and outing_id not in out:
+                shots = []
+                for line in block.splitlines():
+                    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                    if len(cells) == 5 and cells[0].isdigit():
+                        shots.append(
+                            {
+                                "n": int(cells[0]),
+                                "purpose": cells[1],
+                                "scene": cells[2],
+                                "line": cells[3],
+                                "choice": cells[4],
+                            }
+                        )
+                meta = next((ln for ln in block.splitlines() if ln.startswith("地標")), "")
+                cuts = next((ln for ln in block.splitlines() if ln.startswith("短版")), "")
+                out[outing_id] = {
+                    "title": head.group(1).replace("（已完成）", ""),
+                    "meta": meta,
+                    "shots": shots,
+                    "cuts": cuts,
+                }
+    missing = [o for o in OUTINGS if o not in out]
+    if missing:
+        raise gc.UsageError(f"STORYBOARDS.md 找不到這些情境的分鏡：{missing}")
+    return out
+
+
+def scripts_markdown(boards, counts):
+    lines = [
+        "# 各情境的劇本與候選圖",
+        "",
+        "由 `training/ad_keyvisuals.py scripts` 產生，不要手改。劇本取自 `projects/activity_promo/STORYBOARDS.md`"
+        "（6 個鏡頭 × 5 秒，台詞是 app 的原句）；候選圖就是各情境的主視覺，對應劇本裡標「◀ 主視覺」的那個鏡頭。",
+        "挑圖請開 `select.html`（每個情境一段：劇本加候選圖，點圖勾選，複製 JSON）。",
+        "",
+        "注意：劇本台詞寫的是「她」；挑男角時，台詞照用，只是代名詞換成他。主視覺只有「高」鏡頭那一格，"
+        "其餘 5 個鏡頭的首幀還沒生，選定人物後再用同一個人物描述去生。",
+        "",
+    ]
+    for outing_id, outing in OUTINGS.items():
+        b = boards[outing_id]
+        lines += [f"## {outing['zh']}（{counts.get(outing_id, 0)} 張候選）", "", b["meta"], ""]
+        lines += ["| # | 用途 | 畫面與動作 | 她說 | 你的選擇 |", "|---|---|---|---|---|"]
+        for sh in b["shots"]:
+            mark = " ◀ 主視覺" if sh["n"] == VISUAL_SHOT[outing_id] else ""
+            lines.append(
+                f"| {sh['n']} | {PURPOSE_ZH.get(sh['purpose'], sh['purpose'])}{mark} | {sh['scene']} | {sh['line']} | {sh['choice']} |"
+            )
+        lines += ["", f"主視覺的畫面（◀ 的鏡頭）：{outing['moment']}", "", b["cuts"], ""]
+    return "\n".join(lines)
+
+
+def select_html(index, boards):
+    """One page, one section per outing: the script above a grid of that outing's candidate pictures. Click to select,
+    copy the choice as JSON ({outing: [ids]}); `picks --file` files them. The page records clicks, nothing else."""
+    import html as _html
+
+    by_outing = {}
+    for rec in index:
+        by_outing.setdefault(rec["outing"], []).append(rec)
+    nav, sections = [], []
+    for outing_id, outing in OUTINGS.items():
+        recs = by_outing.get(outing_id, [])
+        b = boards[outing_id]
+        rows = "".join(
+            f"<tr{' class=hi' if sh['n'] == VISUAL_SHOT[outing_id] else ''}><td>{sh['n']}</td><td>{_html.escape(PURPOSE_ZH.get(sh['purpose'], sh['purpose']))}</td>"
+            f"<td>{_html.escape(sh['scene'])}</td><td>{_html.escape(sh['line'])}</td></tr>"
+            for sh in b["shots"]
+        )
+        figs = "".join(
+            f"<figure data-id='{r['id']}' title='{_html.escape(r['summary_zh'])}'><img loading=lazy src='images/{r['image']}'>"
+            f"<figcaption>{_html.escape(r['name_zh'])} {r['age']}｜{r['letter'].upper()}</figcaption></figure>"
+            for r in recs
+        )
+        nav.append(f"<a href='#{outing_id}'>{outing['zh']}</a>")
+        sections.append(
+            f"<section id='{outing_id}'><h2>{outing['zh']} <small>{len(recs)} 張候選，已選 <b class=c>0</b></small></h2>"
+            f"<p class=meta>{_html.escape(b['meta'])}</p><table><tr><th>#</th><th>用途</th><th>畫面與動作</th><th>她說</th></tr>{rows}</table>"
+            f"<p class=meta>主視覺（對應黃底鏡頭）：{_html.escape(outing['moment'])}</p><div class=g>{figs}</div></section>"
+        )
+    return f"""<!doctype html><meta charset="utf-8"><title>各情境劇本與候選圖</title>
+<style>body{{font:14px sans-serif;margin:0 16px 80px}}nav{{position:sticky;top:0;background:#fff;padding:8px 0;border-bottom:1px solid #ccc;z-index:2}}
+nav a{{margin-right:10px}}table{{border-collapse:collapse;margin:6px 0}}td,th{{border:1px solid #ccc;padding:3px 8px;text-align:left}}tr.hi{{background:#fff3cd}}
+.meta{{color:#555;margin:4px 0}}.g{{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}}figure{{margin:0;width:170px;border:3px solid transparent;border-radius:6px;cursor:pointer}}
+figure.on{{border-color:#d33}}img{{width:100%;border-radius:4px;display:block}}figcaption{{font-size:11px;color:#555}}small{{font-weight:normal;color:#777}}
+#bar{{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #ccc;padding:8px 16px}}textarea{{width:60%;height:40px;vertical-align:middle}}</style>
+<nav>{"".join(nav)}</nav>{"".join(sections)}
+<div id=bar>已選 <b id=n>0</b> 張 <button id=cp>複製選取清單（JSON）</button><button id=cl>清除</button><textarea id=t readonly placeholder="選好後按複製，貼回給 Claude"></textarea></div>
+<script>
+const S=new Set();try{{JSON.parse(localStorage.getItem("kv-select")||"[]").forEach(i=>S.add(i))}}catch(e){{}}
+function upd(){{document.getElementById("n").textContent=S.size;
+document.querySelectorAll("section").forEach(sec=>{{sec.querySelector(".c").textContent=sec.querySelectorAll("figure.on").length}});
+try{{localStorage.setItem("kv-select",JSON.stringify([...S]))}}catch(e){{}}}}
+document.querySelectorAll("figure").forEach(f=>{{if(S.has(f.dataset.id))f.classList.add("on");
+f.onclick=()=>{{S.has(f.dataset.id)?S.delete(f.dataset.id):S.add(f.dataset.id);f.classList.toggle("on");upd()}}}});
+document.getElementById("cp").onclick=()=>{{const o={{}};document.querySelectorAll("section").forEach(sec=>{{
+const ids=[...sec.querySelectorAll("figure.on")].map(f=>f.dataset.id);if(ids.length)o[sec.id]=ids}});
+const t=document.getElementById("t");t.value=JSON.stringify(o);t.select();try{{navigator.clipboard.writeText(t.value)}}catch(e){{document.execCommand("copy")}}}};
+document.getElementById("cl").onclick=()=>{{S.clear();document.querySelectorAll("figure.on").forEach(f=>f.classList.remove("on"));upd()}};
+upd();
+</script>
+"""
+
+
+def write_scripts():
+    """SCRIPTS.md and select.html from STORYBOARDS.md and the imported pictures (index.json)."""
+    boards = parse_storyboards()
+    index_path = os.path.join(ROOT, "index.json")
+    index = cs._read_json(index_path)["images"] if os.path.isfile(index_path) else []
+    counts = {}
+    for rec in index:
+        counts[rec["outing"]] = counts.get(rec["outing"], 0) + 1
+    with open(SCRIPTS_MD, "w", encoding="utf-8", newline="") as f:
+        f.write(scripts_markdown(boards, counts) + "\n")
+    with open(SELECT_HTML, "w", encoding="utf-8", newline="") as f:
+        f.write(select_html(index, boards))
+    return {"outings": len(boards), "pictures": len(index), "scripts": SCRIPTS_MD, "select": SELECT_HTML}
+
+
 # ---------------------------------------------------------------- picks (the owner's choice, filed)
 
 
 def picks(ids, *, images_dir=IMAGES_DIR, picked_dir=PICKED_DIR):
     """Copies the pictures the owner chose to picked/ and appends them to picked/PICKS.json. Unknown ids or pictures
     that are not filed yet are an error, so a typo does not silently drop a choice."""
-    known = {e["id"]: e for e in build_catalog()}
+    if isinstance(ids, dict):  # what select.html copies: {outing: [ids]}
+        ids = [i for group in ids.values() for i in group]
+    known = {e["id"]: e for e in build_all()}
     bad = [i for i in ids if i not in known]
     if bad:
         raise gc.UsageError(f"沒有這些主視覺：{bad[:5]}")
@@ -488,6 +828,91 @@ def picks(ids, *, images_dir=IMAGES_DIR, picked_dir=PICKED_DIR):
     return {"picked": len(log["picks"]), "added": added}
 
 
+# ---------------------------------------------------------------- Qwen-Image 2.1 on the local card (internal test only)
+
+QWEN_DIR = os.path.join(ROOT, "qwen_internal")  # outside images/ and picked/: never imported, never sent to H3
+QWEN_NOTE = "Qwen Research License (non-commercial): internal comparison only, not for ads or H3"
+
+
+def qwen_request(bible, entry):
+    """Prompt, negative, seed and sampler for one picture, no I/O. The negative comes from the shared assembly (age-safety
+    terms included) and cfg is floored at SAFETY_MIN_CFG: Qwen's own cfg 1 would drop the negative prompt."""
+    prompt, negative = gc._build_prompt_and_negative(
+        entry["text"],
+        entry["negative"],
+        "safe",
+        None,
+        bible["style_positive"],
+        cs.style_negative(bible),
+        cs.IMAGE_MODELS["qwen_image_2_1"]["key"],
+        solo=entry["solo"],
+        allow_text=False,
+    )
+    return {
+        "prompt": prompt,
+        "negative_prompt": negative,
+        "seed": entry["seed"],
+        "width": bible["canvas"]["width"],
+        "height": bible["canvas"]["height"],
+        "steps": cs.client.QWEN_IMAGE21_STEPS,
+        "cfg": max(cs.client.QWEN_IMAGE21_CFG, cs.client.SAFETY_MIN_CFG),
+        "model": cs.IMAGE_MODELS["qwen_image_2_1"]["key"],
+    }
+
+
+def qwen_generate(ids, *, directory=QWEN_DIR, force=False, submit=None, server_up=None, before_each=None):
+    """Render the given ids with Qwen-Image 2.1 on the local ComfyUI, one at a time. Skips pictures already there."""
+    submit = submit or cs.client.submit_txt2img_generation_qwen_image21
+    server_up = server_up or cs.client.is_server_running
+    bible = cs.load_bible(BIBLE_ROOT)
+    by_id = {e["id"]: e for e in build_all()}
+    unknown = [i for i in ids if i not in by_id]
+    if unknown:
+        raise gc.UsageError(f"沒有這些主視覺：{unknown[:5]}")
+    todo = [
+        i for i in ids if force or not os.path.isfile(os.path.join(directory, "images", by_id[i]["outing"], f"{i}.png"))
+    ]
+    if todo and not server_up():
+        raise gc.UsageError("ComfyUI 沒有在跑。先啟動它（見 CLAUDE.md），再 qwen")
+    made = []
+    for ident in todo:
+        entry = by_id[ident]
+        if before_each:
+            before_each(ident)  # e.g. gpu_guard: unload Ollama, wait until the card is cool; may raise to stop
+        req = qwen_request(bible, entry)
+        out_dir = os.path.join(directory, "images", entry["outing"])
+        os.makedirs(out_dir, exist_ok=True)
+        started = time.time()
+        raw = submit(
+            prompt=req["prompt"],
+            negative_prompt=req["negative_prompt"],
+            seed=req["seed"],
+            filename_prefix=f"kvq_{ident}",
+            model=req["model"],
+            width=req["width"],
+            height=req["height"],
+            steps=req["steps"],
+            cfg=req["cfg"],
+        )
+        dest = os.path.join(out_dir, f"{ident}.png")
+        shutil.move(raw, dest)
+        cs._write_json(
+            os.path.join(out_dir, f"{ident}.json"),
+            dict(
+                req,
+                id=ident,
+                image_model="qwen_image_2_1",
+                license=cs.client.QWEN_IMAGE21_LICENSE,
+                note=QWEN_NOTE,
+                generation_seconds=round(time.time() - started, 1),
+                created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            ),
+        )
+        made.append(ident)
+        print(f"  saved {dest}", flush=True)
+    return {"made": made, "skipped": len(ids) - len(todo)}
+
+
 # ---------------------------------------------------------------- measuring (CPU, InsightFace)
 
 
@@ -497,7 +922,7 @@ def measure(describe, *, images_dir=IMAGES_DIR):
     a second face, or an estimated age under MIN_ESTIMATED_AGE."""
     ages, embeddings = {}, {}
     no_face, second_face, too_young = [], [], []
-    for e in build_catalog():
+    for e in build_all():
         path = os.path.join(images_dir, e["outing"], f"{e['id']}.png")
         if not os.path.isfile(path):
             continue
@@ -563,14 +988,20 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="print the counts and write CATALOG.md")
     e = sub.add_parser("export", help="write the manifest for the z-image-colab skill (spends nothing)")
-    e.add_argument("--set", choices=("pilot", "all"), default="all", dest="which")
+    e.add_argument("--set", choices=("pilot", "all", "faces"), default="all", dest="which")
     e.add_argument("--batch")
     e.add_argument("--skip-done", action="store_true", help="leave out pictures already under images/")
     i = sub.add_parser("import", help="file the finished jobs under projects/ad_keyvisuals/images/")
     i.add_argument("--force", action="store_true")
     sub.add_parser("measure", help="age / similarity / second faces (needs insightface: ComfyUI's python)")
+    q = sub.add_parser("qwen", help="render with Qwen-Image 2.1 on the local card (internal test only, uses the GPU)")
+    q.add_argument("--set", choices=("pilot",), default=None, dest="which")
+    q.add_argument("--ids", help="comma separated ids instead of a set")
+    q.add_argument("--force", action="store_true")
+    q.add_argument("--dry-run", action="store_true")
     k = sub.add_parser("picks", help="archive the pictures the owner chose")
-    k.add_argument("--file", required=True, help="a JSON list of ids (what the index page copies)")
+    k.add_argument("--file", required=True, help="a JSON list of ids, or {outing: [ids]} (what the pages copy)")
+    sub.add_parser("scripts", help="write SCRIPTS.md and select.html: each outing's script with its candidate pictures")
     args = p.parse_args(argv)
     if args.cmd == "check":
         entries = build_catalog()
@@ -581,7 +1012,13 @@ def main(argv=None):
     elif args.cmd == "export":
         ids = None
         if args.skip_done:
-            pool = pilot_ids() if args.which == "pilot" else [x["id"] for x in build_catalog()]
+            pool = (
+                pilot_ids()
+                if args.which == "pilot"
+                else [x["id"] for x in build_extra_catalog()]
+                if args.which == "faces"
+                else [x["id"] for x in build_catalog()]
+            )
             have = {os.path.splitext(os.path.basename(x))[0] for x in glob.glob(os.path.join(IMAGES_DIR, "*", "*.png"))}
             ids = [x for x in pool if x not in have]
         out = export(args.which, ids=ids, batch=args.batch)
@@ -598,6 +1035,22 @@ def main(argv=None):
                 {k_: len(v) for k_, v in report.items()} | {"missing_ids": report["missing"][:10]}, ensure_ascii=False
             )
         )
+    elif args.cmd == "scripts":
+        print(json.dumps(write_scripts(), ensure_ascii=False))
+    elif args.cmd == "qwen":
+        ids = args.ids.split(",") if args.ids else pilot_ids() if args.which == "pilot" else []
+        if not ids:
+            raise gc.UsageError("給 --set pilot 或 --ids")
+        if args.dry_run:
+            print(f"[dry-run] {len(ids)} 張，Qwen-Image 2.1，本機 GPU（未動用）：{', '.join(ids[:4])} ...")
+            return
+        import gpu_guard
+
+        def cool_first(_ident):
+            gpu_guard.before_image()
+            gpu_guard.wait_until_cool()
+
+        print(json.dumps(qwen_generate(ids, force=args.force, before_each=cool_first), ensure_ascii=False))
     elif args.cmd == "picks":
         print(json.dumps(picks(cs._read_json(args.file)), ensure_ascii=False))
     else:

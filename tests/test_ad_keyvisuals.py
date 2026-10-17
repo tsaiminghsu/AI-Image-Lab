@@ -65,7 +65,7 @@ def test_four_women_three_men_and_the_age_words_match_the_age(catalog):
         text = kv.look_for(key)
         word = "early twenties" if age <= 23 else "mid-twenties" if age <= 26 else "late twenties"
         assert word in text and not re.search(r"\d", text), (key, text)
-        assert ("youthful fresh face" in text) == (age <= 26)
+        assert "youthful fresh face" in text and "mature" not in text
 
 
 def test_a_character_under_21_is_refused(monkeypatch):
@@ -230,3 +230,122 @@ def test_catalog_markdown_lists_every_character_and_outing(catalog):
     for outing in kv.OUTINGS.values():
         assert outing["zh"] in text
     assert "小美" not in text.split("不用的角色")[0]
+
+
+def test_the_fixes_from_the_pilot_are_in_every_prompt(catalog):
+    # 2026-10-10 pilot: the 28-year-old read 40-50 because of "mature adult features"; picnic skirts rode up when
+    # hugging the knees; most faces were blank.
+    for e in catalog:
+        assert "mature" not in e["text"], e["id"]
+        assert "soft warm smile" in e["text"], e["id"]
+    picnic_women = [e for e in catalog if e["outing"] == "picnic" and e["gender"] == "woman"]
+    assert picnic_women and all("trousers" in e["outfit"] and "skirt" not in e["outfit"] for e in picnic_women)
+
+
+def test_twelve_new_faces_give_192_more_pictures_without_moving_the_308_seeds(catalog):
+    extra = kv.build_extra_catalog()
+    assert len(kv.EXTRA_FACES) == 12 and len(extra) == 192 and len(kv.build_all()) == 500
+    assert len({e["id"] for e in kv.build_all()}) == 500 and len({e["seed"] for e in kv.build_all()}) == 500
+    assert min(e["seed"] for e in extra) > max(e["seed"] for e in catalog)
+    assert sum(1 for f in kv.EXTRA_FACES.values() if f[1] == "woman") == 6
+
+
+def test_the_new_faces_are_adults_of_21_and_over_and_all_look_different():
+    forbidden = r"(?:" + "|".join(al.FORBIDDEN_WORDS) + r")"
+    for key, face in kv.EXTRA_FACES.items():
+        assert face[2] >= 21, key
+        assert not re.search(forbidden, face[4].lower()), key
+    looks = [f[4] for f in kv.EXTRA_FACES.values()]
+    assert len(set(looks)) == 12
+    for c in gc.CHARACTERS.values():
+        assert c["appearance"] not in looks
+    with pytest.raises(gc.UsageError):
+        kv.describe_person(20, "woman", "Taiwanese", "x")
+
+
+def test_every_new_face_entry_is_a_job_the_skill_accepts(tmp_path):
+    bible = kv.cs.load_bible(kv.BIBLE_ROOT)
+    config = z.load_config(tmp_path / "none.json", env={"ZIMG_OUTPUT_DIR": str(tmp_path / "out")})
+    for entry in kv.build_extra_catalog():
+        job = z.build_job(config, **kv.job_spec(bible, entry))
+        assert job["width"] == 720 and job["height"] == 1280 and job["tag"] == entry["id"]
+        assert all(t in job["negative_prompt"] for t in ("child", "minor", "underage", "teen"))
+        assert "soft warm smile" in entry["text"] and "mature" not in entry["text"]
+
+
+def test_export_faces_lists_only_the_new_faces(tmp_path):
+    out = kv.export("faces", directory=str(tmp_path))
+    data = json.loads(Path(out["manifest"]).read_text(encoding="utf-8"))
+    assert out["images"] == 192 and data["batch"] == "keyvisuals-faces"
+    assert {j["tag"].split("-")[1] for j in data["jobs"]} == set(kv.EXTRA_FACES)
+
+
+def test_every_outing_has_a_six_shot_script_and_a_visual_shot():
+    boards = kv.parse_storyboards()
+    assert set(boards) == set(kv.OUTINGS) and set(kv.VISUAL_SHOT) == set(kv.OUTINGS)
+    for outing_id, b in boards.items():
+        assert [sh["n"] for sh in b["shots"]] == [1, 2, 3, 4, 5, 6], outing_id
+        assert kv.VISUAL_SHOT[outing_id] in range(1, 7) and all(sh["line"] for sh in b["shots"])
+    assert "貓咪咖啡廳" in boards["cat_cafe"]["title"] and "夜景" in boards["night_view"]["title"]
+
+
+def test_select_page_has_a_section_per_outing_with_its_candidates_and_the_script(tmp_path):
+    boards = kv.parse_storyboards()
+    index = [
+        {"id": "kv-ruoxi-cooking-a", "outing": "cooking", "image": "cooking/kv-ruoxi-cooking-a.png", "summary_zh": "x",
+         "name_zh": "若曦", "age": 23, "letter": "a"},
+    ]  # fmt: skip
+    page = kv.select_html(index, boards)
+    assert page.count("<section") == 16 and "data-id='kv-ruoxi-cooking-a'" in page
+    assert "快！關小火！" in page and "kv-select" in page and "複製選取清單" in page
+    text = kv.scripts_markdown(boards, {"cooking": 1})
+    assert "◀ 主視覺" in text and text.count("候選") >= 16
+
+
+def test_picks_accepts_the_outing_grouped_choice_from_the_select_page(tmp_path):
+    jobs = _fake_jobs(tmp_path, ["kv-ruoxi-cooking-a", "kv-xinyi-coffee-a"])
+    images, picked = tmp_path / "lib" / "images", tmp_path / "picked"
+    kv.import_jobs(jobs_dir=str(jobs), images_dir=str(images))
+    out = kv.picks(
+        {"cooking": ["kv-ruoxi-cooking-a"], "coffee": ["kv-xinyi-coffee-a"]},
+        images_dir=str(images),
+        picked_dir=str(picked),
+    )
+    assert out["picked"] == 2 and (picked / "kv-xinyi-coffee-a.png").is_file()
+
+
+def test_qwen_request_keeps_the_safety_terms_and_the_cfg_floor():
+    bible = kv.cs.load_bible(kv.BIBLE_ROOT)
+    entry = kv.build_catalog()[0]
+    req = kv.qwen_request(bible, entry)
+    assert req["cfg"] >= 1.5 and req["seed"] == entry["seed"] and (req["width"], req["height"]) == (720, 1280)
+    assert all(t in req["negative_prompt"] for t in ("child", "minor", "underage", "teen"))
+    assert "outstretched arm" in req["negative_prompt"] and req["model"] == "qwen_image_2_1"
+
+
+def test_qwen_generate_files_pictures_apart_marks_the_licence_and_skips_done(tmp_path):
+    png = tmp_path / "raw.png"
+    calls = []
+
+    def submit(**kw):
+        calls.append(kw)
+        out = tmp_path / f"{len(calls)}.png"
+        out.write_bytes(b"\x89PNG fake")
+        return str(out)
+
+    seen = []
+    ids = kv.pilot_ids()[:2]
+    out = kv.qwen_generate(
+        ids, directory=str(tmp_path / "q"), submit=submit, server_up=lambda: True, before_each=seen.append
+    )
+    assert out == {"made": ids, "skipped": 0} and seen == ids and png.exists() is False
+    first = next(e for e in kv.build_all() if e["id"] == ids[0])
+    meta = json.loads((tmp_path / "q" / "images" / first["outing"] / f"{ids[0]}.json").read_text(encoding="utf-8"))
+    assert "non-commercial" in meta["license"] and "internal" in meta["note"] and meta["cfg"] >= 1.5
+    assert kv.QWEN_DIR != kv.IMAGES_DIR and not kv.QWEN_DIR.startswith(kv.PICKED_DIR)
+    again = kv.qwen_generate(ids, directory=str(tmp_path / "q"), submit=submit, server_up=lambda: True)
+    assert again == {"made": [], "skipped": 2} and len(calls) == 2
+    with pytest.raises(gc.UsageError):
+        kv.qwen_generate(ids, directory=str(tmp_path / "q2"), submit=submit, server_up=lambda: False)
+    with pytest.raises(gc.UsageError):
+        kv.qwen_generate(["nope"], directory=str(tmp_path / "q3"), submit=submit, server_up=lambda: True)

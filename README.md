@@ -16,6 +16,57 @@
 - 預設生成非露骨內容
 - 僅供個人 LoRA 訓練研究用途，非商業使用
 
+## 內容閘門（`training/content_gate.py`）：本機圖片／H3 工具的提示詞檢查
+
+「🎬 圖片→影片（本機）」分頁（`training/h3_local.py`、`training/h3_idea.py`）在**送出任何生成之前**，先檢查提示詞有沒有露骨性內容或未成年相關的字眼。
+原因：圖片模型的負面詞只能「壓低」某些內容，擋不住正向描述直接要求（2026-10-17 有一段中文露骨描述通過這個分頁並生出圖）；
+H3 影片則完全沒有負面詞與 cfg（見 CLAUDE.md「年齡安全」），文字檢查就是它唯一的控管。
+
+### 怎麼運作
+
+- 檔案只有兩張字詞表和兩個函式：
+  - `ENGLISH`、`CHINESE`：禁字表（露骨性行為與器官的詞；未成年相關的詞，例如 child、teen、schoolgirl、小學生、少女）。
+  - `found_terms(text)`：回傳文字裡命中的詞。英文用正則比對、不分大小寫，且前後不能緊接英文字母（所以 `Sussex` 不會因為含 `sex` 被擋）；中文是子字串比對，不分詞。
+  - `check(*texts)`：任何一段文字命中就丟 `generate_character.UsageError`，訊息是 `MESSAGE`（含最多 5 個命中的字，GUI 會顯示成提示）；沒命中就什麼都不做。
+- **沒有任何開關或繞過參數**：要不要檢查由呼叫處決定，函式本身沒有「略過」選項。
+
+### 在哪裡被呼叫
+
+| 位置 | 檢查什麼 | 時機 |
+|---|---|---|
+| `h3_local.generate_still` | 圖片描述 | 翻譯**之前**一次、翻譯**之後**（翻出來的英文）一次 |
+| `h3_local.generate` | 影片描述與環境聲（含台詞） | 翻譯之前一次、翻譯之後一次 |
+| `h3_idea.write_description` | 中文情境與台詞 | 啟動 Qwen **之前** |
+| `h3_idea._ask` 之後 | 模型寫出來的兩段英文 | 收到模型回覆後（這個模型是 Uncensored 版，所以它自己的句子也要檢查） |
+
+命中就在那一步停下來：後面的翻譯（描述不會被送去線上翻譯）、卸載聊天模型、啟動 ComfyUI、GPU 都不會執行。
+
+**不檢查的地方**：圖片的「負面詞」欄位（負面詞本來就會寫 nude、child 這類字）。使用者的負面詞加在固定安全負面詞的後面，拿不掉固定的那些。
+
+### 它旁邊還有的控管
+
+- `h3_local.screen()`：呼叫 `h3_colab.screen_prompt`（Colab 的 H3 skill 本來就在用的禁字表，主要是未成年詞），再補上每個英文禁字的複數形（skill 的表有 `schoolgirl`，但 `schoolgirls` 原本會放行；skill 的表沒有動）。
+- `h3_local.adultize()`：翻譯會把「女生／男生」翻成 girl／boy，這會把臉往年輕拉，所以翻出來的英文一律改成 woman／man。
+- 圖片的固定負面詞（`AGE_SAFETY_NEGATIVE`、`SAFE_CONTENT_NEGATIVE`，在 `generate_character.py`）與 cfg 下限 `SAFETY_MIN_CFG = 1.5`（`comfyui_client.py`；cfg 1 時負面詞會被忽略）。
+- 人物一律是成年人：2 人以上的描述句會補「adult people … in their twenties」。
+
+### 限制
+
+- 這是**字詞表，不是分類器**：只擋表裡有的字；同義詞、換個說法、拼字變形、表裡沒有的詞擋不到。底下的負面詞也擋不了正向描述直接要求。所以它擋的是最直白的情況，不是完整保證。
+- 中文用子字串比對，可能誤擋（例如描述成年人回憶時提到「國中生」）；英文用字詞邊界，誤擋比較少。
+
+### 要調整時
+
+- 正常描述被誤擋：到 `content_gate.py` 找出是哪個詞，只刪那一個詞，再同步 `tests/test_content_gate.py` 的預期；先把被擋的那句話和命中的字記下來，判斷是詞表太寬還是真的該擋。
+- 改完執行：
+
+```powershell
+.venv-dev\Scripts\python.exe -m pytest tests\test_content_gate.py tests\test_h3_local.py tests\test_h3_idea.py -q
+```
+
+- 專案規定（CLAUDE.md「年齡安全」）不生成露骨內容、也不生成看起來像未成年的人物，這個閘門與上面的測試就是在守這條；
+  `check.ps1` 的測試會釘住它們有被呼叫，不是只有詞表存在而已。
+
 ## 硬體 / 測試環境
 
 | 項目 | 值 |

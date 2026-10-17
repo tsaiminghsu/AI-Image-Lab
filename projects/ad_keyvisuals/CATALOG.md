@@ -32,7 +32,7 @@ Z-Image 沒有參考圖：同一角色在不同情境是「同類型的人」，
 | 下廚 | in a home kitchen wearing an apron, laughing and pointing at a steaming pot on the stove | warm early-evening kitchen light, a little steam in the air | a {c} apron over a plain long-sleeved top | a {c} apron over a plain long-sleeved shirt | ✓ | 28 |
 | 喝咖啡 | sitting by a cafe window holding a coffee cup in both hands, looking up warmly | soft dusk window light on one side of the face, a warm interior | a {c} knit top and a long cardigan | a {c} shirt and a light jacket | ✓ | 28 |
 | 水族館 | standing before a huge tank that glows blue, a few small fish far away in the water, pointing sideways at the tank with a delighted look | soft blue light from the tank on the face, the face still clearly lit | a {c} sweater and jeans | a {c} sweater and jeans |  | 14 |
-| 野餐 | sitting on a picnic blanket beside a wicker basket, hugging the knees, a calm lake behind, looking at the camera | golden afternoon sun, a warm glow, gentle shade | a {c} cotton blouse and a long skirt | a {c} cotton shirt and light trousers | ✓ | 28 |
+| 野餐 | sitting on a picnic blanket beside a wicker basket, hugging the knees, a calm lake behind, looking at the camera | golden afternoon sun, a warm glow, gentle shade | a {c} cotton blouse and long wide trousers | a {c} cotton shirt and light trousers | ✓ | 28 |
 | 拍照 | holding a small vintage camera at the chest, wearing a canvas cap, in front of a plain pastel-coloured wall | good soft afternoon light, the face evenly lit | a {c} cap, a light shirt and a long skirt | a {c} cap, a light shirt and chinos |  | 14 |
 | 演唱會 | holding a glow stick near the face and smiling, only blurred coloured stage lights behind, nobody else in the frame | soft coloured stage light on the face, the face clearly lit | a {c} t-shirt and a light jacket | a {c} t-shirt and a light jacket |  | 14 |
 | 唱歌 | sitting on a sofa in a private karaoke room holding a microphone, laughing | dim room with soft pink and blue ambient light, the face clearly lit | a {c} knit top and jeans | a {c} shirt and jeans |  | 14 |
@@ -46,4 +46,23 @@ Z-Image 沒有參考圖：同一角色在不同情境是「同類型的人」，
 ## 試跑（28 張）
 
 7 個角色 × 4 個情境（下廚、看夜景、貓咪咖啡廳、野餐），取景 A。
+
+## 新面孔（12 位 × 16 情境 = 192 張，取景 A）
+
+不是 app 的角色，是為廣告另外寫的虛構成人（21 歲以上），髮型、臉型、眼鏡或痣各不相同；`export --set faces` 產生清單。
+
+| 代號 | 年齡 | 性別 | 國籍措辭 | 外觀 | 服裝主色 |
+|---|---|---|---|---|---|
+| 新女1（w1） | 22 | 女 | Taiwanese | short curly dark brown hair with curtain bangs, round glasses, soft round face, petite build | lavender |
+| 新女2（w2） | 24 | 女 | Taiwanese | long straight black hair with a side part, a small mole beside the lip, narrow face, slender build | mustard |
+| 新女3（w3） | 25 | 女 | Japanese | messy half-up bun with loose strands, light freckles across the nose, warm brown eyes, average build | terracotta |
+| 新女4（w4） | 23 | 女 | Korean | shoulder-length hair dyed soft brown with see-through bangs, strong brows, square jaw, tall build | sky blue |
+| 新女5（w5） | 26 | 女 | Hong Kong Chinese | low ponytail over one shoulder, thin-rimmed glasses, high cheekbones, athletic build | burgundy |
+| 新女6（w6） | 21 | 女 | Taiwanese | twin low braids, wide-set eyes, full cheeks, tanned skin, sturdy build | coral |
+| 新男1（m1） | 22 | 男 | Taiwanese | short wavy hair with a centre part, round glasses, soft jaw, lean build | beige |
+| 新男2（m2） | 24 | 男 | Taiwanese | buzzed sides and a textured top, light stubble, strong brows, broad shoulders | forest green |
+| 新男3（m3） | 25 | 男 | Japanese | medium-length black hair tucked behind the ears, long narrow face, gentle eyes, slim build | rust |
+| 新男4（m4） | 23 | 男 | Korean | neat side-swept dark brown hair, a mole under one eye, defined jaw, tall build | slate grey |
+| 新男5（m5） | 26 | 男 | Hong Kong Chinese | short crop with a faint fade, thick eyebrows, square face, stocky build | denim blue |
+| 新男6（m6） | 21 | 男 | Taiwanese | curly dark hair, round face, dimples, tanned skin, medium build | mustard |
 

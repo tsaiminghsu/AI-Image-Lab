@@ -825,6 +825,90 @@ def generate_video_svd(character, init_image, seed, frames, fps, motion_bucket_i
     return os.path.join(out_dir, f"video_seed{int(seed)}.webm")
 
 
+# --- 🎤 local MiniMax H3 (training/h3_local.py, training/h3_idea.py) ------------------------------
+# A separate tab with its own handlers: nothing here changes the other tabs, their saved ComfyUI graphs or
+# resource_policy. The H3 graph is built per click by h3_local; the prompt goes through the same screen as the
+# Colab skill. Local jobs share Gradio's "gpu" queue, so this never runs alongside another local generation.
+
+import h3_local as _h3_local_choices  # noqa: E402  (module is light: the heavy parts import lazily)
+
+H3_STILL_MODELS = _h3_local_choices.STILL_MODELS
+H3_PEOPLE = _h3_local_choices.PEOPLE_CHOICES
+H3_ATTEST_LABEL = "我確認這張首幀是本專案生成的虛構成人角色（或沒有人物的圖），不是真人照片"
+
+
+@_show_usage_errors
+def write_h3_description_ui(idea, line, gender, line2, others):
+    import h3_idea
+
+    if not (idea or "").strip():
+        raise gr.Error("請輸入中文情境（她／他在做什麼）")
+    if not (line or "").strip():
+        raise gr.Error("請輸入台詞（20 字內，會原樣放進影片）")
+    gr.Info("用本機 Qwen3.5 寫描述中（第一次要載入模型，約 1～2 分鐘；寫完就卸載，不佔著顯示卡）...")
+    cast = {"女": "woman", "男": "man", "一男一女": "couple"}[gender]
+    return h3_idea.write_description(
+        idea, line, cast, line2=line2 if cast == "couple" else None, people="multi" if others else "single")
+
+
+@_show_usage_errors
+def generate_h3_still_ui(prompt, model_label, seed, people_label, negative, progress=gr.Progress()):
+    import h3_local
+
+    key = next((k for k, v in h3_local.STILL_MODELS.items() if v["label"] == model_label), None)
+    if key is None:
+        raise gr.Error("請選一個圖片模型")
+    if not (prompt or "").strip():
+        raise gr.Error("請輸入圖片描述（中文或英文，人物要是成年人）")
+    progress(None, desc="先把中文翻成英文，再卸載聊天模型、等 GPU 降溫、生成（Z-Image 約 30 秒，Qwen 約 2 分鐘）")
+
+    def start():
+        _ensure_comfyui()
+        return None
+
+    people = next((k for k, v in h3_local.PEOPLE_CHOICES.items() if v[0] == people_label), 1)
+    meta = h3_local.generate_still(
+        prompt, key, seed=int(seed), start=start, translate=h3_local._translator(), people=people,
+        negative=negative or "")  # Chinese -> English first
+    note = "\n\n⚠️ Qwen-Image 的授權是非商用，這張只能做內部測試，不能用在實際廣告。" if meta["license"] else ""
+    shown = f"\n\n已自動翻成英文再生成：`{meta['prompt_english']}`" if meta["prompt_original"] else ""
+    return (meta["output"], f"**完成**：seed {meta['seed']}\n\n檔案：`{meta['output']}`{shown}{note}",
+            meta["prompt_english"])
+
+
+def use_still_as_first_frame(path):
+    if not path:
+        raise gr.Error("先生成一張圖")
+    return path, True  # this picture came out of this tool (screened prompt, safety negatives): the attestation holds
+
+
+@_show_usage_errors
+def generate_h3_local_ui(image, description, soundscape, static, seed, attest, progress=gr.Progress()):
+    import h3_local
+
+    if not image:
+        raise gr.Error("請上傳首幀圖片")
+    if not attest:
+        raise gr.Error("請先勾選首幀的確認（只能用本專案生成的虛構成人角色或沒有人物的圖，不能用真人照片）")
+    if not (description or "").strip():
+        raise gr.Error("請先寫描述：按「用 Qwen 寫描述」，或自己貼上（中文英文都行）")
+    progress(None, desc="先把中文翻成英文，再卸載聊天模型、等 GPU 降溫、載入 H3（本機 5 秒約 8～10 分鐘，SSD 會滿載）")
+
+    def start():
+        _ensure_comfyui()  # the GUI owns this ComfyUI and stops it at exit; h3_local must not terminate it
+        return None
+
+    meta = h3_local.generate(
+        image, description, soundscape=soundscape or "", static=bool(static), seed=int(seed), start=start,
+        translate=h3_local._translator())  # Chinese outside the <d> line -> English first
+    client.free_vram()  # H3 holds ~13 GB; hand the card back so the next tab's job does not start squeezed
+    info = (f"**完成**：{meta['seconds_taken']} 秒，{meta['frames']} 幀，seed {meta['seed']}\n\n"
+            f"檔案：`{meta['output']}`\n\n（描述與設定存在同名的 .json）")
+    if meta["description_original"]:
+        info += "\n\n已自動把描述翻成英文再生成（台詞沒有動）。"
+    return meta["output"], info, meta["description_used"]
+
+
 @_show_usage_errors
 def generate_gif(character, anchor, prompt, tier, negative_prompt, seed, frame_count, duration_ms, denoise,
                   ip_adapter_weight, style_positive, style_negative, checkpoint_choice, lora_strength,
@@ -1437,6 +1521,85 @@ with gr.Blocks(title="AI Image Lab") as demo:
                 generate_video_svd,
                 inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion, svd_force_local],
                 outputs=svd_output,
+                concurrency_id="gpu",
+            )
+
+        with gr.Tab("🎬 圖片→影片（本機）"):
+            gr.Markdown(
+                "兩個區塊：**① 生成圖片**（文字 → 首幀圖，Z-Image 或 Qwen-Image 2.1）、**② 生成影片**"
+                "（首幀 → 5 秒帶配音的 MiniMax H3 影片）。都跑在這台顯示卡上，不花 Colab 運算單元。"
+                "①生好按「➡️ 用這張當首幀」就會帶到②；也可以直接在②上傳自己的圖。\n\n"
+                "**要先知道**：圖片 Z-Image 約 30 秒、Qwen 約 2 分鐘；影片本機 5 秒約 8～10 分鐘，顯存幾乎滿"
+                "（約 15.7／16 GB），RAM 會用到分頁檔、SSD 會接近 100%。一次只做一件事，聊天模型會被卸載。"
+                "超過 5 秒本機沒量過，所以固定 5 秒。所有描述都先過跟 Colab 版一樣的內容過濾，有禁字就拒絕。"
+            )
+            gr.Markdown("## ① 生成圖片")
+            with gr.Row():
+                with gr.Column():
+                    still_prompt = gr.Textbox(
+                        label="圖片描述（中文或英文都行，中文會先自動翻成英文；人物要是成年人）", lines=4,
+                        placeholder="例如：a young adult Taiwanese woman in her mid-twenties wearing a cream apron, "
+                                    "laughing in a home kitchen, steam rising from a pot")
+                    with gr.Row():
+                        still_model = gr.Radio(
+                            [v["label"] for v in H3_STILL_MODELS.values()],
+                            value=next(iter(H3_STILL_MODELS.values()))["label"], label="圖片模型")
+                        still_seed = gr.Number(value=8201, label="Seed", precision=0)
+                    still_negative = gr.Textbox(
+                        label="負面詞（選填，中文英文都行；加在系統固定的安全負面詞後面，固定的那些拿不掉）", lines=2,
+                        placeholder="例如：模糊, 多餘的手指, 文字, 浮水印")
+                    still_people = gr.Radio(
+                        [v[0] for v in H3_PEOPLE.values()], value=H3_PEOPLE[1][0],
+                        label="畫面人數（都是成年人；2 人以上描述裡也可以自己寫誰在做什麼）")
+                    still_btn = gr.Button("生成圖片", variant="primary")
+                with gr.Column():
+                    still_output = gr.Image(label="圖片結果", type="filepath", interactive=False)
+                    still_info = gr.Markdown()
+                    still_use_btn = gr.Button("➡️ 用這張當首幀（帶到下面的影片區塊）")
+
+            gr.Markdown("## ② 生成影片")
+            with gr.Row():
+                with gr.Column():
+                    h3_image = gr.Image(label="首幀（①帶過來的，或自己上傳本專案生成的圖）", type="filepath")
+                    with gr.Row():
+                        h3_gender = gr.Radio(["女", "男", "一男一女"], value="女", label="人物（一男一女：女 S1、男 S2 都在畫面裡）")
+                        h3_seed = gr.Number(value=8201, label="Seed", precision=0)
+                    h3_idea_box = gr.Textbox(label="中文情境（做什麼）", lines=2,
+                                             placeholder="例如：她笑著指向冒煙的鍋子")
+                    h3_line = gr.Textbox(label="台詞（原樣放進影片，20 字內；一男一女時是女生說的）", placeholder="例如：快！關小火！")
+                    h3_others = gr.Checkbox(
+                        value=False, label="畫面裡可以有其他成年人（只有主角說話；背景人物容易變形，先試一次看看）")
+                    h3_line2 = gr.Textbox(label="男生的回答（選填，只有「一男一女」才用；兩個人同時說話的配音沒有驗證過）")
+                    h3_write_btn = gr.Button("✍️ 用 Qwen 寫描述")
+                    h3_desc = gr.Textbox(
+                        label="影片描述（英文；改成中文也行，會先自動翻譯；台詞要放在 <d>[Chinese] …</d> 裡，不會被翻）", lines=7)
+                    h3_sound = gr.Textbox(label="環境聲（選填，中文英文都行）", placeholder="例如：Home kitchen: a soft sizzle ...")
+                    h3_static = gr.Checkbox(value=False, label="人物與背景保持靜止（貓、蒸氣、背景最容易變形時勾）")
+                    h3_attest = gr.Checkbox(value=False, label=H3_ATTEST_LABEL)
+                    h3_btn = gr.Button("生成影片（本機 H3）", variant="primary")
+                with gr.Column():
+                    h3_output = gr.Video(label="影片結果")
+                    h3_info = gr.Markdown()
+
+            still_btn.click(
+                generate_h3_still_ui,
+                inputs=[still_prompt, still_model, still_seed, still_people, still_negative],
+                outputs=[still_output, still_info, still_prompt],
+                concurrency_id="gpu",
+            )
+            still_use_btn.click(use_still_as_first_frame, inputs=still_output, outputs=[h3_image, h3_attest])
+            # an uploaded picture has not been through this tool: the attestation has to be ticked again by the user
+            h3_image.upload(lambda: False, inputs=None, outputs=h3_attest)
+            h3_write_btn.click(
+                write_h3_description_ui,
+                inputs=[h3_idea_box, h3_line, h3_gender, h3_line2, h3_others],
+                outputs=h3_desc,
+                concurrency_id="gpu",  # the local Qwen takes ~6.7 GB of the card while it answers
+            )
+            h3_btn.click(
+                generate_h3_local_ui,
+                inputs=[h3_image, h3_desc, h3_sound, h3_static, h3_seed, h3_attest],
+                outputs=[h3_output, h3_info, h3_desc],
                 concurrency_id="gpu",
             )
 
