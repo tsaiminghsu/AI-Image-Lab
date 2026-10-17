@@ -225,9 +225,10 @@ def scene_prompt_text(story, scene, composition):
     return ". ".join(parts)
 
 
-def build_request(bible, story, scene_number, letter, image_model=DEFAULT_IMAGE_MODEL):
+def build_request(bible, story, scene_number, letter, image_model=DEFAULT_IMAGE_MODEL, canvas=None):
     """Everything one candidate needs, with no I/O. The final prompt/negative come from the shared
-    assembly so the safety path is identical to every other generator."""
+    assembly so the safety path is identical to every other generator. canvas=(width, height) overrides the bible's
+    size for a render that has to be smaller to suit the card (the record then says what it was reduced from)."""
     if image_model not in IMAGE_MODELS:
         raise gc.UsageError(f"沒有這個圖片模型：{image_model}（可用：{', '.join(IMAGE_MODELS)}）")
     model_key = IMAGE_MODELS[image_model]["key"]
@@ -251,8 +252,8 @@ def build_request(bible, story, scene_number, letter, image_model=DEFAULT_IMAGE_
         "prompt": prompt,
         "negative_prompt": negative,
         "seed": candidate_seed(story, scene_number, letter),
-        "width": bible["canvas"]["width"],
-        "height": bible["canvas"]["height"],
+        "width": canvas[0] if canvas else bible["canvas"]["width"],
+        "height": canvas[1] if canvas else bible["canvas"]["height"],
         "steps": steps,
         "cfg": max(cfg, client.SAFETY_MIN_CFG),
         "model": model_key,
@@ -352,7 +353,7 @@ def pending(stories, letters=FIRST_ROUND, *, scene_numbers=None, force=False):
 
 def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=False, dry_run=False,
              submit=None, server_up=client.is_server_running,
-             before_each=None, should_stop=None, image_model=DEFAULT_IMAGE_MODEL):
+             before_each=None, should_stop=None, image_model=DEFAULT_IMAGE_MODEL, canvas=None):
     """Render candidates. Skips existing images (unless force). Letters C/D are refused for a scene whose
     review is not REGENERATE, so the first round can never silently grow to four per scene.
     image_model picks the model for every image of this call (IMAGE_MODELS); each image's record says which."""
@@ -377,7 +378,7 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
                 break
             if before_each:
                 before_each(story, n, letter)   # e.g. gpu_guard.before_image; may raise to end the batch
-            req = build_request(bible, story, n, letter, image_model)
+            req = build_request(bible, story, n, letter, image_model, canvas)
             paths = candidate_paths(story, n, letter)
             os.makedirs(os.path.dirname(paths["png"]), exist_ok=True)
             prefix = f"{story.id}_s{n:02d}_{letter}"
@@ -403,6 +404,8 @@ def generate(bible, stories, *, letters=FIRST_ROUND, scene_numbers=None, force=F
                 "cfg": req["cfg"], "composition": req["composition"], "candidate_letter": letter,
                 "image_model": image_model,
                 "workflow_graph": os.path.basename(paths["workflow"]),
+                **({"resolution_reduced_from": [bible["canvas"]["width"], bible["canvas"]["height"]]}
+                   if (req["width"], req["height"]) != (bible["canvas"]["width"], bible["canvas"]["height"]) else {}),
                 "image_sha256": _sha256(paths["png"]), "generation_seconds": elapsed, "created_at": _now(),
             })
             if qwen:

@@ -466,27 +466,75 @@ def card(monkeypatch, used, chat=0.0, total=16311.0):
     monkeypatch.setattr(gpu_guard, "loaded_vram_mib", lambda http=None, url=None: float(chat))
 
 
-def test_a_card_the_chat_model_is_the_only_thing_filling_still_renders_locally(web, env, monkeypatch):
+def test_a_card_the_chat_model_is_the_only_thing_filling_still_draws_locally_at_full_size(web, env, monkeypatch):
     card(monkeypatch, used=9000, chat=8200)  # what the chat model holds is unloaded before the batch
     estimate = web.post("/stories/5/candidates", json={"scenes": [2]}).json()["estimate"]
-    assert (
-        estimate["backend"] == "本機顯示卡" and "夠用" in estimate["local_memory"] and "compute_units" not in estimate
-    )
+    assert estimate["backend"] == "本機顯示卡" and estimate["resolution"] == "720×1280"
+    assert "resolution_reduced" not in estimate and "compute_units" not in estimate
 
 
-def test_a_card_held_by_something_else_switches_the_estimate_to_colab_and_says_what_it_costs(web, env, monkeypatch):
-    card(monkeypatch, used=9000, chat=0)  # 9 GB belongs to another program: 7.3 GB left, 13.7 GB needed
+@pytest.mark.parametrize(
+    "used,size",
+    [(4000, "720×1280"), (7500, "576×1024"), (11000, "576×1024"), (12500, "432×768")],  # free: 12.3, 8.8, 5.3, 3.8 GB,
+)
+def test_a_card_partly_held_by_something_else_shrinks_the_picture_and_stays_local(web, env, monkeypatch, used, size):
+    card(monkeypatch, used=used)
+    r = web.post("/stories/5/candidates", json={"scenes": [2, 3]}).json()
+    estimate = r["estimate"]
+    assert r["queued"] is False and estimate["backend"] == "本機顯示卡" and "compute_units" not in estimate
+    assert estimate["resolution"] == size
+    if size != "720×1280":
+        assert "降到" in estimate["resolution_reduced"] and "H3" in estimate["resolution_warning"]
+    else:
+        assert "resolution_reduced" not in estimate
+
+
+def test_the_tiers_are_the_project_canvas_then_80_and_60_percent_in_multiples_of_16():
+    assert api._scaled(720, 1280, 1.0) == (720, 1280)
+    assert api._scaled(720, 1280, 0.8) == (576, 1024)
+    assert api._scaled(720, 1280, 0.6) == (432, 768)
+    assert api._scaled(1080, 1920, 0.8) == (864, 1536)
+    assert all(side % 16 == 0 for side in api._scaled(1000, 1777, 0.8))
+
+
+def test_a_reduced_local_job_draws_at_the_smaller_size_and_the_record_says_so(web, env, monkeypatch):
+    card(monkeypatch, used=7500)
+    queued = web.post("/stories/5/candidates", json={"scenes": [3], "confirm": True}).json()
+    assert queued["queued"] is True and queued["estimate"]["resolution"] == "576×1024"
+    job = env.run_next()
+    assert job["status"] == api.COMPLETED, job["error"]
+    assert [(c["width"], c["height"]) for c in env.submitted] == [(576, 1024)]
+    story = cs.load_stories(env.root)[4]
+    meta = cs._read_json(cs.candidate_paths(story, 3, "A")["meta"])
+    assert (meta["width"], meta["height"]) == (576, 1024) and meta["resolution_reduced_from"] == [720, 1280]
+    page = web.get("/stories/5/gallery", params={"scene": 3}).text
+    assert "576×1024" in page and "降低過解析度" in page  # the user sees which pictures are smaller
+
+
+def test_a_full_size_job_has_no_reduction_note(web, env):
+    web.post("/stories/5/candidates", json={"scenes": [3], "confirm": True})
+    env.run_next()
+    story = cs.load_stories(env.root)[4]
+    meta = cs._read_json(cs.candidate_paths(story, 3, "A")["meta"])
+    assert (meta["width"], meta["height"]) == (720, 1280) and "resolution_reduced_from" not in meta
+
+
+def test_only_a_practically_full_card_switches_the_estimate_to_colab_and_says_what_it_costs(web, env, monkeypatch):
+    card(monkeypatch, used=15500, chat=0)  # 0.8 GB left: below the 1.5 GB nobody measured
     r = web.post("/stories/5/candidates", json={"scenes": [2, 3]}).json()
     estimate = r["estimate"]
     assert r["queued"] is False and r["needs_confirmation"] is True  # spending compute units always waits for a yes
-    assert "Colab" in estimate["backend"] and "本機顯示卡記憶體不夠" in estimate["why_not_local"]
+    assert "Colab" in estimate["backend"] and "幾乎全滿" in estimate["why_not_local"]
     assert estimate["compute_units"] > 0 and "Docker Desktop 要開著" in estimate["user_actions"]
     assert "花 Colab 運算單元" in estimate["cost_note"] and "local_memory" not in estimate
     assert api.store.all() == []  # nothing was queued
 
 
-def test_qwen_is_never_sent_to_colab_and_local_can_be_forced(web, env, monkeypatch):
-    card(monkeypatch, used=9000)
+def test_qwen_draws_locally_while_the_card_has_room_and_is_never_sent_to_colab(web, env, monkeypatch):
+    card(monkeypatch, used=9000)  # 7.3 GB left: Qwen still draws locally (slower), at the full size
+    ok = web.post("/stories/5/candidates", json={"scenes": [2], "image_model": "qwen_image_2_1"}).json()["estimate"]
+    assert ok["backend"] == "本機顯示卡" and ok["resolution"] == "720×1280" and "license_warning" in ok
+    card(monkeypatch, used=15500)
     refused = web.post("/stories/5/candidates", json={"scenes": [2], "image_model": "qwen_image_2_1"})
     assert refused.status_code == 409 and "沒有雲端版本" in refused.json()["detail"]
     explicit = web.post(
@@ -553,7 +601,7 @@ class FakeZimage:
 def test_a_confirmed_colab_job_exports_submits_starts_the_worker_and_files_the_pictures(
     web, env, monkeypatch, tmp_path
 ):
-    card(monkeypatch, used=9000)
+    card(monkeypatch, used=15500)
     env.run = fake = FakeZimage(env, tmp_path)
     r = web.post("/stories/5/candidates", json={"scenes": [2, 3], "confirm": True}).json()
     assert r["queued"] is True and "Colab" in r["estimate"]["backend"]
@@ -573,7 +621,7 @@ def test_a_confirmed_colab_job_exports_submits_starts_the_worker_and_files_the_p
 
 
 def test_a_failed_colab_preflight_spends_nothing_and_never_starts_the_worker(web, env, monkeypatch, tmp_path):
-    card(monkeypatch, used=9000)
+    card(monkeypatch, used=15500)
     env.run = fake = FakeZimage(env, tmp_path, preflight_rc=1)
     web.post("/stories/5/candidates", json={"scenes": [2], "confirm": True})
     job = env.run_next()
@@ -582,7 +630,7 @@ def test_a_failed_colab_preflight_spends_nothing_and_never_starts_the_worker(web
 
 
 def test_the_drive_consent_pause_is_shown_to_the_user_and_cleared_afterwards(web, env, monkeypatch, tmp_path):
-    card(monkeypatch, used=9000)
+    card(monkeypatch, used=15500)
     seen = []
     env.run = fake = FakeZimage(env, tmp_path, states=("drive_consent", "running"))
     original_update = env._update
@@ -628,7 +676,7 @@ def test_the_drive_consent_pause_is_shown_to_the_user_and_cleared_afterwards(web
 
 
 def test_cancelling_a_colab_job_stops_the_session(web, env, monkeypatch, tmp_path):
-    card(monkeypatch, used=9000)
+    card(monkeypatch, used=15500)
     env.run = fake = FakeZimage(env, tmp_path, states=("running",))
     original_script = env._zimage_script
 

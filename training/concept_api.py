@@ -68,12 +68,15 @@ SECONDS_PER_IMAGE = 40
 # Qwen-Image 2.1 on the RTX 5060 Ti: 62.5 s warm at cfg 1; the pipeline runs it at cfg 2.0 (two passes per step), so
 # roughly double. An estimate until a chat-triggered batch has been measured.
 QWEN_SECONDS_PER_IMAGE = 125
-# Local first, Colab only when the card cannot hold the render. Peak VRAM growth of one render above what the card
-# already holds (nvidia-smi total at the peak minus the idle desktop, RTX 5060 Ti, 2026-10-17): Z-Image bf16 13.4 GB peak
-# -> 12,700 MiB; Qwen-Image 2.1 Q6_K 8.7 GB peak at cfg 1 -> about 8,000, and the pipeline runs cfg 2.0, so 9,500 is an
-# estimate. The margin keeps the check from passing a card that is a few hundred MiB short.
-LOCAL_VRAM_NEED_MIB = {"z_image": 12700, "qwen_image_2_1": 9500}
-LOCAL_VRAM_MARGIN_MIB = 1000
+# Local first. A stand-in program holding 4.4, 10.1 and 14.3 GB of the 16 GB card never made a Z-Image render fail
+# (2026-10-17, RTX 5060 Ti): ComfyUI moves part of the weights to system RAM and the render just slows down - bf16 at
+# 720x1280 took 50 s, 63 s and 75 s from cold against 48 s on a free card, 576x1024 took 38 s at 6 GB free, 432x768 32 s
+# (and int8 432x768 28 s at 2 GB free). So memory shortage is answered by a smaller picture first, which is faster, and
+# only a practically full card (nothing below 2 GB free was measured) is sent to Colab. The tiers are the project's canvas,
+# 80% of it and 60% of it (720x1280 -> 576x1024 -> 432x768) and the free-memory limits are read off those three runs.
+RESOLUTION_TIERS = ((9500, 1.0, "全解析度"), (5000, 0.8, "中解析度"), (0, 0.6, "小解析度"))
+LOCAL_MIN_FREE_MIB = 1500
+REDUCED_SECONDS_PER_IMAGE = 45       # 576x1024 / 432x768 while the card is partly held: 32-38 s measured, with margin
 # The Colab worker (.claude/skills/z-image-colab) renders Z-Image only, on an L4: 18 s per 720x1280 image; a session costs
 # 9-15 minutes of fixed time (install or model copy, idle timeout) and measured 0.24 CU (8 jobs) and 0.40 CU (3 jobs).
 COLAB_SESSION_MINUTES = 10
@@ -101,35 +104,46 @@ def file_url(path):
     return f"{PUBLIC_URL}/files/{rel}"
 
 
-def local_capacity(image_model, guard=None):
-    """Can THIS machine's card hold the render once the chat model is unloaded? Video memory held by anything other than
-    Ollama (a game, another render, the desktop) stays; what Ollama holds is released before the batch starts. An
-    unreadable nvidia-smi is not a reason to refuse: the batch's own guard still decides."""
+def _scaled(width, height, factor):
+    """The canvas scaled to a multiple of 16 on both sides (what the image models need): 720x1280 * 0.8 = 576x1024."""
+    return max(16, round(width * factor / 16) * 16), max(16, round(height * factor / 16) * 16)
+
+
+def local_capacity(image_model, canvas, guard=None):
+    """What THIS machine's card can do once the chat model is unloaded, and the picture size to use. Video memory held by
+    anything other than Ollama (a game, another render, the desktop) stays; what Ollama holds is released before the
+    batch starts. An unreadable nvidia-smi is not a reason to refuse: the batch's own guard still decides."""
     guard = guard or gpu_guard
     state = guard.gpu_state()
     if state is None:
-        return {"ok": True, "known": False}
+        return {"ok": True, "known": False, "plan": None}
     chat = guard.loaded_vram_mib()
     others = max(0.0, state["used_mib"] - chat)
-    need = LOCAL_VRAM_NEED_MIB[image_model] + LOCAL_VRAM_MARGIN_MIB
     free = state["total_mib"] - others
-    return {"ok": free >= need, "known": True, "total_mib": round(state["total_mib"]),
-            "held_by_others_mib": round(others), "chat_model_mib": round(chat),
-            "free_after_unload_mib": round(free), "needed_mib": need}
+    plan = None
+    if image_model == "z_image":      # only this model was measured at smaller sizes
+        for minimum, factor, label in RESOLUTION_TIERS:
+            if free >= minimum:
+                plan = {"label": label, "factor": factor, "size": _scaled(canvas[0], canvas[1], factor),
+                        "reduced": factor < 1.0}
+                break
+    return {"ok": free >= LOCAL_MIN_FREE_MIB, "known": True, "total_mib": round(state["total_mib"]),
+            "held_by_others_mib": round(others), "chat_model_mib": round(chat), "free_after_unload_mib": round(free),
+            "plan": plan}
 
 
-def choose_backend(requested, image_model):
-    """('local' | 'colab', capacity, reason). `auto` is local unless the card cannot hold the render; Colab can only draw
-    Z-Image, so a Qwen render that does not fit is refused instead of being sent anywhere."""
-    cap = local_capacity(image_model)
+def choose_backend(requested, image_model, canvas=(720, 1280)):
+    """('local' | 'colab', capacity, reason). `auto` is local; the size shrinks when the card is partly held, and only a
+    practically full card is sent to Colab. Colab can only draw Z-Image, so a Qwen render on a full card is refused."""
+    cap = local_capacity(image_model, canvas)
     if requested == "colab":
         chosen, reason = "colab", "使用者指定用 Colab"
     elif requested == "local" or cap["ok"]:
         return "local", cap, None
     else:
         chosen = "colab"
-        reason = (f"本機顯示卡記憶體不夠：卸載聊天模型後只剩 {cap['free_after_unload_mib']} MiB 可用，"
-                  f"這次要約 {cap['needed_mib']} MiB（其他程式佔了 {cap['held_by_others_mib']} MiB）")
+        reason = (f"本機顯示卡幾乎全滿：卸載聊天模型後只剩 {cap['free_after_unload_mib']} MiB 可用"
+                  f"（其他程式佔了 {cap['held_by_others_mib']} MiB），低於 {LOCAL_MIN_FREE_MIB} MiB 就沒有實測過能不能生")
     if chosen == "colab" and image_model != "z_image":
         raise HTTPException(
             status_code=409 if requested == "auto" else 422,
@@ -300,7 +314,8 @@ class Runner:
                     cs.generate(bible, [story], letters=letters, scene_numbers=scenes, submit=self.submit,
                                 server_up=self.server_up, before_each=before_each,
                                 should_stop=lambda: job_id in self.cancel_requested,
-                                image_model=params.get("image_model", cs.DEFAULT_IMAGE_MODEL))
+                                image_model=params.get("image_model", cs.DEFAULT_IMAGE_MODEL),
+                                canvas=tuple(params["canvas"]) if params.get("canvas") else None)
                     break
                 except (TimeoutError, client.ComfyUIUnavailable) as exc:
                     # Only a ComfyUI this job started can be restarted; someone else's is not ours to kill.
@@ -667,6 +682,8 @@ def _gallery_page(story, picked, note=""):
     for entry in picked:
         label = f"Scene {entry['scene']} 候選 {entry['candidate']}"
         extra = f" · {esc(entry['image_model'])}" if entry.get("image_model") else ""
+        if entry.get("reduced"):
+            extra += f" · {esc(entry['reduced'])}（降低過解析度）"
         warn = f"<div class='w'>{esc(entry['license_warning'])}</div>" if entry.get("license_warning") else ""
         figures.append(
             f"<figure><a href='{esc(entry['url'])}' target='_blank' rel='noopener'><img src='{esc(entry['url'])}' "
@@ -709,6 +726,8 @@ def show_images(story: int, scene: int | None = None, newest_only: bool = False)
                 entry["image_model"] = cs.IMAGE_MODELS.get(meta["image_model"], {}).get("label", meta["image_model"])
             if meta.get("license"):
                 entry["license_warning"] = f"授權 {meta['license']}：只能內部測試，不要放進商用流程"
+            if meta.get("resolution_reduced_from"):
+                entry["reduced"] = f"{meta.get('width')}×{meta.get('height')}"
             found.append(entry)
         if newest_only and found:
             found = [max(found, key=lambda e: e["mtime"])]
@@ -756,7 +775,11 @@ def generate_candidates(story: int, body: GenerateBody):
     if not todo:
         return {"queued": False, "message": "這些候選圖都已經存在，沒有要生的"}
     model = cs.IMAGE_MODELS[body.image_model]
-    backend, capacity, reason = choose_backend(body.backend, body.image_model)
+    bible_canvas = cs.load_bible(runner.root)["canvas"]
+    full_size = (bible_canvas["width"], bible_canvas["height"])
+    backend, capacity, reason = choose_backend(body.backend, body.image_model, full_size)
+    plan = capacity.get("plan") if backend == "local" else None
+    canvas = list(plan["size"]) if plan and plan["reduced"] else None
     if backend == "colab":
         minutes = round(COLAB_SESSION_MINUTES + len(todo) * COLAB_SECONDS_PER_IMAGE / 60)
         estimate = {"images": len(todo), "image_model": model["label"], "backend": "Google Colab 雲端 GPU（L4）",
@@ -767,13 +790,22 @@ def generate_candidates(story: int, body: GenerateBody):
                     "note": "Colab 用官方 bf16 權重，同一個種子的畫面跟本機不會逐像素一樣；聊天模型不用卸載"}
     else:
         seconds = QWEN_SECONDS_PER_IMAGE if body.image_model == "qwen_image_2_1" else SECONDS_PER_IMAGE
+        if canvas:
+            seconds = REDUCED_SECONDS_PER_IMAGE
         estimate = {"images": len(todo), "image_model": model["label"], "backend": "本機顯示卡",
+                    "resolution": f"{(canvas or full_size)[0]}×{(canvas or full_size)[1]}",
                     "minutes": round(len(todo) * (seconds + COOLDOWN_SECONDS_PER_IMAGE) / 60),
                     "gpu": "本機顯示卡；每張開始前會等顯示卡降到 60°C 以下，所以比連續跑慢；"
                            "生圖期間聊天模型會被卸載，聊天會讓生圖暫停等待"}
         if capacity.get("known"):
-            estimate["local_memory"] = (f"可用 {capacity['free_after_unload_mib']} MiB（卸載聊天模型後），"
-                                        f"需要約 {capacity['needed_mib']} MiB，夠用")
+            estimate["local_memory"] = (f"卸載聊天模型後可用 {capacity['free_after_unload_mib']} MiB"
+                                        f"（其他程式佔了 {capacity['held_by_others_mib']} MiB）")
+        if canvas:
+            estimate["resolution_reduced"] = (
+                f"顯示卡被別的程式佔著，解析度從 {full_size[0]}×{full_size[1]} 降到 {canvas[0]}×{canvas[1]}"
+                f"（{plan['label']}）：實測全解析度在這種情況下會慢到 60～75 秒一張，降解析度約 30～40 秒")
+            estimate["resolution_warning"] = ("這批圖會比其他 Scene 的圖小，H3 用它當首幀時畫質可能較差；"
+                                              "要全解析度請先關掉佔顯示卡的程式。請把這句話告訴使用者")
     if model["license"]:
         estimate["license_warning"] = (f"這個模型的授權是 {model['license']}：只能內部測試，產出的圖不要放進商用流程。"
                                        "請把這句話告訴使用者")
@@ -784,7 +816,8 @@ def generate_candidates(story: int, body: GenerateBody):
     if _busy():
         raise HTTPException(status_code=409, detail=f"已有工作在進行：{_busy()[0]['job_id']}，請等它結束")
     job = runner.enqueue("images", st, {"letters": list(letters), "scenes": sorted(set(body.scenes or [])),
-                                        "image_model": body.image_model, "backend": backend}, len(todo))
+                                        "image_model": body.image_model, "backend": backend, "canvas": canvas},
+                         len(todo))
     return {"queued": True, "job_id": job["job_id"], "estimate": estimate, "message": "已排入佇列，用 get_job 查進度"}
 
 

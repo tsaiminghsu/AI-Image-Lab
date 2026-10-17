@@ -74,7 +74,7 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
    8. generate_candidates 預設用 z_image。只有使用者明說要用 Qwen（Qwen-Image 2.1）時才帶 image_model=qwen_image_2_1；
       這時預估裡有 license_warning，要把那句話原文告訴使用者（只能內部測試，不能商用）。
    9. generate_candidates 的預估裡如果寫「Google Colab 雲端 GPU」，表示本機顯示卡記憶體不夠；要把原因、預估時間、
-      CU 費用與要使用者做的事（Docker 開著、按 Drive 同意）原文告訴使用者，使用者同意才帶 confirm=true。
+      CU 費用與要使用者做的事（Docker 開著、按 Drive 同意）原文告訴使用者，使用者同意才帶 confirm=true。預估裡如果有 resolution_reduced，表示本機顯示卡被別的程式占著、解析度被降低，也要把 resolution_warning 原文告訴使用者（圖會比較小，H3 首幀畫質可能較差）。
       不要自己把 backend 改成 colab。
    ```
 
@@ -155,21 +155,35 @@ $env:COMFYUI_URL="http://127.0.0.1:9188"; ComfyUI\.venv\Scripts\python.exe train
 - **拒絕的情況**：Scene 已核准、這個故事有工作在跑、要改的構圖那一張已經生出來、英文欄位寫了中文、欄位空白或太長（700 字）。
 - **過濾**：所有文字都要通過 `h3_colab.screen_prompt`（兒童、未成年、露骨等詞，沒有繞過的參數），另外本工具自己擋「aged 15」
   「age 16」這類未滿 18 歲的年齡寫法（共用的過濾器擋不到這種寫法）。
-## 六之二、本機優先，記憶體不夠才改 Colab（`generate_candidates` 的 `backend`）
+## 六之二、本機優先：顯示卡被占著就降解析度，幾乎全滿才建議 Colab（`generate_candidates` 的 `backend`）
 
-預設 `backend=auto`：生圖前先算**這台電腦的顯示卡放不放得下這次的模型**，放得下就用本機，放不下才改用 Colab。
+預設 `backend=auto`：一律先用這台電腦的顯示卡。生圖前會讀 `nvidia-smi`，扣掉聊天模型（Ollama，生圖前會卸載）佔的，算**其他程式佔了多少、還剩多少**。
 
-| 項目 | 做法 |
-| --- | --- |
-| 怎麼判斷 | 讀 `nvidia-smi` 的總量與已用量；聊天模型（Ollama）佔的部分生圖前會被卸載，所以不算；**其他程式**佔的才算。剩下的記憶體要大於這個模型的需求加 1,000 MiB 緩衝 |
-| 模型需求（實測） | Z-Image bf16：約 12,700 MiB（峰值 13.4 GB 扣掉桌面）；Qwen-Image 2.1：估計 9,500 MiB（cfg 2.0 沒有實測峰值） |
-| 夠用 | 預估寫「本機顯示卡」，並列出可用與需要的記憶體 |
-| 不夠 | 預估改寫「Google Colab 雲端 GPU（L4）」，附 `why_not_local`（原因）、預估分鐘與 **CU 費用**（實測一個 session 約 0.24～0.40 CU）、要你做的事（Docker Desktop 開著、按一次 Google Drive 同意） |
-| 一律要你同意 | 花 CU 的工作一定先回預估，你說好才開始（`confirm=true`）；助理被要求不能自己把 backend 改成 colab |
-| 只有 Z-Image 能走 Colab | Qwen-Image 2.1 在 Colab 沒有流程：記憶體不夠時回 409 並說明，請你先關掉佔顯示卡的程式或改用 Z-Image |
-| 開始之後 | 先做免費的檢查（`setup_colab.py preflight`）→ 匯出清單 → 送進 Colab 佇列 → 才啟動 Colab（這一步才花 CU）→ 等圖 → 存回 `images/scene_NN/`（記錄檔 `backend: colab`）；檢查沒過就停，沒花 CU |
-| Drive 同意 | 狀態會變成「等使用者」，你按完同意後說一聲，助理呼叫 `consent_done`，Colab 會繼續 |
-| 取消 | `cancel_job` 會要求結束 Colab session，避免繼續計費 |
-| 本機途中失敗 | 本機工作已經開始後若顯示卡被占住（`GpuBusy`）只會失敗並說明，**不會自動改走 Colab**，因為那會在你不知道的情況下花 CU；請重新要求並指定 `backend=colab` |
+**為什麼不是「不夠就上雲端」**：2026-10-17 用一支只佔顯示卡記憶體的小程式模擬「別的程式在用」，分別佔 4.4、10.1、14.3 GB，Z-Image 本機生圖**一次都沒失敗**，ComfyUI 會自動把一部分權重換到系統記憶體，只是變慢。
 
-要強制本機：`backend=local`；要強制雲端：`backend=colab`（只對 Z-Image）。Colab 用官方 bf16 權重，同一個種子的畫面跟本機不會逐像素一樣（見記憶體實測報告）。
+| 實測（Z-Image，從冷啟動算起） | 被占 4.4 GB | 被占 10.1 GB | 被占 14.3 GB |
+| --- | --- | --- | --- |
+| bf16 720×1280（全解析度） | 50.5 秒 | 62.7 秒 | 74.7 秒 |
+| bf16 576×1024 | 22.3 秒 | 38.4 秒 | — |
+| bf16 432×768 | 18.2 秒 | 32.3 秒 | — |
+| int8 720×1280 | 40.5 秒 | 46.5 秒 | 52.6 秒 |
+| int8 576×1024 | — | 28.3 秒 | 36.4 秒 |
+| int8 432×768 | — | — | 28.4 秒 |
+| 對照：沒人占的全解析度 | 48.5 秒（冷）／26.3 秒（暖機） | | |
+
+所以記憶體少時，**先降解析度**（比較快），不是先上雲端：
+
+| 卸載聊天模型後可用 | 本機用的尺寸 | 說明 |
+| --- | --- | --- |
+| ≥ 9,500 MiB | 專案畫布（720×1280） | 全解析度，沒有變慢 |
+| 5,000～9,500 MiB | 80%（576×1024） | 預估會寫明降低解析度，附警告 |
+| 1,500～5,000 MiB | 60%（432×768） | 同上 |
+| < 1,500 MiB | 建議 Colab | 這個範圍**沒有實測過**，建議雲端，仍要你同意 |
+
+- **降解析度的代價**：這批圖會比其他 Scene 小，H3 用它當首幀時畫質可能較差；預估裡有 `resolution_warning`，助理要原文告訴你。想要全解析度，就先關掉佔顯示卡的程式。每張圖的記錄檔有 `resolution_reduced_from: [720, 1280]` 與實際的 `width`／`height`，`show_images` 的畫廊也標「降低過解析度」。
+- **只有 Z-Image 會降解析度**：Qwen-Image 2.1 沒有在被占用的情況下量過小尺寸，所以一律用全解析度，記憶體少也只是比較慢。
+- **改 Colab 的條件**：可用少於 1,500 MiB（幾乎全滿），或你明說「用 Colab」。預估改寫「Google Colab 雲端 GPU（L4）」，附原因、預估分鐘、**CU 費用**（實測一個 session 約 0.24～0.40 CU）與要你做的事（Docker 開著、按一次 Drive 同意）。**花 CU 一律要你說好才開始**，助理不能自己改 backend。Qwen 沒有雲端版本：全滿時回 409。
+- **Colab 開始之後**：先做免費檢查（`setup_colab.py preflight`）→ 匯出清單 → 送進 Colab 佇列 → 才啟動（這步才花 CU）→ 等圖 → 存回 `images/scene_NN/`（記錄 `backend: colab`）。Drive 同意時狀態變「等使用者」，你按完說一聲，助理呼叫 `consent_done`。`cancel_job` 會要求結束 Colab session，避免繼續計費。
+- **本機途中失敗**：開始後若顯示卡被占住（`GpuBusy`）只會失敗並說明，**不會自動改走 Colab**，因為那會在你不知情時花 CU。
+
+要強制本機：`backend=local`；要強制雲端：`backend=colab`（只對 Z-Image）。Colab 用官方 bf16 權重，同一個種子的畫面跟本機不會逐像素一樣。
