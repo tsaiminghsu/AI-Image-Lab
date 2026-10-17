@@ -95,3 +95,10 @@ secrets/
 /projects/activity_promo/**/*_work/
 /projects/activity_promo/**/*.job.json
 /projects/activity_promo/**/_batches/
+
+# Ad key visuals (training/ad_keyvisuals.py): the pictures and generated listings stay local.
+/projects/ad_keyvisuals/images/
+/projects/ad_keyvisuals/picked/
+/projects/ad_keyvisuals/index.html
+/projects/ad_keyvisuals/index.json
+/projects/ad_keyvisuals/colab/
