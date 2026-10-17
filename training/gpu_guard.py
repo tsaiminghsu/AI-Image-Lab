@@ -96,6 +96,16 @@ def before_batch(*, max_start_temp_c, http=requests, run=subprocess.run, sleep=t
             if hot:
                 why.append(f"GPU {state['temp_c']:.0f}°C，還沒降到 {max_start_temp_c}°C")
             raise GpuBusy("；".join(why))
+        if full:
+            # The chat reply that follows "go ahead" (and Open WebUI's title/follow-up tasks) loads the model again right
+            # after the first unload. Waiting for Ollama's own 5-minute keep_alive to drop it failed a job on 2026-10-17
+            # one second before it would have worked, so drop it again on every poll while the card is full.
+            try:
+                again = unload_models(http, sleep=sleep, clock=clock, timeout=30)
+            except GpuBusy:
+                again = []     # someone is still chatting; the deadline above decides
+            if again:
+                log(f"[gpu_guard] 聊天又把模型載回顯示卡，再卸載一次：{', '.join(again)}")
         sleep(POLL_SECONDS)
 
 
