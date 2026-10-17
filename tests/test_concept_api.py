@@ -754,6 +754,54 @@ def test_unapproved_scenes_and_scenes_without_a_shot_description_cannot_go_to_h3
     assert api.store.all()[0]["kind"] == "images"  # no video job was ever queued
 
 
+def png_header(width, height):
+    """The first 33 bytes of a PNG: all that png_size reads."""
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+    )
+
+
+def set_master_size(env, story_number, scene, size):
+    story = cs.select_stories(cs.load_stories(env.root), story_number)[0]
+    with open(os.path.join(story.scene_dir(scene), "master.png"), "wb") as f:
+        f.write(png_header(*size))
+
+
+def test_png_size_reads_the_header_and_ignores_anything_else(tmp_path):
+    good = tmp_path / "a.png"
+    good.write_bytes(png_header(576, 1024))
+    assert api.png_size(str(good)) == (576, 1024)
+    fake = tmp_path / "b.png"
+    fake.write_bytes(b"\x89PNG fake")
+    assert api.png_size(str(fake)) is None and api.png_size(str(tmp_path / "missing.png")) is None
+
+
+def test_h3_estimate_warns_about_small_first_frames_and_stays_quiet_about_full_size_ones(web, env):
+    approve_all(web, env)
+    for scene, size in ((1, (720, 1280)), (2, (576, 1024)), (3, (432, 768))):
+        set_master_size(env, 1, scene, size)
+    quote = web.post("/stories/1/videos", json={"scenes": [1, 2, 3]}).json()
+    estimate = quote["estimate"]
+    assert quote["queued"] is False and len(estimate["first_frame_warnings"]) == 2  # scene 1 is full size
+    mild, strong = estimate["first_frame_warnings"]
+    assert "Scene 2" in mild and "576×1024" in mild and "1.3 倍" in mild and "很高" not in mild
+    assert "Scene 3" in strong and "432×768" in strong and "1.7 倍" in strong and "糊掉" in strong
+    assert "告訴使用者" in estimate["first_frame_note"]
+    full = web.post("/stories/1/videos", json={"scenes": [1]}).json()["estimate"]
+    assert "first_frame_warnings" not in full
+
+
+def test_the_warning_levels_follow_the_enlargement_factor_h3_has_to_apply():
+    story = cs.load_stories()[0]
+    assert api.H3_UPSCALE_WARN < 1.3 < api.H3_UPSCALE_STRONG < 1.74  # 576x1024 is mild, 432x768 is strong
+    assert abs((1_000_000 / (720 * 1280)) ** 0.5 - 1.04) < 0.01 and story.number == 1
+
+
 def test_videos_quote_cost_first_then_run_in_sessions_of_four_with_downloaded_models(web, env, tmp_path):
     approve_all(web, env)
     quote = web.post("/stories/1/videos", json={}).json()

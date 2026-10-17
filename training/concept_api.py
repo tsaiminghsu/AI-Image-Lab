@@ -549,6 +549,48 @@ def video_problems(story, scene_numbers):
     return problems
 
 
+# H3 scales the first frame to about 1 MP with nearest-exact (blocky when it has to enlarge) before it sees it, and renders
+# at short side 768 (9:16 -> 768x1376). The project's own 720x1280 masters (0.92 MP) need only 1.04x; a 576x1024 one 1.3x
+# and a 432x768 one 1.74x. The warning levels below are read off those factors; whether the video really gets worse is
+# what the first-frame test (outputs/h3_res_test) measures, and these numbers follow its result.
+H3_TARGET_MP = 1.0
+H3_UPSCALE_WARN = 1.15
+H3_UPSCALE_STRONG = 1.5
+
+
+def png_size(path):
+    """(width, height) from a PNG's IHDR chunk, or None for anything that is not a readable PNG (no image library needed)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+    except OSError:
+        return None
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def first_frame_warnings(story, scene_numbers):
+    """One warning per approved master that H3 would have to enlarge noticeably, with how much and what to do."""
+    warnings = []
+    for n in scene_numbers:
+        size = png_size(os.path.join(story.scene_dir(n), "master.png"))
+        if not size:
+            continue
+        upscale = (H3_TARGET_MP * 1_000_000 / (size[0] * size[1])) ** 0.5
+        if upscale <= H3_UPSCALE_WARN:
+            continue
+        strong = upscale > H3_UPSCALE_STRONG
+        warnings.append({
+            "scene": n, "size": f"{size[0]}×{size[1]}", "upscale": round(upscale, 2),
+            "level": "strong" if strong else "mild",
+            "message": (f"Scene {n} 的核准圖只有 {size[0]}×{size[1]}，H3 會先把它放大約 {upscale:.1f} 倍（最近鄰放大，會變軟）"
+                        + ("，這個倍數很高，臉和畫面文字很可能糊掉；建議先用全解析度重生這個 Scene 的圖再送 H3"
+                           if strong else "；畫質可能比 720×1280 的首幀差一點，在意的話先用全解析度重生")),
+        })
+    return warnings
+
+
 def video_estimate(story, scene_numbers):
     sessions = math.ceil(len(scene_numbers) / MAX_CLIPS_PER_SESSION)
     minutes = sessions * SESSION_OVERHEAD_MINUTES
@@ -1050,6 +1092,11 @@ def make_videos(story: int, body: VideosBody):
         raise HTTPException(status_code=409, detail="；".join(problems))
     estimate = dict(video_estimate(st, wanted), note="預估值，實際可能差到正負三成；每個 session 最多 4 支",
                     user_actions=["Docker Desktop 要開著", "每個 session 要在瀏覽器按一次 Google Drive 同意"])
+    small = first_frame_warnings(st, wanted)
+    if small:
+        estimate["first_frame_warnings"] = [w["message"] for w in small]
+        estimate["first_frame_note"] = ("這些首幀比 H3 想要的小。請把上面的警告原文告訴使用者，讓他決定要先重生全解析度，"
+                                        "還是照樣送（會花 CU）")
     if not body.confirm:
         return {"queued": False, "needs_confirmation": True, "estimate": estimate,
                 "message": "還沒開始，也沒有花 CU。請把預估告訴使用者，使用者同意後再用 confirm=true 呼叫一次"}
