@@ -834,10 +834,54 @@ import h3_local as _h3_local_choices  # noqa: E402  (module is light: the heavy 
 
 H3_STILL_MODELS = _h3_local_choices.STILL_MODELS
 H3_PEOPLE = _h3_local_choices.PEOPLE_CHOICES
+H3_DESK_TRANSITIONS = ["硬切", "疊化 0.25 秒", "疊化 0.5 秒"]  # director.TRANSITIONS, in menu order
+import director as _director_names  # noqa: E402  (light: data and pure functions)
+
+H3_DESK_TEMPLATES = list(_director_names.TEMPLATES)
 H3_ATTEST_LABEL = "我確認這張首幀是本專案生成的虛構成人角色（或沒有人物的圖），不是真人照片"
 
 
-@_show_usage_errors
+def _live(work, interval=1.0):
+    """Run work(log) on a worker thread and stream its log to the page: yields ("log", text) while it runs and
+    ("done", (result, text)) at the end. Any exception is written into the log and raised as gr.Error with its message,
+    so the page says what went wrong (a bare "Error" with the reason only in the terminal is what this replaces)."""
+    import queue
+
+    q, lines, box = queue.Queue(), [], {}
+
+    def log(msg):
+        q.put(f"[{datetime.datetime.now():%H:%M:%S}] {msg}")
+
+    def target():
+        try:
+            box["result"] = work(log)
+        except BaseException as exc:  # noqa: BLE001 - reported below, on the page
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    while True:
+        alive = thread.is_alive()
+        new = []
+        while not q.empty():
+            new.append(q.get_nowait())
+        if new:
+            lines.extend(new)
+            yield "log", "\n".join(lines)
+        if not alive:
+            break
+        thread.join(timeout=interval)
+    if "error" in box:
+        exc = box["error"]
+        message = str(exc) or type(exc).__name__
+        lines.append(f"[{datetime.datetime.now():%H:%M:%S}] ✖ {message}")
+        yield "log", "\n".join(lines)
+        if isinstance(exc, (gc.UsageError, client.ComfyUIUnavailable, SystemExit)):
+            raise gr.Error(message) from exc
+        raise gr.Error(f"{type(exc).__name__}：{message}") from exc
+    yield "done", (box.get("result"), "\n".join(lines))
+
+
 def write_h3_description_ui(idea, line, gender, line2, others):
     import h3_idea
 
@@ -845,14 +889,25 @@ def write_h3_description_ui(idea, line, gender, line2, others):
         raise gr.Error("請輸入中文情境（她／他在做什麼）")
     if not (line or "").strip():
         raise gr.Error("請輸入台詞（20 字內，會原樣放進影片）")
-    gr.Info("用本機 Qwen3.5 寫描述中（第一次要載入模型，約 1～2 分鐘；寫完就卸載，不佔著顯示卡）...")
     cast = {"女": "woman", "男": "man", "一男一女": "couple"}[gender]
-    return h3_idea.write_description(
-        idea, line, cast, line2=line2 if cast == "couple" else None, people="multi" if others else "single")
+
+    def work(log):
+        log("用本機 Qwen3.5 寫描述：找 Ollama、載入模型（第一次約 1～2 分鐘）…")
+        text = h3_idea.write_description(
+            idea, line, cast, line2=line2 if cast == "couple" else None, people="multi" if others else "single"
+        )
+        log("描述寫好了（模型已卸載，不佔顯示卡）")
+        return text
+
+    for kind, value in _live(work):
+        if kind == "log":
+            yield gr.update(), value
+        else:
+            text, log_text = value
+            yield text, log_text
 
 
-@_show_usage_errors
-def generate_h3_still_ui(prompt, model_label, seed, people_label, negative, progress=gr.Progress()):
+def generate_h3_still_ui(prompt, model_label, seed, people_label, negative):
     import h3_local
 
     key = next((k for k, v in h3_local.STILL_MODELS.items() if v["label"] == model_label), None)
@@ -860,20 +915,27 @@ def generate_h3_still_ui(prompt, model_label, seed, people_label, negative, prog
         raise gr.Error("請選一個圖片模型")
     if not (prompt or "").strip():
         raise gr.Error("請輸入圖片描述（中文或英文，人物要是成年人）")
-    progress(None, desc="先把中文翻成英文，再卸載聊天模型、等 GPU 降溫、生成（Z-Image 約 30 秒，Qwen 約 2 分鐘）")
+    people = next((k for k, v in h3_local.PEOPLE_CHOICES.items() if v[0] == people_label), 1)
 
     def start():
-        _ensure_comfyui()
+        _ensure_comfyui(announce=False)
         return None
 
-    people = next((k for k, v in h3_local.PEOPLE_CHOICES.items() if v[0] == people_label), 1)
-    meta = h3_local.generate_still(
-        prompt, key, seed=int(seed), start=start, translate=h3_local._translator(), people=people,
-        negative=negative or "")  # Chinese -> English first
-    note = "\n\n⚠️ Qwen-Image 的授權是非商用，這張只能做內部測試，不能用在實際廣告。" if meta["license"] else ""
-    shown = f"\n\n已自動翻成英文再生成：`{meta['prompt_english']}`" if meta["prompt_original"] else ""
-    return (meta["output"], f"**完成**：seed {meta['seed']}\n\n檔案：`{meta['output']}`{shown}{note}",
-            meta["prompt_english"])
+    def work(log):
+        return h3_local.generate_still(
+            prompt, key, seed=int(seed), start=start, translate=h3_local._translator(), people=people,
+            negative=negative or "", log=log,
+        )  # fmt: skip
+
+    for kind, value in _live(work):
+        if kind == "log":
+            yield gr.update(), gr.update(), gr.update(), value
+        else:
+            meta, log_text = value
+            note = "\n\n⚠️ Qwen-Image 的授權是非商用，這張只能做內部測試，不能用在實際廣告。" if meta["license"] else ""
+            shown = f"\n\n已自動翻成英文再生成：`{meta['prompt_english']}`" if meta["prompt_original"] else ""
+            yield (meta["output"], f"**完成**：seed {meta['seed']}\n\n檔案：`{meta['output']}`{shown}{note}",
+                   meta["prompt_english"], log_text)  # fmt: skip
 
 
 def use_still_as_first_frame(path):
@@ -882,31 +944,351 @@ def use_still_as_first_frame(path):
     return path, True  # this picture came out of this tool (screened prompt, safety negatives): the attestation holds
 
 
-@_show_usage_errors
-def generate_h3_local_ui(image, description, soundscape, static, seed, attest, progress=gr.Progress()):
+def generate_h3_local_ui(image, description, soundscape, static, seed, attest):
     import h3_local
 
     if not image:
         raise gr.Error("請上傳首幀圖片")
     if not attest:
-        raise gr.Error("請先勾選首幀的確認（只能用本專案生成的虛構成人角色或沒有人物的圖，不能用真人照片）")
+        raise gr.Error("請勾選首幀圖片正下方的確認框（自己上傳的圖也可以用，只要是虛構成人角色或沒有人物的圖、不是真人照片）")
     if not (description or "").strip():
         raise gr.Error("請先寫描述：按「用 Qwen 寫描述」，或自己貼上（中文英文都行）")
-    progress(None, desc="先把中文翻成英文，再卸載聊天模型、等 GPU 降溫、載入 H3（本機 5 秒約 8～10 分鐘，SSD 會滿載）")
 
     def start():
-        _ensure_comfyui()  # the GUI owns this ComfyUI and stops it at exit; h3_local must not terminate it
+        _ensure_comfyui(announce=False)  # the GUI owns this ComfyUI and stops it at exit; h3_local must not stop it
         return None
 
-    meta = h3_local.generate(
-        image, description, soundscape=soundscape or "", static=bool(static), seed=int(seed), start=start,
-        translate=h3_local._translator())  # Chinese outside the <d> line -> English first
-    client.free_vram()  # H3 holds ~13 GB; hand the card back so the next tab's job does not start squeezed
-    info = (f"**完成**：{meta['seconds_taken']} 秒，{meta['frames']} 幀，seed {meta['seed']}\n\n"
-            f"檔案：`{meta['output']}`\n\n（描述與設定存在同名的 .json）")
-    if meta["description_original"]:
-        info += "\n\n已自動把描述翻成英文再生成（台詞沒有動）。"
-    return meta["output"], info, meta["description_used"]
+    def work(log):
+        meta = h3_local.generate(
+            image, description, soundscape=soundscape or "", static=bool(static), seed=int(seed), start=start,
+            translate=h3_local._translator(), log=log,
+        )  # fmt: skip
+        client.free_vram()  # H3 holds ~13 GB; hand the card back so the next job does not start squeezed
+        log("已請 ComfyUI 卸載 H3，把顯存還回去")
+        return meta
+
+    for kind, value in _live(work):
+        if kind == "log":
+            yield gr.update(), gr.update(), gr.update(), value
+        else:
+            meta, log_text = value
+            info = (f"**完成**：{meta['seconds_taken']} 秒，{meta['frames']} 幀，seed {meta['seed']}\n\n"
+                    f"檔案：`{meta['output']}`\n\n（描述與設定存在同名的 .json；已加進下面的導演台）")  # fmt: skip
+            if meta["description_original"]:
+                info += "\n\n已自動把描述翻成英文再生成（台詞沒有動）。"
+            yield meta["output"], info, meta["description_used"], log_text
+
+
+# --- ③ director's desk (training/director.py) -----------------------------------------------------
+# Laid out like the desktop editors people know (CapCut/剪映, Premiere Rush): a toolbar with templates and export, a
+# media bin (generated clips + imported files) on the left, a dark monitor in the middle, an inspector with tabs on the
+# right, and a multi-track timeline underneath (V2 overlays, V1 main, T text, A1 clip sound, A2 effects, A3 music).
+# All state lives in gr.State; every edit goes through director.* (tested), the handlers only wire it to the page.
+
+DIRECTOR_CSS = """
+.desk-toolbar { background: linear-gradient(90deg, #111827, #1f2937); border-radius: 14px; padding: 8px 14px;
+  align-items: center; }
+.desk-toolbar .prose, .desk-toolbar .prose * { color: #f3f4f6 !important; }
+.desk-panel { border: 1px solid var(--border-color-primary); border-radius: 14px; padding: 10px;
+  background: var(--background-fill-secondary); box-shadow: 0 1px 4px rgba(0, 0, 0, .06); }
+.desk-monitor { background: #0d1117; border-radius: 14px; padding: 10px; }
+.desk-monitor .block, .desk-monitor .wrap, .desk-monitor video, .desk-monitor .empty { background: #0d1117 !important;
+  border-color: #30363d !important; }
+.desk-monitor .label-wrap, .desk-monitor label, .desk-monitor span { color: #c9d1d9 !important; }
+.desk-timeline { border-top: 4px solid var(--color-accent); }
+.desk-timeline .thumbnail-item, .desk-library .thumbnail-item { border-radius: 10px; overflow: hidden; }
+.desk-timeline .thumbnail-item.selected, .desk-library .thumbnail-item.selected { outline: 3px solid var(--color-accent); }
+.desk-export button.primary, .desk-toolbar button.primary { font-size: 1.05rem; min-height: 46px; border-radius: 12px; }
+.desk-hint { opacity: .8; font-size: .92rem; }
+.desk-panel .tab-wrapper button, .desk-panel .tab-container button { padding: 4px 7px !important;
+  font-size: 13px !important; }
+"""
+
+_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+DESK_EMPTY_TRACKS = {"texts": [], "overlays": [], "sfx": []}
+
+
+def _number(n):
+    return _CIRCLED[n - 1] if 1 <= n <= len(_CIRCLED) else f"#{n}"
+
+
+def _file_url(path):
+    return "/gradio_api/file=" + os.path.abspath(path).replace(os.sep, "/")
+
+
+def _media_index():
+    import director
+
+    return {r["path"]: r for r in director.list_media()}
+
+
+def desk_library():
+    """The media bin: generated clips and imported videos/images, newest first."""
+    import director
+
+    items, paths = [], []
+    for r in director.list_media():
+        picture = r["path"] if r["kind"] == "image" else (director.thumbnail(r["path"]) or r["path"])
+        seconds = f"{r['seconds']:.1f}s" if r["seconds"] else ("圖片" if r["kind"] == "image" else "影片")
+        short = r["name"].removeprefix("h3_local_").rsplit(".", 1)[0]
+        items.append((picture, f"{'📥 ' if r['source'] == '匯入' else ''}{seconds}｜{r['line'] or short}"))
+        paths.append(r["path"])
+    return items, paths
+
+
+def _overlay_choices():
+    import director
+
+    stills = sorted(glob.glob(os.path.join(director.CLIPS_DIR, "stills", "*.png")), key=os.path.getmtime, reverse=True)
+    imports = [r["path"] for r in director.list_media() if r["kind"] == "image" and r["source"] == "匯入"]
+    return [(os.path.basename(p), p) for p in imports + stills]
+
+
+def _audio_choices():
+    import director
+
+    return [(os.path.basename(p), p) for p in director.list_audio()]
+
+
+def desk_library_refresh():
+    items, paths = desk_library()
+    return (gr.update(value=items, selected_index=None), paths, gr.update(choices=_overlay_choices()),
+            gr.update(choices=_audio_choices()))  # fmt: skip
+
+
+def _import(paths):
+    import director
+
+    report = director.import_media(paths)
+    items, media = desk_library()
+    names = "、".join(os.path.basename(p) for p in report["imported"])
+    note = f"✔ 匯入 {len(report['imported'])} 個：{names}"
+    if report["skipped"]:
+        note += f"\n\n略過（格式不支援）：{'、'.join(report['skipped'])}"
+    return (gr.update(value=items, selected_index=None), media, gr.update(choices=_overlay_choices()),
+            gr.update(choices=_audio_choices()), note)  # fmt: skip
+
+
+@_show_usage_errors
+def desk_upload(files):
+    if not files:
+        return gr.update(), gr.update(), gr.update(), gr.update(), ""
+    return _import([f if isinstance(f, str) else getattr(f, "name", str(f)) for f in files])
+
+
+@_show_usage_errors
+def desk_import_path(path):
+    if not (path or "").strip():
+        raise gr.Error("請貼上檔案或資料夾的路徑")
+    return _import([p for p in str(path).replace("\n", ";").split(";") if p.strip()])
+
+
+def _has_card(text1, text2, seconds):
+    return float(seconds or 0) > 0 and bool((text1 or "").strip() or (text2 or "").strip())
+
+
+def _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, play=None):
+    """Everything the desk shows: state, the clip strip, the multi-track view, the summary, the inspector and (when
+    the selection changed) what to play."""
+    import director
+
+    timeline = timeline or []
+    tracks = tracks or DESK_EMPTY_TRACKS
+    index = _media_index()
+    has_title, has_end = _has_card(t1, t2, ts), _has_card(e1, e2, es)
+    seconds = {r["name"]: r["seconds"] for r in index.values()}
+    segs, total = director.layout(timeline, seconds, float(ts or 0), float(es or 0), has_title, has_end)
+    strip = []
+    for n, item in enumerate(timeline, 1):
+        secs = item.get("seconds") if item.get("kind") == "image" else seconds.get(item["name"])
+        into = "" if n == 1 and not has_title else f"｜{item['transition']}"
+        strip.append((item.get("thumb") or item["path"], f"{_number(n)} {(secs or 5.17):.1f}s{into}"))
+    html = director.timeline_html(
+        segs, total, tracks, os.path.basename(music) if music else None, sel, _file_url
+    ) if timeline else "<div style='padding:18px;color:#9aa4b2'>時間軸是空的：點左邊素材庫的縮圖加入，或到「匯入」上傳檔案</div>"
+    counts = f"文字 {len(tracks['texts'])}｜疊圖 {len(tracks['overlays'])}｜音效 {len(tracks['sfx'])}"
+    summary = (f"### 時間軸　{len(timeline)} 支片段　｜　{counts}　｜　預估總長 **{total:.1f} 秒**" if timeline
+               else "### 時間軸")  # fmt: skip
+    image_secs = gr.update(visible=False)
+    if sel is not None and 0 <= sel < len(timeline):
+        item = timeline[sel]
+        first = sel == 0 and not has_title
+        info = f"**選中**：{_number(sel + 1)} `{item['name']}`" + ("\n\n第一支前面沒有片頭，進場轉場用不到" if first else "")
+        transition = gr.update(value=item["transition"], interactive=not first)
+        if item.get("kind") == "image":
+            image_secs = gr.update(visible=True, value=item.get("seconds") or 3.0)
+        if play is None:
+            play = item["path"] if item.get("kind") == "video" else gr.update()
+    else:
+        sel = None
+        info = "點下方時間軸的片段卡片來編輯它"
+        transition = gr.update(interactive=False)
+    return (timeline, sel, tracks, gr.update(value=strip, selected_index=sel), html, summary, info, transition,
+            image_secs, play if play is not None else gr.update())  # fmt: skip
+
+
+def desk_add(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, media, evt: gr.SelectData):
+    import director
+
+    try:
+        path = media[evt.index]
+    except (IndexError, TypeError):
+        raise gr.Error("素材庫已經變了，先按「🔄 重新整理」") from None
+    kind = director.media_kind(path)
+    thumb = path if kind == "image" else director.thumbnail(path)
+    extra = {"path": path, "kind": kind, "thumb": thumb}
+    if kind == "image":
+        extra["seconds"] = director.IMAGE_SECONDS
+    timeline, sel = director.timeline_add(timeline, os.path.basename(path), **extra)
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music)
+
+
+def desk_select(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, evt: gr.SelectData):
+    return _desk(timeline, evt.index, tracks, t1, t2, ts, e1, e2, es, music)
+
+
+def desk_set_transition(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, label):
+    import director
+
+    timeline = director.timeline_set_transition(timeline, sel, label)
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+@_show_usage_errors
+def desk_set_seconds(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, seconds):
+    import director
+
+    timeline = director.timeline_set_seconds(timeline, sel, seconds)
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_move_left(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    import director
+
+    timeline, sel = director.timeline_move(timeline, sel, -1)
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_move_right(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    import director
+
+    timeline, sel = director.timeline_move(timeline, sel, 1)
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_remove(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    import director
+
+    timeline, sel = director.timeline_remove(timeline, sel)
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music)
+
+
+def desk_clear(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    return _desk([], None, {"texts": [], "overlays": [], "sfx": []}, t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_view(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    return _desk(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def _with_track(tracks, key, entry):
+    import director
+
+    new = {k: list(v) for k, v in (tracks or DESK_EMPTY_TRACKS).items()}
+    new[key].append(entry)
+    director.check_tracks(new["texts"], new["overlays"], new["sfx"])  # refuses a bad entry with a readable reason
+    return new
+
+
+@_show_usage_errors
+def desk_add_text(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, text, start, end, position, size):
+    entry = {"text": text, "start": float(start or 0), "end": float(end or 0), "position": position, "size": size}
+    return _desk(timeline, sel, _with_track(tracks, "texts", entry), t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+@_show_usage_errors
+def desk_add_overlay(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, path, start, end, position, scale):
+    if not path:
+        raise gr.Error("先選一張圖（到左邊「匯入」上傳 png／jpg，或用①生成的圖）")
+    entry = {"path": path, "start": float(start or 0), "end": float(end or 0), "position": position,
+             "scale": float(scale)}  # fmt: skip
+    return _desk(timeline, sel, _with_track(tracks, "overlays", entry), t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+@_show_usage_errors
+def desk_add_sfx(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, path, start, volume):
+    if not path:
+        raise gr.Error("先選一段音效（到左邊「匯入」上傳 mp3／wav）")
+    entry = {"path": path, "start": float(start or 0), "volume_db": float(volume)}
+    return _desk(timeline, sel, _with_track(tracks, "sfx", entry), t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def _drop_last(tracks, key):
+    new = {k: list(v) for k, v in (tracks or DESK_EMPTY_TRACKS).items()}
+    if new[key]:
+        new[key].pop()
+    return new
+
+
+def desk_text_undo(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    return _desk(timeline, sel, _drop_last(tracks, "texts"), t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_overlay_undo(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    return _desk(timeline, sel, _drop_last(tracks, "overlays"), t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_sfx_undo(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music):
+    return _desk(timeline, sel, _drop_last(tracks, "sfx"), t1, t2, ts, e1, e2, es, music, gr.update())
+
+
+def desk_apply_template(timeline, sel, tracks, t1, t2, ts, e1, e2, es, music, name):
+    """Fill the cards, the music level, the bed, the AI tag and the text track from a template, and set every clip's
+    transition to the template's. The user's clips and picture/sound tracks stay."""
+    import director
+
+    if name not in director.TEMPLATES:
+        raise gr.Error("請先從選單選一個範本")
+    tpl = director.TEMPLATES[name]
+    timeline = [dict(item, transition=tpl["transition"]) for item in timeline or []]
+    new_tracks = {k: list(v) for k, v in (tracks or DESK_EMPTY_TRACKS).items()}
+    new_tracks["texts"] = [dict(t) for t in tpl["texts"]]
+    (n1, n2), (m1, m2) = tpl["title"], tpl["ending"]
+    view = _desk(timeline, sel, new_tracks, n1, n2, tpl["title_seconds"], m1, m2, tpl["ending_seconds"], music,
+                 gr.update())  # fmt: skip
+    return (*view, n1, n2, tpl["title_seconds"], m1, m2, tpl["ending_seconds"], tpl["music_below_db"], tpl["bed"],
+            tpl["ai_label"], f"已套用「{name}」：{tpl['description']}")  # fmt: skip
+
+
+def render_cut_ui(timeline, tracks, t1, t2, ts, e1, e2, es, music, music_db, music_fade, bed, ai_label):
+    import director
+
+    if not timeline:
+        raise gr.Error("時間軸是空的：先點素材庫的縮圖把片段加進來")
+    tracks = tracks or DESK_EMPTY_TRACKS
+    clips = [{"path": item["path"], "kind": item.get("kind", "video"), "seconds": item.get("seconds")} for item in timeline]
+    transitions = [item["transition"] for item in timeline]
+
+    def work(log):
+        log("時間軸：" + " → ".join(f"{_number(n)} {item['name']}（{item['transition']}）" for n, item in
+                                  enumerate(timeline, 1)))  # fmt: skip
+        log(f"軌道：文字 {len(tracks['texts'])}、疊圖 {len(tracks['overlays'])}、音效 {len(tracks['sfx'])}、"
+            f"配樂 {'有' if music else '無'}")  # fmt: skip
+        return director.render(
+            clips, transitions=transitions, title=(t1, t2), title_seconds=float(ts or 0), ending=(e1, e2),
+            ending_seconds=float(es or 0), music=music or None, music_below_db=float(music_db),
+            music_fade=float(music_fade), bed=bool(bed), ai_label=bool(ai_label), texts=tracks["texts"],
+            overlays=tracks["overlays"], sfx=tracks["sfx"], log=log,
+        )  # fmt: skip
+
+    for kind, value in _live(work):
+        if kind == "log":
+            yield gr.update(), gr.update(), value
+        else:
+            r, log_text = value
+            info = (f"**✔ 成片**　{r['seconds']:.2f} 秒｜{r['size']}｜{r['final_loudness_lufs']} LUFS　"
+                    f"`{r['output']}`")  # fmt: skip
+            yield r["output"], info, log_text
 
 
 @_show_usage_errors
@@ -1306,7 +1688,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
                     seed = gr.Number(value=9000, label="Seed", precision=0)
                     ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
-                    custom_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                    custom_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
                     with gr.Row():
                         custom_route = gr.Markdown()
                         custom_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
@@ -1556,11 +1938,14 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     still_output = gr.Image(label="圖片結果", type="filepath", interactive=False)
                     still_info = gr.Markdown()
                     still_use_btn = gr.Button("➡️ 用這張當首幀（帶到下面的影片區塊）")
+            still_log = gr.Textbox(label="執行過程（即時更新）", lines=10, max_lines=18, autoscroll=True, interactive=False)
 
             gr.Markdown("## ② 生成影片")
             with gr.Row():
                 with gr.Column():
-                    h3_image = gr.Image(label="首幀（①帶過來的，或自己上傳本專案生成的圖）", type="filepath")
+                    h3_image = gr.Image(label="首幀（①帶過來的，或自己上傳／拖進來的圖）", type="filepath")
+                    # Right under the picture: a picture uploaded here (not made by ①) needs the owner's declaration once.
+                    h3_attest = gr.Checkbox(value=False, label=H3_ATTEST_LABEL)
                     with gr.Row():
                         h3_gender = gr.Radio(["女", "男", "一男一女"], value="女", label="人物（一男一女：女 S1、男 S2 都在畫面裡）")
                         h3_seed = gr.Number(value=8201, label="Seed", precision=0)
@@ -1575,33 +1960,212 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         label="影片描述（英文；改成中文也行，會先自動翻譯；台詞要放在 <d>[Chinese] …</d> 裡，不會被翻）", lines=7)
                     h3_sound = gr.Textbox(label="環境聲（選填，中文英文都行）", placeholder="例如：Home kitchen: a soft sizzle ...")
                     h3_static = gr.Checkbox(value=False, label="人物與背景保持靜止（貓、蒸氣、背景最容易變形時勾）")
-                    h3_attest = gr.Checkbox(value=False, label=H3_ATTEST_LABEL)
                     h3_btn = gr.Button("生成影片（本機 H3）", variant="primary")
                 with gr.Column():
                     h3_output = gr.Video(label="影片結果")
                     h3_info = gr.Markdown()
+            h3_log = gr.Textbox(label="執行過程（即時更新）", lines=10, max_lines=18, autoscroll=True, interactive=False)
+
+            _desk_items, _desk_paths = desk_library()
+            with gr.Row(elem_classes="desk-toolbar", equal_height=True):
+                gr.Markdown("### 🎬 ③ 導演台")
+                desk_template = gr.Dropdown(choices=list(H3_DESK_TEMPLATES), value=None, label="範本",
+                                            scale=3, container=False)  # fmt: skip
+                desk_template_btn = gr.Button("套用範本", size="sm", scale=1)
+                cut_btn = gr.Button("🎬 輸出成片", variant="primary", scale=2)
+            desk_template_info = gr.Markdown(
+                "點素材庫縮圖加入時間軸 → 點時間軸卡片編輯 → 右邊加文字、疊圖、音效、字卡、配樂 → 輸出成片"
+                "（ffmpeg，不用 GPU；每支片段自動對齊音量，整支 −14 LUFS，1080×1920）。", elem_classes="desk-hint")
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=260, elem_classes="desk-panel desk-library"):
+                    with gr.Tabs():
+                        with gr.Tab("素材庫"):
+                            desk_library_gallery = gr.Gallery(
+                                value=_desk_items, columns=3, height=430, allow_preview=False, object_fit="cover",
+                                show_label=False, label="素材庫")  # fmt: skip
+                            desk_refresh_btn = gr.Button("🔄 重新整理", size="sm")
+                        with gr.Tab("匯入"):
+                            desk_upload_files = gr.File(
+                                label="拖檔案進來或點一下選檔（影片、圖片、音訊，可多選）", file_count="multiple",
+                                file_types=["video", "image", "audio"])  # fmt: skip
+                            desk_import_text = gr.Textbox(
+                                label="或貼上檔案／資料夾路徑（多個用 ; 分開）", placeholder=r"D:\素材\clip.mp4 或 D:\素材")
+                            desk_import_btn = gr.Button("📂 從路徑匯入", size="sm")
+                            desk_import_info = gr.Markdown("匯入的檔案會複製到 `outputs/h3_local/imports/`")
+                with gr.Column(scale=4, min_width=300, elem_classes="desk-monitor"):
+                    desk_preview = gr.Video(label="播放器", height=500)
+                with gr.Column(scale=3, min_width=280, elem_classes="desk-panel"):
+                    with gr.Tabs():
+                        with gr.Tab("片段"):
+                            desk_sel_info = gr.Markdown("點下方時間軸的片段卡片來編輯它")
+                            desk_transition = gr.Dropdown(
+                                choices=list(H3_DESK_TRANSITIONS), value=H3_DESK_TRANSITIONS[0], label="進場轉場",
+                                interactive=False)  # fmt: skip
+                            desk_image_secs = gr.Slider(0.5, 15, value=3, step=0.5, label="圖片秒數", visible=False)
+                            with gr.Row():
+                                desk_left_btn = gr.Button("◀ 前移", size="sm")
+                                desk_right_btn = gr.Button("後移 ▶", size="sm")
+                            with gr.Row():
+                                desk_remove_btn = gr.Button("🗑 移除", size="sm", variant="stop")
+                                desk_clear_btn = gr.Button("清空全部", size="sm")
+                        with gr.Tab("文字"):
+                            desk_text = gr.Textbox(label="文字", placeholder="例如：今天跟她去哪？")
+                            with gr.Row():
+                                desk_text_start = gr.Number(value=0, label="開始秒")
+                                desk_text_end = gr.Number(value=2.5, label="結束秒")
+                            with gr.Row():
+                                desk_text_pos = gr.Radio(["上方", "中間", "下方"], value="上方", label="位置")
+                                desk_text_size = gr.Radio(["小", "中", "大"], value="中", label="大小")
+                            with gr.Row():
+                                desk_text_add = gr.Button("＋ 加到文字軌", size="sm", variant="primary")
+                                desk_text_undo_btn = gr.Button("↶ 移除最後一段", size="sm")
+                        with gr.Tab("疊圖"):
+                            desk_overlay_pick = gr.Dropdown(choices=_overlay_choices(), label="圖片（匯入的或①生成的）")
+                            with gr.Row():
+                                desk_overlay_start = gr.Number(value=0, label="開始秒")
+                                desk_overlay_end = gr.Number(value=5, label="結束秒")
+                            desk_overlay_pos = gr.Radio(["左上", "右上", "中間", "左下", "右下"], value="右上", label="位置")
+                            desk_overlay_scale = gr.Slider(5, 100, value=25, step=1, label="寬度（畫面的 %）")
+                            with gr.Row():
+                                desk_overlay_add = gr.Button("＋ 加到疊圖軌", size="sm", variant="primary")
+                                desk_overlay_undo_btn = gr.Button("↶ 移除最後一張", size="sm")
+                        with gr.Tab("音效"):
+                            desk_sfx_pick = gr.Dropdown(choices=_audio_choices(), label="音效（到「匯入」上傳）")
+                            with gr.Row():
+                                desk_sfx_start = gr.Number(value=0, label="開始秒")
+                                desk_sfx_volume = gr.Slider(-40, 12, value=-6, step=1, label="音量 dB")
+                            with gr.Row():
+                                desk_sfx_add = gr.Button("＋ 加到音效軌", size="sm", variant="primary")
+                                desk_sfx_undo_btn = gr.Button("↶ 移除最後一段", size="sm")
+                        with gr.Tab("字卡"):
+                            cut_title1 = gr.Textbox(label="片頭標題", placeholder="例如：一起去約會")
+                            cut_title2 = gr.Textbox(label="片頭副標（選填）", placeholder="例如：三個地方，三種心情")
+                            cut_title_secs = gr.Slider(0, 5, value=0, step=0.5, label="片頭秒數（0 = 不要）")
+                            cut_end1 = gr.Textbox(label="片尾第一行", placeholder="例如：下載 App")
+                            cut_end2 = gr.Textbox(label="片尾第二行（選填）", placeholder="例如：跟她一起出門")
+                            cut_end_secs = gr.Slider(0, 5, value=2.5, step=0.5, label="片尾秒數（0 = 不要）")
+                        with gr.Tab("音樂"):
+                            cut_music = gr.Audio(label="配樂（不上傳 = 沒有配樂）", type="filepath")
+                            cut_music_db = gr.Slider(6, 30, value=18, step=1, label="比人聲低幾 dB（越大越小聲）")
+                            cut_music_fade = gr.Slider(0, 5, value=1.5, step=0.5, label="結尾淡出秒數")
+                            cut_bed = gr.Checkbox(value=False, label="加極輕的環境底噪（−48 LUFS）")
+                            cut_ai_label = gr.Checkbox(value=False, label="每一格加「AI 生成影片｜MiniMax H3」標示")
+            with gr.Column(elem_classes="desk-panel desk-timeline"):
+                desk_summary = gr.Markdown("### 時間軸")
+                desk_tracks_html = gr.HTML(
+                    "<div style='padding:18px;color:#9aa4b2'>時間軸是空的：點左邊素材庫的縮圖加入，或到「匯入」上傳檔案</div>")
+                desk_timeline_gallery = gr.Gallery(
+                    columns=10, rows=1, height=150, allow_preview=False, object_fit="cover", show_label=True,
+                    label="主影片軌（點卡片選取片段）")  # fmt: skip
+            with gr.Row(elem_classes="desk-export"):
+                cut_info = gr.Markdown()
+            with gr.Accordion("執行過程（即時更新）", open=True):
+                cut_log = gr.Textbox(show_label=False, lines=10, max_lines=18, autoscroll=True, interactive=False)
+            desk_state = gr.State([])
+            desk_sel = gr.State(None)
+            desk_tracks = gr.State({"texts": [], "overlays": [], "sfx": []})
+            desk_media = gr.State(_desk_paths)
 
             still_btn.click(
                 generate_h3_still_ui,
                 inputs=[still_prompt, still_model, still_seed, still_people, still_negative],
-                outputs=[still_output, still_info, still_prompt],
+                outputs=[still_output, still_info, still_prompt, still_log],
                 concurrency_id="gpu",
             )
             still_use_btn.click(use_still_as_first_frame, inputs=still_output, outputs=[h3_image, h3_attest])
-            # an uploaded picture has not been through this tool: the attestation has to be ticked again by the user
-            h3_image.upload(lambda: False, inputs=None, outputs=h3_attest)
             h3_write_btn.click(
                 write_h3_description_ui,
                 inputs=[h3_idea_box, h3_line, h3_gender, h3_line2, h3_others],
-                outputs=h3_desc,
+                outputs=[h3_desc, h3_log],
                 concurrency_id="gpu",  # the local Qwen takes ~6.7 GB of the card while it answers
             )
             h3_btn.click(
                 generate_h3_local_ui,
                 inputs=[h3_image, h3_desc, h3_sound, h3_static, h3_seed, h3_attest],
-                outputs=[h3_output, h3_info, h3_desc],
+                outputs=[h3_output, h3_info, h3_desc, h3_log],
                 concurrency_id="gpu",
-            )
+            ).then(desk_library_refresh, inputs=None,
+                   outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
+            desk_out = [desk_state, desk_sel, desk_tracks, desk_timeline_gallery, desk_tracks_html, desk_summary,
+                        desk_sel_info, desk_transition, desk_image_secs, desk_preview]  # fmt: skip
+            desk_in = [desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                       cut_end_secs, cut_music]  # fmt: skip
+            desk_refresh_btn.click(desk_library_refresh, inputs=None,
+                                   outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
+            desk_upload_files.upload(desk_upload, inputs=desk_upload_files,
+                                     outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick,
+                                              desk_import_info])  # fmt: skip
+            desk_import_btn.click(desk_import_path, inputs=desk_import_text,
+                                  outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick,
+                                           desk_import_info])  # fmt: skip
+            desk_library_gallery.select(
+                desk_add,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_media],
+                outputs=desk_out,
+            )  # fmt: skip
+            desk_timeline_gallery.select(desk_select, inputs=desk_in, outputs=desk_out)
+            desk_transition.input(
+                desk_set_transition,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_transition],
+                outputs=desk_out,
+            )  # fmt: skip
+            desk_image_secs.release(
+                desk_set_seconds,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_image_secs],
+                outputs=desk_out,
+            )  # fmt: skip
+            desk_left_btn.click(desk_move_left, inputs=desk_in, outputs=desk_out)
+            desk_right_btn.click(desk_move_right, inputs=desk_in, outputs=desk_out)
+            desk_remove_btn.click(desk_remove, inputs=desk_in, outputs=desk_out)
+            desk_clear_btn.click(desk_clear, inputs=desk_in, outputs=desk_out)
+            desk_text_add.click(
+                desk_add_text,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_text, desk_text_start, desk_text_end, desk_text_pos,
+                        desk_text_size],
+                outputs=desk_out,
+            )  # fmt: skip
+            desk_overlay_add.click(
+                desk_add_overlay,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_overlay_pick, desk_overlay_start, desk_overlay_end,
+                        desk_overlay_pos, desk_overlay_scale],
+                outputs=desk_out,
+            )  # fmt: skip
+            desk_sfx_add.click(
+                desk_add_sfx,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_sfx_pick, desk_sfx_start, desk_sfx_volume],
+                outputs=desk_out,
+            )  # fmt: skip
+            desk_text_undo_btn.click(desk_text_undo, inputs=desk_in, outputs=desk_out)
+            desk_overlay_undo_btn.click(desk_overlay_undo, inputs=desk_in, outputs=desk_out)
+            desk_sfx_undo_btn.click(desk_sfx_undo, inputs=desk_in, outputs=desk_out)
+            for _desk_input in (cut_title_secs, cut_end_secs):
+                _desk_input.release(desk_view, inputs=desk_in, outputs=desk_out)
+            for _desk_text_input in (cut_title1, cut_title2, cut_end1, cut_end2):
+                _desk_text_input.blur(desk_view, inputs=desk_in, outputs=desk_out)
+            cut_music.change(desk_view, inputs=desk_in, outputs=desk_out)
+            desk_template_btn.click(
+                desk_apply_template,
+                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, desk_template],
+                outputs=[desk_state, desk_sel, desk_tracks, desk_timeline_gallery, desk_tracks_html, desk_summary,
+                         desk_sel_info, desk_transition, desk_image_secs, desk_preview, cut_title1, cut_title2,
+                         cut_title_secs, cut_end1, cut_end2, cut_end_secs, cut_music_db, cut_bed, cut_ai_label,
+                         desk_template_info],
+            )  # fmt: skip
+            cut_btn.click(
+                render_cut_ui,
+                inputs=[desk_state, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                        cut_end_secs, cut_music, cut_music_db, cut_music_fade, cut_bed, cut_ai_label],
+                outputs=[desk_preview, cut_info, cut_log],
+                concurrency_id="ffmpeg",  # CPU only: never queued behind a GPU job, one cut at a time
+                concurrency_limit=1,
+            )  # fmt: skip
 
         with gr.Tab("🎞️ 批次生成 GIF"):
             gr.Markdown(
@@ -1722,7 +2286,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         lines=6, interactive=False,
                     )
                     pick_notice = gr.Markdown("選一個場景或姿勢（或填補充描述）就會在這裡看到實際送出的 prompt。")
-                    pick_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                    pick_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
                     pick_btn = gr.Button("生成", variant="primary")
                     pick_output = gr.Image(label="結果")
 
@@ -1890,4 +2454,13 @@ if __name__ == "__main__":
     # Here, not at import: importing gui.py (the offline build check, a REPL) must not start a thread
     # that could launch ComfyUI and run a queued job.
     _SCHEDULER.start()
-    demo.launch(server_name="127.0.0.1", server_port=7861, share=False)
+    # The picture / video tab writes under <repo>/outputs/h3_local, outside the working directory when the GUI is started
+    # from training/ (the documented way): Gradio refuses to show files outside the cwd and the temp dir unless the
+    # folder is allowed (2026-10-18: InvalidPathError after a successful render). Only that one folder is opened up.
+    demo.launch(
+        server_name="127.0.0.1",
+        server_port=7861,
+        share=False,
+        allowed_paths=[os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "outputs", "h3_local"))],
+        css=DIRECTOR_CSS,  # only the director desk's own classes (Gradio 6 takes css at launch)
+    )

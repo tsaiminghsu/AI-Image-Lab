@@ -393,3 +393,80 @@ def test_the_users_negative_terms_are_added_after_the_fixed_safety_ones_and_not_
     assert "extra fingers" in run("多餘的手指", translate=lambda t: "extra fingers")
     with pytest.raises(gc.UsageError, match="負面詞"):
         run("模糊")
+
+
+def test_a_picture_left_in_comfyui_memory_is_unloaded_before_the_video_checks_free_vram(png, tmp_path, monkeypatch):
+    # measured: 3.2 GB free after a Z-Image picture, 15 GB after ComfyUI was asked to unload
+    state = {"free": 3200, "unloaded": 0}
+    monkeypatch.setattr(hl, "missing_files", lambda: [])
+    monkeypatch.setattr(hl, "free_vram_mib", lambda: state["free"])
+    monkeypatch.setattr(hl.client, "upload_reference_image", lambda p: "first.png")
+    video_dir = tmp_path / "comfy" / "output" / "video"
+    video_dir.mkdir(parents=True)
+    (video_dir / "h3local_t_00001_.mp4").write_bytes(b"mp4")
+    monkeypatch.setattr(hl.client, "COMFYUI_DIR", str(tmp_path / "comfy"))
+
+    def unload():
+        state["unloaded"] += 1
+        state["free"] = 15000
+
+    meta = hl.generate(
+        png,
+        "She smiles at the viewer.",
+        tag="t",
+        seed=1,
+        out_dir=str(tmp_path / "o"),
+        guard=FakeGuard([]),
+        post=lambda *a, **k: FakeResp({"prompt_id": "abc"}),
+        get=lambda *a, **k: FakeResp({"abc": {"status": {"completed": True, "status_str": "success", "messages": []}}}),
+        server_up=lambda: True,
+        free_vram=unload,
+        unload_wait=0,
+    )
+    assert state["unloaded"] == 1 and meta["frames"] == 124
+
+
+def test_it_still_refuses_when_unloading_does_not_free_enough(png, tmp_path, monkeypatch):
+    asked = []
+    monkeypatch.setattr(hl, "missing_files", lambda: [])
+    monkeypatch.setattr(hl, "free_vram_mib", lambda: 6000)
+    with pytest.raises(gc.UsageError, match="MiB"):
+        hl.generate(
+            png,
+            "She smiles.",
+            guard=FakeGuard([]),
+            server_up=lambda: True,
+            out_dir=str(tmp_path),
+            free_vram=lambda: asked.append(1),
+            unload_wait=0,
+        )
+    assert asked == [1]
+
+
+def test_the_second_filter_refuses_with_a_readable_usage_error_not_a_bare_input_error(tmp_path):
+    # 2026-10-18: the GUI showed a bare "Error" for "全裸" / "nude" because h3_colab.InputError is not a UsageError
+    for prompt, term in (
+        ("一位全裸的女子在海邊", "全裸"),
+        ("a nude woman on a beach", "nude"),
+        ("two schoolgirls", "schoolgirls"),
+    ):
+        with pytest.raises(gc.UsageError) as err:
+            hl.screen(prompt)
+        assert term in str(err.value) and "沒有送出" in str(err.value)
+    with pytest.raises(gc.UsageError, match="H3 不收"):
+        hl.assemble_prompt("f.png", "x" * 5000)
+
+
+def test_the_steps_are_written_to_the_log_the_gui_shows(tmp_path, monkeypatch):
+    raw = tmp_path / "raw.png"
+    raw.write_bytes(b"x")
+    monkeypatch.setattr(hl, "machine_status", lambda: "GPU 40°C")
+    lines = []
+    hl.generate_still(
+        "她笑著看向鏡頭", "z_image", seed=5, out_dir=str(tmp_path / "s"), guard=FakeGuard([]),
+        submit=lambda **kw: str(raw), server_up=lambda: True, translate=lambda t: "She smiles at the camera",
+        log=lines.append,
+    )  # fmt: skip
+    text = "\n".join(lines)
+    for expected in ("內容檢查：通過", "翻譯成英文", "She smiles at the camera", "等 GPU 降溫", "GPU 40°C", "完成"):
+        assert expected in text, expected

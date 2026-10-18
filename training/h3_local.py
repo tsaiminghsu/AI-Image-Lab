@@ -190,16 +190,31 @@ def build_graph(
 def screen(text):
     """h3_colab.screen_prompt plus the plural of each blocked English term: the skill's list has "schoolgirl" but a text
     that says "two schoolgirls" passed it (found 2026-10-17 while adding multi-person pictures, where plurals are
-    normal). The skill's own list is left alone; this only adds the plurals for the texts typed into this tool."""
-    h3.screen_prompt(text)
+    normal). The skill's own list is left alone; this only adds the plurals for the texts typed into this tool.
+    A refusal is raised as gc.UsageError so the GUI shows the reason: h3_colab.InputError is not one, and the GUI's
+    handler wrapper only turns UsageError into a readable message (2026-10-18: the picture section showed a bare
+    "Error" for "全裸" / "nude")."""
+    try:
+        h3.screen_prompt(text)
+    except h3.InputError as exc:
+        raise gc.UsageError(SCREEN_MESSAGE.format(found=_terms_in(str(exc)))) from None
     low = (text or "").lower()
     hit = sorted(
         {t for t in h3.BLOCKED_TERMS if t.isascii() and re.search(rf"(?<![a-z]){re.escape(t)}s(?![a-z])", low)}
     )
     if hit:
-        raise h3.InputError(
-            f"The prompt contains terms this project never sends to H3 (plural forms): {hit}", code="PROMPT_REJECTED"
-        )
+        raise gc.UsageError(SCREEN_MESSAGE.format(found="、".join(t + "s" for t in hit)))
+
+
+SCREEN_MESSAGE = (
+    "這段文字含有 H3／本專案不送出的字眼（{found}），沒有送出。"
+    "這是第二層過濾（h3_colab.screen_prompt：未成年與露骨字眼），跟 content_gate 是分開的。"
+)
+
+
+def _terms_in(message):
+    m = re.search(r"\[(.*)\]", message)
+    return m.group(1).replace("'", "") if m else message
 
 
 def assemble_prompt(image, description, soundscape="", static=False):
@@ -210,7 +225,10 @@ def assemble_prompt(image, description, soundscape="", static=False):
         soundscape=soundscape,
         constraints=("static-subject",) if static else (),
     )
-    return h3.build_prompt(spec)
+    try:
+        return h3.build_prompt(spec)
+    except h3.InputError as exc:
+        raise gc.UsageError(f"H3 不收這個描述：{exc}") from None
 
 
 def check_seconds(seconds, allow_long=False):
@@ -224,6 +242,59 @@ def check_seconds(seconds, allow_long=False):
             "要試就加 --allow-long（建議同時降解析度，例如 --width 512 --height 896 --megapixels 0.46）"
         )
     return h3.frames_for(seconds)
+
+
+STATUS_EVERY_SECONDS = 10
+
+
+def machine_status(run=subprocess.run):
+    """One line for the GUI's log: GPU temperature and memory, and the system RAM still free."""
+    parts = []
+    try:
+        out = run(["nvidia-smi", "--query-gpu=temperature.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+                  capture_output=True, text=True, timeout=15).stdout  # fmt: skip
+        temp, used, total = (float(x) for x in out.strip().splitlines()[0].split(","))
+        parts.append(f"GPU {temp:.0f}°C｜顯存 {used / 1024:.1f}/{total / 1024:.1f} GB")
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        parts.append("GPU 讀不到")
+    try:
+        import psutil
+
+        parts.append(f"RAM 可用 {psutil.virtual_memory().available / 2**30:.1f} GB")
+    except ImportError:
+        pass
+    return "｜".join(parts)
+
+
+def _guard_call(fn, log):
+    """gpu_guard's helpers take log=; a test double may not."""
+    try:
+        return fn(log=log)
+    except TypeError:
+        return fn()
+
+
+class _Heartbeat:
+    """Logs machine_status() every STATUS_EVERY_SECONDS while a blocking call (a picture render) runs."""
+
+    def __init__(self, log, label, every=STATUS_EVERY_SECONDS):
+        import threading
+
+        self.log, self.label, self.every = log, label, every
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        t0 = time.time()
+        while not self.stop.wait(self.every):
+            self.log(f"{self.label} {round(time.time() - t0)} 秒｜{machine_status()}")
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
 
 
 def free_vram_mib(run=subprocess.run):
@@ -260,25 +331,33 @@ def generate(
     start=None,
     server_up=None,
     translate=None,
+    free_vram=None,
+    unload_wait=10,
+    log=print,
 ):
     """Make one clip. `translate` (Chinese -> English) is applied to the description and soundscape when they contain
     Chinese outside the <d>...</d> line; without it, Chinese there is refused instead of being sent to H3 as is. Everything that can be checked without the GPU is checked first (image, prompt screen, length,
     model files); then Ollama is unloaded, the card is cooled and ComfyUI is started if it is not already running."""
     start = start or client.start_server
     server_up = server_up or client.is_server_running
+    free_vram = free_vram or client.free_vram
     if not os.path.isfile(image):
         raise gc.UsageError(f"找不到首幀：{image}")
     frames = check_seconds(seconds, allow_long)
+    log(f"首幀：{os.path.basename(image)}｜{seconds:g} 秒 = {frames} 幀｜{width}×{height}")
     content_gate.check(description, soundscape)  # explicit / minor wording: refused before anything else, no bypass
     original_description = description
     for text in (description, soundscape):
         screen(LINE_SPAN.sub("", text or ""))  # also catches the Chinese blocked terms before translating
+    log("內容檢查：通過")
     if has_cjk(LINE_SPAN.sub("", description)) or has_cjk(soundscape):
         if translate is None:
             raise gc.UsageError("描述含中文（<d>…</d> 裡的台詞除外）：要先翻成英文，H3 的描述只收英文")
+        log("描述含中文：翻譯成英文中（台詞不翻）…")
         description = translate_outside_lines(description, translate)
         soundscape = translate_outside_lines(soundscape, translate) if soundscape else soundscape
         content_gate.check(description, soundscape)  # and again on what the translator returned
+        log(f"英文描述：{description}")
     prompt = assemble_prompt(image, description, soundscape, static)  # raises PROMPT_REJECTED on a blocked term
     missing = missing_files()
     if missing:
@@ -287,13 +366,28 @@ def generate(
     tag = tag or f"{os.path.splitext(os.path.basename(image))[0]}_{seed}"
     if guard is None:
         import gpu_guard as guard
-    guard.before_image()
-    guard.wait_until_cool()
+    log("卸載聊天模型（Ollama）、等 GPU 降溫…")
+    _guard_call(guard.before_image, log)
+    _guard_call(guard.wait_until_cool, log)
+    log(f"目前狀態：{machine_status()}")
     started = None
     if not server_up():
+        log("ComfyUI 沒在跑：啟動中（第一次約 30 秒）…")
         started = start()
     try:
         free = free_vram_mib()
+        if free is not None and free < MIN_FREE_VRAM_MIB:
+            # The picture section leaves its model (Z-Image, ~13 GB) in ComfyUI's memory: measured 3.2 GB free after
+            # one picture, 15 GB after ComfyUI was asked to unload. So ask it to unload first, then look again.
+            log(f"顯存只剩 {free} MiB（要 {MIN_FREE_VRAM_MIB}）：請 ComfyUI 卸載上一個模型…")
+            free_vram()
+            deadline = time.time() + unload_wait
+            while True:
+                free = free_vram_mib()
+                if free is None or free >= MIN_FREE_VRAM_MIB or time.time() >= deadline:
+                    break
+                time.sleep(1)
+            log(f"卸載後顯存可用 {free} MiB")
         if free is not None and free < MIN_FREE_VRAM_MIB:
             raise gc.UsageError(
                 f"顯示卡只剩 {free} MiB 可用（要 {MIN_FREE_VRAM_MIB}）。先關掉佔顯存的程式（聊天模型、別的 ComfyUI 工作）"
@@ -309,25 +403,30 @@ def generate(
         r = post(base + "/prompt", json={"prompt": graph, "client_id": str(uuid.uuid4())}, timeout=60)
         r.raise_for_status()
         pid = r.json()["prompt_id"]
-        t0 = time.time()
+        log(f"已送出給 ComfyUI（seed {seed}）。載入模型時 RAM 會先吃滿再降下來，5 秒影片本機約 8～10 分鐘")
+        t0 = last = time.time()
         while True:
             h = get(f"{base}/history/{pid}", timeout=30).json()
             if pid in h and h[pid].get("status", {}).get("completed") is not None:
                 break
             if time.time() - t0 > TIMEOUT_SECONDS:
-                raise RuntimeError(f"H3 沒有在 {TIMEOUT_SECONDS} 秒內完成")
+                raise gc.UsageError(f"H3 沒有在 {TIMEOUT_SECONDS} 秒內完成（ComfyUI 的終端機會有原因）")
+            if time.time() - last >= STATUS_EVERY_SECONDS:
+                last = time.time()
+                log(f"生成中 {round(last - t0)} 秒｜{machine_status()}")
             time.sleep(POLL_SECONDS)
         status = h[pid]["status"]
         if status.get("status_str") != "success":
-            raise RuntimeError(f"H3 失敗：{json.dumps(status.get('messages', [])[-2:], ensure_ascii=False)[:800]}")
+            raise gc.UsageError(f"H3 失敗：{json.dumps(status.get('messages', [])[-2:], ensure_ascii=False)[:800]}")
         seconds_taken = round(time.time() - t0)
         found = sorted(
             glob.glob(os.path.join(client.COMFYUI_DIR, "output", "video", f"h3local_{tag}_*.mp4")), key=os.path.getmtime
         )
         if not found:
-            raise RuntimeError("ComfyUI 說完成了，但找不到輸出的 mp4")
+            raise gc.UsageError("ComfyUI 說完成了，但找不到輸出的 mp4")
         dest = os.path.join(out_dir, f"h3_local_{tag}.mp4")
         shutil.copy2(found[-1], dest)
+        log(f"完成：{seconds_taken} 秒 → {dest}")
         meta = {
             "tag": tag,
             "image": os.path.abspath(image),
@@ -385,6 +484,7 @@ def generate_still(
     translate=None,
     people=1,
     negative="",
+    log=print,
 ):
     """One 720x1280 picture for the first frame, from text, on the local card. Same assembly as every other still of
     this project (age-safety negatives and the cfg floor come from _build_prompt_and_negative / the client), and the
@@ -401,13 +501,17 @@ def generate_still(
     prompt = (prompt or "").strip()
     if not prompt:
         raise gc.UsageError("請輸入圖片的描述（英文最準；人物要是成年人）")
+    log(f"模型：{STILL_MODELS[model]['label']}｜人數：{PEOPLE_CHOICES[people][0]}")
     content_gate.check(prompt)  # refused before any translation, unloading or GPU work, in Chinese and in English
     screen(prompt)  # the Chinese blocked terms are caught here, before any translation
+    log("內容檢查：通過")
     original_prompt = prompt
     if has_cjk(prompt):
         if translate is None:
             raise gc.UsageError("描述含中文：要先翻成英文（GUI 會自動翻譯）")
+        log("描述含中文：翻譯成英文中…")
         prompt = adultize(translate(prompt).strip())
+        log(f"英文描述：{prompt}")
         content_gate.check(prompt)  # the translator's English is checked again
         screen(prompt)  # and the English ones after it
     # The user's own negative terms (Chinese or English). They are appended AFTER the fixed safety negatives, which
@@ -418,6 +522,8 @@ def generate_still(
         if translate is None:
             raise gc.UsageError("負面詞含中文：要先翻成英文（GUI 會自動翻譯）")
         negative = translate(negative).strip()
+        log(f"負面詞（英文）：{negative}")
+    extra_negative = negative
     qwen = model == "qwen_image_2_1"
     server_up = server_up or client.is_server_running
     start = start or client.start_server
@@ -446,32 +552,39 @@ def generate_still(
     seed = int(seed) if seed is not None else int(time.time()) % 1_000_000
     if guard is None:
         import gpu_guard as guard
-    guard.before_image()
-    guard.wait_until_cool()
+    log("卸載聊天模型（Ollama）、等 GPU 降溫…")
+    _guard_call(guard.before_image, log)
+    _guard_call(guard.wait_until_cool, log)
+    log(f"目前狀態：{machine_status()}")
     started = None
     if not server_up():
+        log("ComfyUI 沒在跑：啟動中（第一次約 30 秒）…")
         started = start()
     try:
         tag = f"{model}_{seed}"
-        raw = submit(
-            prompt=full,
-            negative_prompt=negative,
-            seed=seed,
-            filename_prefix=f"h3still_{tag}",
-            model=model_key,
-            width=bible["canvas"]["width"],
-            height=bible["canvas"]["height"],
-            steps=steps,
-            cfg=cfg,
-        )
+        log(f"生成中（seed {seed}，{steps} 步，cfg {cfg}）。Z-Image 約 30 秒、Qwen 約 2 分鐘；第一次要載入模型會更久")
+        t0 = time.time()
+        with _Heartbeat(log, "生成中"):
+            raw = submit(
+                prompt=full,
+                negative_prompt=negative,
+                seed=seed,
+                filename_prefix=f"h3still_{tag}",
+                model=model_key,
+                width=bible["canvas"]["width"],
+                height=bible["canvas"]["height"],
+                steps=steps,
+                cfg=cfg,
+            )
         os.makedirs(out_dir, exist_ok=True)
         dest = os.path.join(out_dir, f"still_{tag}.png")
         shutil.move(raw, dest)
+        log(f"完成：{round(time.time() - t0)} 秒 → {dest}")
         meta = {
             "output": dest,
             "model": model,
             "people": people,
-            "negative_extra": negative or None,
+            "negative_extra": extra_negative or None,
             "seed": seed,
             "prompt": full,
             "prompt_original": original_prompt if original_prompt != prompt else None,
