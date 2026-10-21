@@ -13,6 +13,7 @@ import contextlib
 import copy
 import json
 import os
+import socket
 import subprocess
 import threading
 import time
@@ -27,7 +28,42 @@ import workflow_contracts
 # (https://<POD_ID>-8188.proxy.runpod.net) - see CLOUD_GPU.md. _submit_and_wait/
 # _download_output read this module global at call time, so nothing else needs
 # to change.
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
+# Windows reserves ranges of ports after some restarts (Hyper-V / WSL / Docker): 8181-8280 on 2026-10-04, 8139-8338 on
+# 2026-10-20. Nothing can bind a reserved port ("PermissionError: [Errno 13]" / WinError 10013), so ComfyUI
+# exited at start and every GUI picture or video job failed with "ComfyUI process exited early". Changing the
+# reservation needs administrator rights, so the default URL now moves to the first usable port instead.
+DEFAULT_COMFYUI_PORTS = (8188, 18188, 18288, 28188)
+
+
+def probe_port(port, host="127.0.0.1"):
+    """'up' when something already listens there (a running ComfyUI), 'free' when it can be bound, 'blocked'
+    otherwise (on Windows: reserved by the system, or taken by a program that does not answer)."""
+    with socket.socket() as sock:
+        sock.settimeout(0.25)
+        if sock.connect_ex((host, port)) == 0:
+            return "up"
+    with socket.socket() as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return "blocked"
+    return "free"
+
+
+def default_comfyui_url(probe=probe_port, env=None):
+    """COMFYUI_URL when set; else the first of DEFAULT_COMFYUI_PORTS that is up or free. Every process (the GUI, the
+    CLI, a scratch script) probes in the same order, so they agree on the port as long as one of them keeps its
+    ComfyUI running there. Falls back to 8188 when nothing is usable, so the error still names the usual port."""
+    env = os.environ if env is None else env
+    if env.get("COMFYUI_URL"):
+        return env["COMFYUI_URL"]
+    for port in DEFAULT_COMFYUI_PORTS:
+        if probe(port) in ("up", "free"):
+            return f"http://127.0.0.1:{port}"
+    return f"http://127.0.0.1:{DEFAULT_COMFYUI_PORTS[0]}"
+
+
+COMFYUI_URL = default_comfyui_url()
 COMFYUI_DIR = os.path.join(os.path.dirname(__file__), "..", "ComfyUI")
 WORKFLOW_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template.json")
 WORKFLOW_TEMPLATE_HQ_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_hq.json")
