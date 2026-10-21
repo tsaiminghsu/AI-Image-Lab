@@ -76,6 +76,7 @@ WORKFLOW_TEMPLATE_MEDIAPIPE_FACEDETAILER_PATH = os.path.join(os.path.dirname(__f
 WORKFLOW_TEMPLATE_ANIMATEDIFF_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_animatediff_facedetailer.json")
 WORKFLOW_TEMPLATE_IMG2IMG_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2img.json")
 WORKFLOW_TEMPLATE_TXT2IMG_ZIMAGE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_txt2img_zimage.json")
+WORKFLOW_TEMPLATE_IMG2IMG_ZIMAGE_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_img2img_zimage.json")
 WORKFLOW_TEMPLATE_WAN_I2V_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_wan_i2v.json")
 WORKFLOW_TEMPLATE_RIFE_INTERP_PATH = os.path.join(os.path.dirname(__file__), "workflow_template_rife_interp.json")
 
@@ -1541,6 +1542,72 @@ def build_zimage_txt2img_workflow(
     wf["3"]["inputs"]["scheduler"] = ZIMAGE_SCHEDULER
     wf["9"]["inputs"]["filename_prefix"] = filename_prefix
     return wf
+
+
+ZIMAGE_REFINE_DENOISE = 0.3  # texture pass; measured 2026-10-21: face similarity to the Pony picture 0.62 at 0.3, 0.48 at 0.4, 0.38 at 0.5
+
+
+def build_zimage_img2img_workflow(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    files: dict,
+    init_image: str,
+    width: int,
+    height: int,
+    denoise: float = ZIMAGE_REFINE_DENOISE,
+    steps: int = ZIMAGE_STEPS,
+    cfg: float = ZIMAGE_CFG,
+) -> dict:
+    """Z-Image Turbo re-rendering an existing picture (`init_image` is a name ComfyUI's LoadImage can see). The
+    picture is scaled to width x height (rounded to multiples of 16) first. cfg keeps the same floor as txt2img so
+    the negative prompt - and the age-safety terms in it - is never skipped."""
+    wf = copy.deepcopy(_load_template(WORKFLOW_TEMPLATE_IMG2IMG_ZIMAGE_PATH))
+    wf["10"]["inputs"]["unet_name"] = files["unet"]
+    wf["11"]["inputs"]["clip_name"] = files["text_encoder"]
+    wf["12"]["inputs"]["vae_name"] = files["vae"]
+    wf["13"]["inputs"]["shift"] = ZIMAGE_SHIFT
+    wf["6"]["inputs"]["text"] = prompt
+    wf["7"]["inputs"]["text"] = negative_prompt
+    wf["20"]["inputs"]["image"] = init_image
+    wf["22"]["inputs"]["width"] = _round16(width)
+    wf["22"]["inputs"]["height"] = _round16(height)
+    wf["3"]["inputs"]["seed"] = seed
+    wf["3"]["inputs"]["steps"] = steps
+    wf["3"]["inputs"]["cfg"] = max(cfg, ZIMAGE_MIN_CFG)
+    wf["3"]["inputs"]["sampler_name"] = ZIMAGE_SAMPLER
+    wf["3"]["inputs"]["scheduler"] = ZIMAGE_SCHEDULER
+    wf["3"]["inputs"]["denoise"] = min(max(float(denoise), 0.05), 1.0)
+    wf["9"]["inputs"]["filename_prefix"] = filename_prefix
+    return wf
+
+
+def submit_img2img_refine_zimage(
+    init_image_path: str,
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    filename_prefix: str,
+    model: str = "z_image_turbo",
+    denoise: float = ZIMAGE_REFINE_DENOISE,
+    steps: int = ZIMAGE_STEPS,
+    cfg: float = ZIMAGE_CFG,
+) -> str:
+    """Re-render the picture at `init_image_path` with Z-Image Turbo at a low denoise. Keeps its size."""
+    from PIL import Image
+
+    missing = zimage_missing_files(model)
+    if missing:
+        raise RuntimeError(f"Z-Image model files not found by ComfyUI: {', '.join(missing)} - see README "
+                           "'Z-Image Turbo' for the download commands")
+    with Image.open(init_image_path) as im:
+        width, height = im.size
+    name = upload_reference_image(init_image_path)
+    wf = build_zimage_img2img_workflow(prompt, negative_prompt, seed, filename_prefix, ZIMAGE_MODELS[model],
+                                       init_image=name, width=width, height=height, denoise=denoise,
+                                       steps=steps, cfg=cfg)
+    return _submit_and_wait(wf, timeout_seconds=POLL_TIMEOUT_SECONDS_ZIMAGE)
 
 
 # --- Qwen-Image 2.1 ----------------------------------------------------------------------------

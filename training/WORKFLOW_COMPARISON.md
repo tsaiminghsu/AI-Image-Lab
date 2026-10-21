@@ -18,6 +18,7 @@
 | `_img2img` | 圖生圖（低 denoise）＋FaceID | 12 | SDXL | PNG |
 | `_txt2img_sd15` | SD1.5 純文字生圖 | 7 | SD1.5 | PNG |
 | `_txt2img_zimage` | Z-Image Turbo 純文字生圖 | 10 | Z-Image（Lumina 系，AuraFlow 取樣） | PNG |
+| `_img2img_zimage` | Z-Image Turbo 重畫既有圖片（Pony 底圖 → 質感） | 12 | Z-Image（Lumina 系，AuraFlow 取樣） | PNG |
 | `_img2vid` | SVD 圖生影片 | 7 | SVD | WEBM (vp9) |
 | `_animatediff_facedetailer` | AnimateDiff 影片＋FaceID＋逐幀精修＋放大 | 24 | SD1.5 | MP4 (h264) |
 | `_wan_i2v` | Wan 2.2 圖生影片 | 12 | Wan 2.2 | MP4 (h264) |
@@ -38,6 +39,7 @@
 | `_img2img` | ✅ | — | — | — | ✅ | — | 來源圖＋臉參考圖 |
 | `_txt2img_sd15` | — | — | — | — | — | — | — |
 | `_txt2img_zimage` | — | — | — | — | — | — | — |
+| `_img2img_zimage` | — | — | — | — | — | — | 來源圖 |
 
 「照片風格 LoRA」都是 `sdxl_photorealistic_slider_v1-0`。
 
@@ -50,6 +52,7 @@
 | `_img2img` | juggernaut_xl_v9_photo | 取自輸入圖 | 30 | 6.0 | dpmpp_2m / karras | 0.3 |
 | `_txt2img_sd15` | `REPLACE_CHECKPOINT` | 512×768 | 30 | 7.0 | dpmpp_2m / karras | 1.0 |
 | `_txt2img_zimage` | `REPLACE_UNET`（另有 CLIPLoader、VAELoader） | 1024×1024 | 8 | 2.0 | res_multistep / simple | 1.0 |
+| `_img2img_zimage` | 同上 | 取自輸入圖（對齊 16） | 8 | 2.0 | res_multistep / simple | 0.4 |
 
 - 照片風格 LoRA 在 SDXL 基本流程的強度是 2.5（model、clip 都是），在 `_hq` 是 0.0。
 - Z-Image 模板沒有負面詞以外的身分／姿勢節點，對應 CLAUDE.md「只支援純文字生圖」。
@@ -96,6 +99,7 @@
 | `_hq`（`submit_generation_hq`） | 第一階段尺寸另算（見 6.2）、角色 LoRA 強度 0.8、放大模型 `4x-UltraSharp`、各階段 seed/cfg/sampler | **依參數移除** LoRA／FaceID／ControlNet／放大／精修（見 6.2） | 900 秒 |
 | `_txt2img_sd15` | checkpoint 必填、尺寸預設 512×768、cfg 7.0 | 無 | 900 秒 |
 | `_txt2img_zimage` | UNET／文字編碼器／VAE 三個檔名、shift 3.0、尺寸對齊 16、cfg 取 max(cfg, 1.5)；sampler 固定 res_multistep / simple | 無 | 1200 秒 |
+| `_img2img_zimage`（`submit_img2img_refine_zimage`） | 同上，另加來源圖（先縮放到 16 的倍數再用 Z-Image 的 VAE 編碼）、denoise 0.05～1.0（預設 0.4） | 無 | 1200 秒 |
 | `_img2vid`（SVD） | 512×512、14 幀、6 fps、motion_bucket_id 15、30 步、cfg 2.5、euler / karras；`min_cfg` 1.0 | 無 | 1800 秒 |
 | `_animatediff_facedetailer` | 見 6.3 | 見 6.3 | 2400 秒 |
 | `_wan_i2v` | 三個檔名、shift 8.0、尺寸對齊 32（最小 256）、幀數對齊 4n+1、1280×704、121 幀、24 fps、20 步、cfg 5.0、uni_pc / simple | 無 | 2400 秒 |

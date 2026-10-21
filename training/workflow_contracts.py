@@ -156,6 +156,11 @@ CONTRACTS: dict[str, dict[str, str]] = {
     "workflow_template_txt2img_zimage.json": {
         **_ZIMAGE_LOADERS, **_PROMPTS, "5": "EmptySD3LatentImage", **_SAMPLE_SAVE,
     },
+    # Z-Image re-render of an existing picture (the Pony -> Z-Image texture pass): the init image is scaled to a
+    # multiple of 16, encoded with Z-Image's own VAE, and sampled at a low denoise.
+    "workflow_template_img2img_zimage.json": {
+        **_ZIMAGE_LOADERS, **_PROMPTS, "20": "LoadImage", "22": "ImageScale", "21": "VAEEncode", **_SAMPLE_SAVE,
+    },
     "workflow_template_img2img.json": {
         **_CHECKPOINT, **_STYLE_LORA, **_FACEID, **_PROMPTS, "20": "LoadImage", "21": "VAEEncode", **_SAMPLE_SAVE,
     },

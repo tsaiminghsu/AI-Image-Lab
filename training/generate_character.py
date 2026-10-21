@@ -1206,6 +1206,51 @@ def gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed
     print(f"saved {img_path}", flush=True)
 
 
+PONY_ZIMAGE_DEFAULT_PONY = "cyberrealistic_pony"
+
+
+def gen_pony_zimage(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, filename, ip_adapter_weight,
+                    denoise=None, pony_checkpoint=PONY_ZIMAGE_DEFAULT_PONY, skip_refine=False, refine_prompt=None,
+                    **custom_kwargs):
+    """Two stages in one call: a Pony checkpoint decides who it is and what the pose is (FaceID anchor, ControlNet
+    pose, the character's text - everything gen_custom already does), then Z-Image Turbo re-renders that picture at a
+    low denoise for skin, light and fabric texture. Z-Image has no FaceID or ControlNet, so it only touches texture;
+    the denoise is the dial between "same picture, better material" (low) and "Z-Image's own take" (high).
+
+    Writes <filename>_pony.png (stage 1) and <filename>.png (stage 2) into out_dir and returns both paths. With
+    skip_refine only stage 1 runs (the second path is None). The Z-Image prompt is built by the same
+    _build_prompt_and_negative as every other path, so the age-safety negatives and the cfg floor apply to it too.
+    refine_prompt, when given, is what Z-Image gets instead of `prompt` (the Qwen rewrite writes tags for Pony and
+    sentences for Z-Image); the same safety additions apply to it.
+    The two models do not fit in 16 GB together; ComfyUI swaps them, which is most of the added time."""
+    if pony_checkpoint not in client.PONY_CHECKPOINTS:
+        raise UsageError(f"pony_checkpoint must be one of {sorted(client.PONY_CHECKPOINTS)}, got {pony_checkpoint!r}")
+    refine_denoise = client.ZIMAGE_REFINE_DENOISE if denoise is None else denoise
+    if not 0.05 <= refine_denoise <= 1.0:
+        raise UsageError(f"denoise must be between 0.05 and 1.0, got {refine_denoise}")
+    stem = filename or f"pony_zimage_seed{seed}"
+    gen_custom(prompt, extra_negative, tier, trigger, anchor_path, out_dir, seed, f"{stem}_pony", ip_adapter_weight,
+               checkpoint=pony_checkpoint, **custom_kwargs)
+    base_path = os.path.join(out_dir, f"{stem}_pony.png")
+    if skip_refine:
+        return base_path, None
+    missing = client.zimage_missing_files("z_image_turbo")
+    if missing:
+        raise UsageError(f"Z-Image model files not found by ComfyUI: {', '.join(missing)} - the Pony picture is "
+                         f"saved at {base_path}")
+    refine_prompt, refine_negative = _build_prompt_and_negative(
+        refine_prompt or prompt, extra_negative, tier, trigger, custom_kwargs.get("style_positive"),
+        custom_kwargs.get("style_negative"), "z_image_turbo", character_overrides=custom_kwargs.get("character_overrides"),
+    )
+    raw_path = client.submit_img2img_refine_zimage(
+        base_path, refine_prompt, refine_negative, seed, f"{stem}_zimg", denoise=refine_denoise,
+    )
+    final_path = os.path.join(out_dir, f"{stem}.png")
+    shutil.move(raw_path, final_path)
+    print(f"saved {final_path}", flush=True)
+    return base_path, final_path
+
+
 GIF_WIGGLE_DENOISE = 0.45  # measured, not guessed: diffed actual output pixels at 0.3/0.5/0.7 against
 # the same base frame (juggernaut, 1024x1024). 0.3 -> ~19% of pixels changed >10/255, 0% changed
 # >50/255 - reads as static because it's texture/edge shimmer only (skin/hair/fabric grain jitter),
