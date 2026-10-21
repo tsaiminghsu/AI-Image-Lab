@@ -29,6 +29,8 @@ import requests
 import comfyui_client as client
 import content_gate
 import generate_character as gc
+import output_dir as od
+import run_metrics as rm
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, ".claude", "skills", "minimax-h3-colab", "scripts"))
@@ -77,7 +79,6 @@ def translate_outside_lines(text, translate):
     return "".join(out)
 
 
-OUT_DIR = os.path.join(REPO_ROOT, "outputs", "h3_local")
 UNET = "minimax_h3_fl2va_pruned-Q4_K.gguf"
 LORA = "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors"
 TEXT_ENCODER = "Qwen3-VL-32B-Instruct-MiniMax-H3-L0-49-Q4_K_M.gguf"
@@ -245,6 +246,7 @@ def check_seconds(seconds, allow_long=False):
 
 
 STATUS_EVERY_SECONDS = 10
+METRIC_EVERY_SECONDS = 5  # one row for the run chart (run_metrics); the log line stays every 10 s
 
 
 def machine_status(run=subprocess.run):
@@ -275,26 +277,48 @@ def _guard_call(fn, log):
 
 
 class _Heartbeat:
-    """Logs machine_status() every STATUS_EVERY_SECONDS while a blocking call (a picture render) runs."""
+    """Logs machine_status() every STATUS_EVERY_SECONDS while a blocking call (a picture render) runs, and takes a
+    metrics row every METRIC_EVERY_SECONDS into `recorder` (when given) for the run chart."""
 
-    def __init__(self, log, label, every=STATUS_EVERY_SECONDS):
+    def __init__(self, log, label, every=STATUS_EVERY_SECONDS, recorder=None):
         import threading
 
-        self.log, self.label, self.every = log, label, every
+        self.log, self.label, self.recorder = log, label, recorder
+        self.every = min(every, METRIC_EVERY_SECONDS) if recorder else every
+        self.log_every = max(1, round(every / self.every))
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
-        t0 = time.time()
+        t0, beats = time.time(), 0
         while not self.stop.wait(self.every):
-            self.log(f"{self.label} {round(time.time() - t0)} 秒｜{machine_status()}")
+            beats += 1
+            if self.recorder:
+                self.recorder.add()
+            if beats % self.log_every == 0:
+                self.log(f"{self.label} {round(time.time() - t0)} 秒｜{machine_status()}")
 
     def __enter__(self):
+        if self.recorder:
+            self.recorder.add()
         self.thread.start()
         return self
 
     def __exit__(self, *exc):
         self.stop.set()
+        if self.recorder:
+            self.recorder.add()
+
+
+def _save_metrics(rec, out_dir, stem):
+    """Write the run chart's rows next to the job's record; None when there is nothing worth saving."""
+    if rec is None or len(rec.rows) < 2:
+        return None
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        return rec.save(os.path.join(out_dir, f"{stem}.metrics.json"))
+    except OSError:
+        return None
 
 
 def free_vram_mib(run=subprocess.run):
@@ -322,7 +346,7 @@ def generate(
     height=DEFAULT_SIZE[1],
     megapixels=DEFAULT_MEGAPIXELS,
     tag=None,
-    out_dir=OUT_DIR,
+    out_dir=None,
     allow_long=False,
     keep_comfyui=False,
     guard=None,
@@ -338,6 +362,7 @@ def generate(
     """Make one clip. `translate` (Chinese -> English) is applied to the description and soundscape when they contain
     Chinese outside the <d>...</d> line; without it, Chinese there is refused instead of being sent to H3 as is. Everything that can be checked without the GPU is checked first (image, prompt screen, length,
     model files); then Ollama is unloaded, the card is cooled and ComfyUI is started if it is not already running."""
+    out_dir = out_dir or od.clips_dir()  # fixed for the whole job, even if the setting is changed while it runs
     start = start or client.start_server
     server_up = server_up or client.is_server_running
     free_vram = free_vram or client.free_vram
@@ -371,6 +396,7 @@ def generate(
     _guard_call(guard.wait_until_cool, log)
     log(f"目前狀態：{machine_status()}")
     started = None
+    rec = None
     if not server_up():
         log("ComfyUI 沒在跑：啟動中（第一次約 30 秒）…")
         started = start()
@@ -404,7 +430,9 @@ def generate(
         r.raise_for_status()
         pid = r.json()["prompt_id"]
         log(f"已送出給 ComfyUI（seed {seed}）。載入模型時 RAM 會先吃滿再降下來，5 秒影片本機約 8～10 分鐘")
-        t0 = last = time.time()
+        rec = rm.Recorder(f"H3 {tag}")
+        rec.add()
+        t0 = last = last_metric = time.time()
         while True:
             h = get(f"{base}/history/{pid}", timeout=30).json()
             if pid in h and h[pid].get("status", {}).get("completed") is not None:
@@ -414,7 +442,11 @@ def generate(
             if time.time() - last >= STATUS_EVERY_SECONDS:
                 last = time.time()
                 log(f"生成中 {round(last - t0)} 秒｜{machine_status()}")
+            if time.time() - last_metric >= METRIC_EVERY_SECONDS:
+                last_metric = time.time()
+                rec.add()
             time.sleep(POLL_SECONDS)
+        rec.add()
         status = h[pid]["status"]
         if status.get("status_str") != "success":
             raise gc.UsageError(f"H3 失敗：{json.dumps(status.get('messages', [])[-2:], ensure_ascii=False)[:800]}")
@@ -445,11 +477,13 @@ def generate(
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "model": UNET,
             "lora": LORA,
+            "metrics_file": os.path.join(out_dir, f"h3_local_{tag}.metrics.json"),
         }
         with open(os.path.join(out_dir, f"h3_local_{tag}.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=1)
         return meta
     finally:
+        _save_metrics(rec, out_dir, f"h3_local_{tag}")  # also after a failure: that is when the curve helps most
         if started is not None and not keep_comfyui:
             started.terminate()  # we started it, so we free the ~13 GB of VRAM and RAM again
 
@@ -460,7 +494,6 @@ STILL_MODELS = {
     "z_image": {"label": "Z-Image Turbo（可商用，約 30 秒）", "license": None},
     "qwen_image_2_1": {"label": "Qwen-Image 2.1（非商用，只做內部測試，約 2 分鐘）", "license": None},
 }
-STILLS_DIR = os.path.join(OUT_DIR, "stills")
 # How many people are in the picture. 1 keeps the project's solo terms (the promos are "the character alone"); 2 and 3
 # drop them, state the count and keep everyone an adult. The age-safety negatives and the prompt screen apply to all.
 PEOPLE_ALIASES = {"single": 1, "multi": 2}  # the words the description writer uses
@@ -476,7 +509,7 @@ def generate_still(
     model="z_image",
     *,
     seed=None,
-    out_dir=STILLS_DIR,
+    out_dir=None,
     guard=None,
     submit=None,
     server_up=None,
@@ -490,6 +523,7 @@ def generate_still(
     this project (age-safety negatives and the cfg floor come from _build_prompt_and_negative / the client), and the
     text goes through h3_colab.screen_prompt first, because this picture is meant to become an H3 first frame.
     A Qwen picture is written with its non-commercial licence in the record."""
+    out_dir = out_dir or od.stills_dir()
     import asset_library as al
     import concept_stills as cs
 
@@ -557,6 +591,7 @@ def generate_still(
     _guard_call(guard.wait_until_cool, log)
     log(f"目前狀態：{machine_status()}")
     started = None
+    rec = None
     if not server_up():
         log("ComfyUI 沒在跑：啟動中（第一次約 30 秒）…")
         started = start()
@@ -564,7 +599,8 @@ def generate_still(
         tag = f"{model}_{seed}"
         log(f"生成中（seed {seed}，{steps} 步，cfg {cfg}）。Z-Image 約 30 秒、Qwen 約 2 分鐘；第一次要載入模型會更久")
         t0 = time.time()
-        with _Heartbeat(log, "生成中"):
+        rec = rm.Recorder(f"still {tag}")
+        with _Heartbeat(log, "生成中", recorder=rec):
             raw = submit(
                 prompt=full,
                 negative_prompt=negative,
@@ -594,12 +630,14 @@ def generate_still(
             "cfg": cfg,
             "license": client.QWEN_IMAGE21_LICENSE if qwen else None,
             "note": "internal test only, not for ads" if qwen else None,
+            "metrics_file": os.path.join(out_dir, f"still_{tag}.metrics.json"),
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         }
         with open(os.path.join(out_dir, f"still_{tag}.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=1)
         return meta
     finally:
+        _save_metrics(rec, out_dir, f"still_{tag}")
         if started is not None:
             started.terminate()
 
@@ -641,7 +679,7 @@ def main(argv=None):
     p.add_argument("--height", type=int, default=DEFAULT_SIZE[1])
     p.add_argument("--megapixels", type=float, default=DEFAULT_MEGAPIXELS)
     p.add_argument("--tag")
-    p.add_argument("--out-dir", default=OUT_DIR)
+    p.add_argument("--out-dir", default=None, help="default: the folder set in the GUI (outputs/h3_local unless changed)")
     p.add_argument("--keep-comfyui", action="store_true", help="leave ComfyUI running afterwards")
     a = p.parse_args(argv)
     text = a.description

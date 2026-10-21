@@ -22,10 +22,7 @@ import activity_promo as ap
 import concept_cut as cc
 import drama_compose as dc
 import generate_character as gc
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CLIPS_DIR = os.path.join(REPO_ROOT, "outputs", "h3_local")
-CUTS_DIR = os.path.join(CLIPS_DIR, "cuts")
+import output_dir as od  # the output folder is a setting now, read when it is needed
 
 CUT = "硬切"
 TRANSITIONS = {CUT: ap.CUT_SECONDS, "疊化 0.25 秒": 0.25, "疊化 0.5 秒": 0.5}
@@ -39,8 +36,9 @@ _LINE = re.compile(r"<d>\[Chinese\]\s*(.*?)</d>", re.S)
 # ---------------------------------------------------------------- the clips on disk
 
 
-def list_clips(directory=CLIPS_DIR):
+def list_clips(directory=None):
     """Every local H3 clip, newest first: path, file name, seconds (from its record), the spoken line(s)."""
+    directory = directory or od.clips_dir()
     rows = []
     for path in glob.glob(os.path.join(directory, "*.mp4")):
         meta = {}
@@ -123,7 +121,6 @@ def _card_blocks(work, name, lines):
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
 AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
-IMPORTS_DIR = os.path.join(CLIPS_DIR, "imports")  # under outputs/h3_local, which the GUI may serve
 IMAGE_SECONDS = 3.0
 
 
@@ -153,9 +150,10 @@ def _unique(directory, name):
     return os.path.join(directory, candidate)
 
 
-def import_media(paths, directory=IMPORTS_DIR):
+def import_media(paths, directory=None):
     """Copy video / image / audio files into the desk's import folder (so the GUI can show them). A folder imports the
     supported files directly inside it. Returns {"imported": [...], "skipped": [...]}."""
+    directory = directory or od.imports_dir()
     files = []
     for p in paths or []:
         p = str(p).strip().strip('"')
@@ -194,8 +192,9 @@ def video_seconds(path, ffmpeg=None, run=subprocess.run):
     return _LENGTHS[key]
 
 
-def list_media(clips_dir=CLIPS_DIR, imports_dir=IMPORTS_DIR, ffmpeg=None, run=subprocess.run):
+def list_media(clips_dir=None, imports_dir=None, ffmpeg=None, run=subprocess.run):
     """Pictures for the main track: the generated H3 clips plus imported videos and images, newest first."""
+    imports_dir = imports_dir or od.imports_dir()
     rows = [dict(r, kind="video", source="生成") for r in list_clips(clips_dir)]
     if os.path.isdir(imports_dir):
         for f in os.listdir(imports_dir):
@@ -210,7 +209,8 @@ def list_media(clips_dir=CLIPS_DIR, imports_dir=IMPORTS_DIR, ffmpeg=None, run=su
     return sorted(rows, key=lambda r: r["mtime"], reverse=True)
 
 
-def list_audio(imports_dir=IMPORTS_DIR):
+def list_audio(imports_dir=None):
+    imports_dir = imports_dir or od.imports_dir()
     if not os.path.isdir(imports_dir):
         return []
     return sorted((os.path.join(imports_dir, f) for f in os.listdir(imports_dir) if media_kind(f) == "audio"),
@@ -521,7 +521,7 @@ def render(
         return done.stderr or ""
 
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = os.path.abspath(out or os.path.join(CUTS_DIR, f"cut_{stamp}.mp4"))
+    out = os.path.abspath(out or os.path.join(od.cuts_dir(), f"cut_{stamp}.mp4"))
     work = os.path.splitext(out)[0] + "_work"
     os.makedirs(work, exist_ok=True)
     tag = ap.tag_filter(ap._lines(work, "ai_tag", ap.AI_TAG, 30, 60)[0], font) if ai_label else None
@@ -738,11 +738,10 @@ def timeline_seconds(timeline, clip_seconds, title_seconds=0.0, ending_seconds=0
     return round(sum(parts) - sum(overlaps), 2)
 
 
-THUMBS_DIR = os.path.join(CLIPS_DIR, "thumbs")
 
-
-def thumbnail(path, directory=THUMBS_DIR, ffmpeg=None, run=subprocess.run):
+def thumbnail(path, directory=None, ffmpeg=None, run=subprocess.run):
     """A small jpg of the clip at 1 s (or its first frame), cached by file name and modification time."""
+    directory = directory or od.thumbs_dir()
     os.makedirs(directory, exist_ok=True)
     stem = os.path.splitext(os.path.basename(path))[0]
     out = os.path.join(directory, f"{stem}_{int(os.path.getmtime(path))}.jpg")
