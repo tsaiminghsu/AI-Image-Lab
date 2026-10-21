@@ -26,6 +26,11 @@ def build(**kw):
     return client.build_zimage_img2img_workflow(**args)
 
 
+def test_the_default_denoise_is_the_lowest_one_measured():
+    # 2026-10-21, face similarity to the Pony picture: 0.75 at 0.2, 0.62-0.65 at 0.3, 0.48 at 0.4; Z-Image ages faces
+    assert client.ZIMAGE_REFINE_DENOISE == 0.2
+
+
 def test_the_graph_starts_from_the_picture_not_from_an_empty_latent():
     wf = build()
     assert wf["20"]["inputs"]["image"] == "in.png"

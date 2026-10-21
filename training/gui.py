@@ -1934,8 +1934,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         "**分工**：Realistic Pony 決定「長什麼樣」——人是誰（Anchor 鎖臉）、姿勢、構圖；"
                         "Z-Image Turbo 再把那張圖重畫一次，只改「質感」——皮膚紋理、光影、布料。"
                         "兩張都會顯示，方便對照。\n\n"
-                        "**重畫強度**是關鍵：低（0.3）= 同一張圖、材質更好；高（0.5 以上）= 臉和姿勢開始被 Z-Image 改掉。"
-                        "建議同一個 seed 用 0.3 / 0.4 / 0.5 各跑一次再挑。\n\n"
+                        "**重畫強度**是關鍵：預設 0.2（人臉特寫的臉最認得出來）；0.3 質感更明顯但臉會老；0.5 以上臉和姿勢開始被 Z-Image 改掉。全身或場景為主的畫面可以調高。"
+                        "想要更明顯的質感時，同一個 seed 用 0.2 / 0.3 / 0.4 各跑一次再挑。\n\n"
                         "⚠️ 底圖來自 Pony 系模型，授權不能商用，所以成品也不能直接商用。"
                     )
                     with gr.Row():
@@ -1955,8 +1955,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
                             pz_pony = gr.Dropdown(sorted(client.PONY_CHECKPOINTS), value=gc.PONY_ZIMAGE_DEFAULT_PONY,
                                                   label="底圖用的 Pony checkpoint")
                             pz_resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例")
-                            pz_denoise = gr.Slider(0.2, 0.8, value=client.ZIMAGE_REFINE_DENOISE, step=0.05,
-                                                   label="Z-Image 重畫強度（0.2～0.3 臉還認得出來，0.4 以上開始換人）")
+                            pz_denoise = gr.Slider(0.1, 0.8, value=client.ZIMAGE_REFINE_DENOISE, step=0.05,
+                                                   label="Z-Image 重畫強度（0.2 臉最接近底圖，0.3 開始變老，0.4 以上開始換人）")
                             pz_qwen = gr.Checkbox(value=True, label="用 Qwen 改寫（本機 qwen3.5:9b：中文 → Pony 標籤＋Z-Image 句子，兩段各用適合的寫法；"
                                                                     "沒勾就用一般翻譯。需要本機有 Ollama 和 qwen3.5:9b，約多 10-30 秒）")
                             pz_skip = gr.Checkbox(value=False, label="只出 Pony 底圖，不做 Z-Image 重畫（先確認構圖再花時間）")

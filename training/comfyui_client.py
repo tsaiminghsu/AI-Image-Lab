@@ -1544,7 +1544,9 @@ def build_zimage_txt2img_workflow(
     return wf
 
 
-ZIMAGE_REFINE_DENOISE = 0.3  # texture pass; measured 2026-10-21: face similarity to the Pony picture 0.62 at 0.3, 0.48 at 0.4, 0.38 at 0.5
+ZIMAGE_REFINE_DENOISE = 0.2  # texture pass; measured 2026-10-21, face similarity to the Pony picture: 0.75 at 0.2, 0.62-0.65 at 0.3,
+# 0.48 at 0.4, 0.38 at 0.5. Z-Image ages the face even at 0.3, so the default is the lowest tried; raise it for scenes where
+# the face is small.
 
 
 def build_zimage_img2img_workflow(

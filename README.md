@@ -1168,7 +1168,7 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
 #### Pony × Z-Image 整合（「⭐ 常用」→「🧩 Pony × Z-Image 整合」）
 
 - 兩段式：Realistic Pony 決定人是誰、姿勢、構圖（可選 Anchor 與骨架姿勢），Z-Image Turbo 再把那張圖重畫一次，只改皮膚、光影、布料的質感。
-- 「Z-Image 重畫強度」是關鍵：預設 0.3（臉部相似度約 0.62～0.65），0.2 更接近底圖（約 0.75），0.4 以上開始換人；Z-Image 的臉會比 Pony 底圖老、皮膚較粗，人臉特寫要先看結果。可勾「只出 Pony 底圖」先確認構圖再重畫。
+- 「Z-Image 重畫強度」是關鍵：預設 0.2（臉部相似度約 0.75，人臉特寫最認得出來），0.3 質感更明顯但臉會變老（約 0.62～0.65），0.4 以上開始換人；Z-Image 的臉會比 Pony 底圖老、皮膚較粗，人臉特寫要先看結果。可勾「只出 Pony 底圖」先確認構圖再重畫。
 - 需要先裝好 Z-Image 模型檔（見「Z-Image Turbo（選用安裝）」）。底圖來自 Pony 系模型，成品不能直接商用。
 
 #### 圖片選擇生圖（點縮圖組 prompt，不用自己打字）
