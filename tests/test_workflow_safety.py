@@ -49,7 +49,10 @@ BUILDERS = {
 
 
 def _build(monkeypatch, captured_submit, key):
+    # Both file checks ask the running ComfyUI which model files it has; without these stubs the result depended on
+    # whatever server was up on this machine (the Wan check failed once the port fallback found a live one).
     monkeypatch.setattr(client, "zimage_missing_files", lambda model="z_image_turbo": [])
+    monkeypatch.setattr(client, "wan_missing_files", lambda model=client.WAN_DEFAULT_MODEL: [])
     monkeypatch.setattr(client, "has_node", lambda name: True)
     fn_name, extra = BUILDERS[key]
     kwargs = {"seed": 1, "filename_prefix": "stem", **extra}
