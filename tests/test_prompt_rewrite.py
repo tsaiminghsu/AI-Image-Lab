@@ -60,6 +60,7 @@ def test_both_prompts_come_back_and_the_model_is_unloaded_after_the_call():
     assert pony.startswith("1girl") and zimage.startswith("A woman")
     body = post.bodies[0]
     assert body["keep_alive"] == 0 and body["format"] == "json" and body["think"] is False
+    assert body["options"]["temperature"] == 0 and body["options"]["seed"] == 0  # same idea -> same English
 
 
 def test_the_system_prompt_pins_adults_and_leaves_quality_tags_to_the_code():

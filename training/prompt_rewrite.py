@@ -64,7 +64,9 @@ def _ask(idea, model, base, post):
         "think": False,
         "format": "json",
         "keep_alive": 0,
-        "options": {"temperature": 0.4, "num_ctx": 4096},
+        # temperature 0 + a fixed seed: the same Chinese idea gives the same English, so a seed means the same picture and
+        # a strength or denoise can be compared without the rewrite changing under it (at 0.4 two runs of one idea differed)
+        "options": {"temperature": 0, "seed": 0, "num_ctx": 4096},
         "messages": [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": f"Idea (Chinese): {idea}"},
