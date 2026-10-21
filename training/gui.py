@@ -21,6 +21,7 @@ import threading
 import time
 
 import gradio as gr
+import requests
 
 import capability_catalog as catalog
 import caption_image
@@ -35,6 +36,7 @@ import pose_skeletons
 import resource_policy as rp
 import scene_library
 import talking_head
+import prompt_rewrite
 import translate_prompt
 
 _comfyui_process = None  # only set when this GUI auto-started ComfyUI itself
@@ -655,6 +657,89 @@ def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, s
     return os.path.join(out_dir, f"{stem}.png")
 
 
+def _free_comfyui_models():
+    """Ask a running ComfyUI to drop its cached models, so a ~6 GB Ollama model fits next to nothing. Skipped while
+    ComfyUI has queued work (it is not ours to free); the GUI's "gpu" concurrency id means that is rare."""
+    if not client.is_server_running():
+        return
+    try:
+        running, pending = client._queue_ids()
+        if running or pending:
+            return
+        requests.post(f"{client.COMFYUI_URL}/free", json={"unload_models": True, "free_memory": True}, timeout=30)
+    except (requests.RequestException, ValueError):
+        pass
+
+
+@_show_usage_errors
+def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
+                         pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
+                         use_qwen, force_local, progress=gr.Progress()):
+    """The 🧩 integration tab: Pony decides who and what pose, Z-Image re-renders the material. Returns
+    (Pony picture, final picture); the first stays visible so the two can be compared."""
+    if not prompt.strip():
+        raise gr.Error("請輸入 prompt")
+    # CLIP (Pony) largely ignores Chinese, so Chinese input is translated here instead of making the user press a
+    # button first; already-English text is left untouched. The text actually sent is shown back in the third output.
+    refine_prompt = None
+    if use_qwen and not prompt.isascii():
+        # Qwen writes Pony tags and Z-Image sentences separately. It runs before ComfyUI loads anything and unloads
+        # itself (keep_alive 0); a model ComfyUI still holds from the last picture is released first so both fit.
+        progress(None, desc="Qwen 改寫提示詞中…")
+        _free_comfyui_models()
+        try:
+            prompt, refine_prompt = prompt_rewrite.rewrite(prompt)
+        except (requests.RequestException, KeyError, ValueError) as exc:
+            raise gr.Error(f"Qwen 改寫失敗（{exc}）——取消勾選「用 Qwen 改寫」就會改用一般翻譯") from exc
+    else:
+        prompt = _picker_extra_in_english(prompt)
+    negative_prompt = _picker_extra_in_english(negative_prompt)
+    trigger = None if character == NO_CHARACTER else character
+    anchor_path = custom_anchor or anchor
+    if trigger and not anchor_path:
+        raise gr.Error("選了角色就要選一張 anchor 圖，或自行上傳一張")
+    pose_name = None if (not pose_library or pose_library == POSE_NONE) else pose_library
+    if resolution == RESOLUTION_SQUARE:
+        width, height = client.WIDTH, client.HEIGHT
+    elif resolution == RESOLUTION_PORTRAIT:
+        width, height = gc.FULL_BODY_RESOLUTION
+    elif resolution == RESOLUTION_LANDSCAPE:
+        height, width = gc.FULL_BODY_RESOLUTION
+    else:
+        width, height = None, None
+    if pose_name and width:
+        loss = pose_skeletons.crop_fraction(pose_name, width, height)
+        if loss > pose_skeletons.CANVAS_CROP_TOLERANCE:
+            sw, sh = pose_skeletons.canvas_for(pose_name)
+            raise gr.Error(f"骨架庫姿勢「{pose_name}」是 {sw}x{sh} 直式，這個畫布比例會把骨架裁掉 {loss * 100:.0f}%。"
+                           "畫布比例請改成「自動」或「直向」。")
+    decision = _route(rp.image_kind(pony_checkpoint, True, uses_pose=bool(pose_name)), force_local,
+                      progress=progress, interactive=True)
+    _ensure_comfyui()
+    if not skip_refine:
+        missing = client.zimage_missing_files("z_image_turbo")
+        if missing:
+            raise gr.Error(f"找不到 Z-Image 模型檔：{', '.join(missing)}——下載指令見 README「Z-Image Turbo（選用安裝）」")
+        gr.Info("兩段式：先用 Pony 生底圖，再換 Z-Image 重畫質感；兩個模型要輪流載入，比單段多約 30-60 秒")
+    out_dir = os.path.join(os.path.dirname(__file__), "reference_candidates")
+    stem = f"gui_ponyz_seed{int(seed)}"
+    plan = _Plan(decision, mode=catalog.MODE_TXT2IMG_HQ, media_kind="image",
+                 catalog_id=f"{pony_checkpoint}:pony_zimage", params=dict(prompt=prompt, seed=int(seed)),
+                 output_path=os.path.join(out_dir, f"{stem}.png"))
+    with client.progress_reporter(_step_reporter(progress)):
+        paths = _run_or_defer(gc.gen_pony_zimage, plan,
+                              prompt=prompt, extra_negative=negative_prompt, tier=tier, trigger=trigger,
+                              anchor_path=anchor_path, out_dir=out_dir, seed=int(seed), filename=stem,
+                              ip_adapter_weight=ip_adapter_weight, denoise=float(denoise),
+                              pony_checkpoint=pony_checkpoint, skip_refine=bool(skip_refine), refine_prompt=refine_prompt,
+                              pose_name=pose_name,
+                              controlnet_strength=controlnet_strength if pose_name else None,
+                              width=width, height=height, use_facedetailer=bool(anchor_path), hq=True)
+    base_path, final_path = paths
+    sent = prompt if not refine_prompt else f"Pony：{prompt}\nZ-Image：{refine_prompt}"
+    return base_path, final_path, sent
+
+
 def select_picker_character(evt: gr.SelectData):
     return picker_characters()[evt.index][0]
 
@@ -836,6 +921,7 @@ H3_STILL_MODELS = _h3_local_choices.STILL_MODELS
 H3_PEOPLE = _h3_local_choices.PEOPLE_CHOICES
 H3_DESK_TRANSITIONS = ["硬切", "疊化 0.25 秒", "疊化 0.5 秒"]  # director.TRANSITIONS, in menu order
 import director as _director_names  # noqa: E402  (light: data and pure functions)
+import output_dir as od  # noqa: E402  (where this tab writes; a setting, read when needed)
 
 H3_DESK_TEMPLATES = list(_director_names.TEMPLATES)
 H3_ATTEST_LABEL = "我確認這張首幀是本專案生成的虛構成人角色（或沒有人物的圖），不是真人照片"
@@ -1039,7 +1125,7 @@ def desk_library():
 def _overlay_choices():
     import director
 
-    stills = sorted(glob.glob(os.path.join(director.CLIPS_DIR, "stills", "*.png")), key=os.path.getmtime, reverse=True)
+    stills = sorted(glob.glob(os.path.join(od.stills_dir(), "*.png")), key=os.path.getmtime, reverse=True)
     imports = [r["path"] for r in director.list_media() if r["kind"] == "image" and r["source"] == "匯入"]
     return [(os.path.basename(p), p) for p in imports + stills]
 
@@ -1081,6 +1167,97 @@ def desk_import_path(path):
     if not (path or "").strip():
         raise gr.Error("請貼上檔案或資料夾的路徑")
     return _import([p for p in str(path).replace("\n", ";").split(";") if p.strip()])
+
+
+def _allow_output_dir(path):
+    """Gradio only serves files from allowed folders, and the output folder can change while the GUI runs, so the
+    new folder is added to the live list (Blocks.allowed_paths is read on every file request)."""
+    full = os.path.abspath(path)
+    if full not in demo.allowed_paths:
+        demo.allowed_paths.append(full)
+
+
+def _output_dir_note(prefix=""):
+    where = "預設位置" if od.is_default() else f"自訂位置，預設是 `{od.DEFAULT_DIR}`"
+    return (f"{prefix}目前：`{od.current()}`（{where}）\n\n圖片在 `stills/`、影片在資料夾本身、匯入在 `imports/`、"
+            "縮圖在 `thumbs/`、成片在 `cuts/`。換位置不會搬舊檔案，素材庫只列目前這個資料夾裡的。"
+            "**每次重啟 GUI 都會先回到預設位置**（避免一開就去讀休眠的外接硬碟），要用別的資料夾請開啟後再套用。")  # fmt: skip
+
+
+def _output_dir_view(note):
+    gallery, media, overlay, sfx = desk_library_refresh()
+    return (od.current(), note, gallery, media, overlay, sfx, f"匯入的檔案會複製到 `{od.imports_dir()}`")
+
+
+def output_dir_show():
+    """Page load: only the setting (a small file next to the code). The drive itself is not touched here, so a
+    spun-down external disk is not woken by every F5; the desk lists it when its tab is opened."""
+    _allow_output_dir(od.current())
+    return od.current(), _output_dir_note()
+
+
+@_show_usage_errors
+def output_dir_apply(path):
+    _allow_output_dir(od.set_dir(path))
+    return _output_dir_view(_output_dir_note("✔ 已套用。"))
+
+
+@_show_usage_errors
+def output_dir_reset():
+    _allow_output_dir(od.reset())
+    return _output_dir_view(_output_dir_note("✔ 已恢復預設。"))
+
+
+@_show_usage_errors
+def output_dir_open():
+    folder = od.current()
+    os.makedirs(folder, exist_ok=True)
+    if not hasattr(os, "startfile"):
+        raise gr.Error(f"這個系統不能從網頁開檔案總管，請自己開啟：{folder}")
+    os.startfile(folder)
+    return _output_dir_note("📂 已用檔案總管開啟。")
+
+
+# --- 📈 run metrics: the line chart of a picture / video run (training/run_metrics.py) ------------------
+
+
+def _metrics_files():
+    folders = {od.clips_dir(), od.stills_dir()}
+    found = [f for d in folders for f in glob.glob(os.path.join(d, "*.metrics.json"))]
+    return sorted(found, key=os.path.getmtime, reverse=True)
+
+
+def _metrics_choices():
+    out = []
+    for path in _metrics_files():
+        stamp = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%m-%d %H:%M")
+        out.append((f"{stamp}｜{os.path.basename(path).removesuffix('.metrics.json')}", path))
+    return out
+
+
+def _metrics_view(path):
+    import run_metrics
+
+    empty = "<div style='padding:14px;opacity:.7'>還沒有紀錄：生一張圖或一支影片，跑完這裡就會出現折線圖</div>"
+    if not path or not os.path.isfile(path):
+        return empty, "圖片與影片生成時每 5 秒記錄一次 GPU 溫度／使用率／功率、顯存、RAM、分頁檔、ComfyUI 記憶體。"
+    label, rows = run_metrics.load(path)
+    key, notes = run_metrics.summarize(rows)
+    if not key:
+        return empty, f"**{label}**：這份紀錄沒有取樣資料"
+    head = f"**{label}**｜{key['seconds']:.0f} 秒｜{key['samples']} 筆取樣"
+    return run_metrics.chart_svg(rows), head + "\n\n" + "\n".join(f"- {n}" for n in notes)
+
+
+def metrics_refresh():
+    choices = _metrics_choices()
+    value = choices[0][1] if choices else None
+    chart, notes = _metrics_view(value)
+    return gr.update(choices=choices, value=value), chart, notes
+
+
+def metrics_show(path):
+    return _metrics_view(path)
 
 
 def _has_card(text1, text2, seconds):
@@ -1536,915 +1713,1008 @@ def cancel_cloud_video(request: gr.Request):
     gr.Info("已要求取消，下一次查詢狀態時會送出取消")
 
 
+# Every start of the GUI begins on the default output folder (2026-10-18): the saved choice used to be reused,
+# and building the page then read an external disk that may have spun down. Run as a script only: importing
+# gui (tests, a scratch launcher) must not touch the saved setting. Pick a folder again on the page if needed.
+if __name__ == "__main__":
+    try:
+        od.reset()
+    except gc.UsageError as exc:
+        print(f"[gui] 輸出位置沒有重設：{exc}")
+
 with gr.Blocks(title="AI Image Lab") as demo:
-    gr.Markdown("# AI Image Lab\n先確定 ComfyUI server 已經在跑（127.0.0.1:8188）。")
+    gr.Markdown(f"# AI Image Lab\n先確定 ComfyUI server 已經在跑（{client.COMFYUI_URL.removeprefix('http://')}）。")
 
     with gr.Tabs():
-        with gr.Tab("🖼️ 自訂生圖"):
-            with gr.Row():
-                with gr.Column():
-                    character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
-                    anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
-                    anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
-                    custom_anchor = gr.Image(
-                        label="或自行上傳身分參考圖（會覆蓋上面的 Anchor 選擇）— 僅限虛構/AI生成的角色照，禁止上傳真人照片",
-                        type="filepath",
-                    )
-                    with gr.Accordion("依圖片產生 Prompt（上傳一張圖，自動轉成英文 prompt）", open=False):
-                        caption_upload = gr.Image(label="上傳圖片", type="filepath")
-                        with gr.Row():
-                            caption_btn = gr.Button("產生描述（自然語言）")
-                            tag_btn = gr.Button("產生標籤（WD14，Pony 系適用）")
-                        caption_output = gr.Textbox(label="結果（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
-                        gr.Markdown(
-                            "「描述」用 BLIP 出自然語言句子，juggernaut 和 SD1.5 吃這種。"
-                            "「標籤」用 WD14 出 booru 標籤（`1girl, solo, long hair, ...`），"
-                            "Pony 系 checkpoint 是用這種格式訓練的，通常不必再自己補太多字。"
-                            "標籤模式需要 ComfyUI（第一次按會自動啟動），單張約 3 秒。"
-                        )
-                    with gr.Accordion("HQ 兩段式生成（預設開啟，5 分鐘內高品質）", open=True):
-                        use_hq = gr.Checkbox(
-                            value=True,
-                            label="兩段式：先低解析度生成 → ESRGAN 放大 → 低 denoise 重採樣補細節 → 臉部/手部精修。"
-                                  "修正失真與「3D render」感，並在有訓練好的角色 LoRA 時自動套用。關掉則走舊的單段式",
-                        )
-                        hires_denoise = gr.Slider(0.2, 0.6, value=client.HIRES_DENOISE, step=0.05,
-                                                  label="Hires 第二段 denoise（0.4 建議；太高會讓臉飄移，太低補不到細節）")
-                        character_lora_strength = gr.Slider(0.0, 1.2, value=client.CHARACTER_LORA_STRENGTH, step=0.05,
-                                                             label="角色 LoRA 強度（僅在該角色有訓練好的 LoRA 時作用，否則忽略）")
-                    with gr.Accordion("骨架姿勢控制（ControlNet，選填）", open=False):
-                        pose_library = gr.Dropdown(
-                            [POSE_NONE] + pose_skeletons.list_names(), value=POSE_NONE,
-                            label="姿勢骨架庫（選一個內建姿勢；用來壓住 checkpoint 靠文字壓不住的姿勢，例如各種躺姿）。"
-                                  "若同時上傳了下方的參考照片，以照片為準",
-                        )
-                        skeleton_preview = gr.Image(label="骨架預覽", interactive=False, height=200)
-                        pose_reference = gr.Image(
-                            label="或：自訂姿勢參考照片（自動抽取骨架）。此圖只抽取關節骨架，"
-                                  "不會保留臉部/身分資訊，可以是任何照片",
-                            type="filepath",
-                        )
-                        controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
-                                                         label="骨架控制強度（0=忽略骨架，1=嚴格鎖定姿勢）")
-                        gr.Markdown("ℹ️ 內建骨架庫用預先畫好的骨架直接餵 ControlNet（跳過 preprocessor），"
-                                    "不掛 FaceID 時單張約 60-90 秒。上傳照片則多一道骨架抽取。")
-                        pose_library.change(_pose_preview, inputs=pose_library, outputs=skeleton_preview)
-                    with gr.Accordion("臉部/手部精修（ADetailer，HQ 模式預設開啟）", open=True):
-                        use_facedetailer = gr.Checkbox(
-                            value=True,
-                            label="生成後自動偵測臉部+手部，各自裁切放大重繪一次，修正常見的臉部/手指小瑕疵。"
-                                  "HQ 模式可與骨架姿勢控制同時使用",
-                        )
-                        face_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_FACE_DENOISE, step=0.05,
-                                                 label="臉部精修強度（0=不變，1=該區域完全重畫）")
-                        hand_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_HAND_DENOISE, step=0.05,
-                                                 label="手部精修強度（手部通常用比臉部略低的值，避免重畫出更糟的手）")
-                        facedetailer_backend = gr.Radio(
-                            FACEDETAILER_BACKEND_CHOICES, value=FACEDETAILER_BACKEND_YOLO,
-                            label="臉部偵測方式（HQ 模式一律用 YOLO；MediaPipe 只在關掉 HQ 的舊單段式路徑有作用）",
-                        )
-                    resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（HQ 最終尺寸：正方形→1248×1248、直式→1056×1536、橫式→1536×1056；正方形沒有足夠垂直空間放全身，會被裁成上半身）")
-                    with gr.Accordion("Pony 關鍵字（點選代替打字：必備 4 類 ＋ 其他 9 類）", open=False):
-                        gr.Markdown(
-                            "「必備」是 Pony 系 checkpoint 的標配：品質分數、來源風格、內容分級、主體與人數。"
-                            "少了它們畫面會偏插畫，人數和年齡也比較不受控。"
-                            "「其他」是想到才加的：鏡頭、姿勢、表情、髮型體態、服裝、光線、場景、風格、額外負面詞。\n\n"
-                            f"{PONY_TAG_QUALITY_NOTE}\n\n"
-                            "非 Pony 系（juggernaut / SD1.5 / Z-Image）會自動收起 `score_*`、`source_*`、"
-                            "`rating_*` 這幾類——它們沒有被這樣訓練過；描述性的字則所有 checkpoint 都能用。\n\n"
-                            "打自然語言本來就會自動補上推導出的 booru 標籤（`prompt_adapter`），"
-                            "這裡是想「明確指定」時用的——特別是 `rating_*` / `source_*`，那是句子推不出來的。"
-                        )
-                        pony_tag_groups = [
-                            gr.CheckboxGroup(
-                                pony_tags.choices(_cat), value=[],
-                                label=f"{'必備' if _cat['role'] == 'required' else '其他'}｜{_cat['name_zh']}",
-                                info=_cat["note_zh"],
-                            )
-                            for _cat in PONY_TAG_INITIAL
-                        ]
-                        pony_tag_preview_box = gr.Textbox(
-                            label="會加進去的內容（唯讀預覽）", value=PONY_TAG_PREVIEW_HINT,
-                            lines=3, interactive=False,
-                        )
-                        with gr.Row():
-                            pony_tag_append_btn = gr.Button("加入 Prompt", variant="secondary")
-                            pony_tag_clear_btn = gr.Button("清除勾選", size="sm", scale=0)
-                    prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting in a cozy library, reading a book, warm afternoon light")
-                    translate_btn = gr.Button("翻譯成英文（CLIP 對中文支援不佳，建議先翻譯再送出；已經是英文按下去不會被改動）")
-                    negative_prompt = gr.Textbox(label="額外負面詞（選填，一次性追加，不影響下面的風格詞預設值）", lines=1)
-                    with gr.Accordion("風格正/負面詞（進階 - 可直接在這裡調整寫實感等風格用詞，不用改程式碼）", open=False):
-                        gr.Markdown(
-                            "下面兩欄會自動接在 prompt/negative prompt 後面，預設值就是目前程式碼裡用的寫實化詞彙。"
-                            "**這裡改不到年齡保護詞、露骨內容封鎖詞**，那些永遠固定套用、不會因為這裡的設定被移除或減弱。"
-                        )
-                        style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                        style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+        with gr.Tab("⭐ 常用"):
+            with gr.Tabs():
+                with gr.Tab("🎬 圖片→影片（本機）"):
                     gr.Markdown(
-                        "**目前預設（cyberrealistic_pony + HQ + 精修）就是實測最真實、失真最少的組合，不用改就能直接用。**"
-                        "純文字生圖、不需要鎖臉/姿勢/精修時，`z_image_turbo` 寫實度和手部更好，可以切過去試試。\n\n"
-                        "**什麼時候要切換 checkpoint：**\n"
-                        "- 需要「Anchor 身分鎖定」「骨架姿勢控制」或「臉部/手部精修」任一項 → 只能選 SDXL 系列"
-                        "（juggernaut / pony / cyberrealistic_pony / pony_realism），這三個功能都是接在 SDXL 專用模型檔上，"
-                        "選 SD1.5 送出時會直接跳錯誤。\n"
-                        "- 只要純文字生圖、想要更自然語言的 prompt、或想要 512×768 左右的原生解析度 → 可以切到 SD1.5 系列"
-                        "（realistic_vision / cyberrealistic），但切過去後 anchor / 姿勢控制 / 精修都會被鎖住，畫布比例也只能選「自動」。\n"
-                        "- pony / cyberrealistic_pony / pony_realism 需要的 `score_9, score_8_up, score_7_up` 品質 tag 前綴"
-                        "會自動加上，Prompt 欄位一樣打自然語言就好，不用自己記得加。"
-                        "下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
-                        "\n- `z_image_turbo`（Z-Image Turbo）→ 純文字生圖，寫實度、手指跟畫面裡的文字（包括中文字）都比 SDXL 好，"
-                        "Prompt 可以直接打中文不用翻譯；但沒有 anchor 鎖臉、姿勢控制、精修（選了角色只會用文字描述），"
-                        "要先依 README 下載模型，第一張要載入約 11 GB 模型，會比較久。"
+                        "兩個區塊：**① 生成圖片**（文字 → 首幀圖，Z-Image 或 Qwen-Image 2.1）、**② 生成影片**"
+                        "（首幀 → 5 秒帶配音的 MiniMax H3 影片）。都跑在這台顯示卡上，不花 Colab 運算單元。"
+                        "①生好按「➡️ 用這張當首幀」就會帶到②；也可以直接在②上傳自己的圖。\n\n"
+                        "**要先知道**：圖片 Z-Image 約 30 秒、Qwen 約 2 分鐘；影片本機 5 秒約 8～10 分鐘，顯存幾乎滿"
+                        "（約 15.7／16 GB），RAM 會用到分頁檔、SSD 會接近 100%。一次只做一件事，聊天模型會被卸載。"
+                        "超過 5 秒本機沒量過，所以固定 5 秒。所有描述都先過跟 Colab 版一樣的內容過濾，有禁字就拒絕。"
                     )
-                    with gr.Accordion("模型版本（完整版 / 量化版）", open=False):
-                        gr.Markdown(
-                            "SDXL / Pony 四個模型可以各自選「完整版」或「量化版 fp8」。量化版把主模型權重存成 fp8，"
-                            "VRAM、記憶體和硬碟用量比較少，換模型時搬得比較快；在這張 RTX 2070 上運算仍是 fp16，不會算得比較快。"
-                            "這是全域設定：這裡、批次 GIF 和 CLI 都會套用，按「儲存」後下一張就生效。"
-                            "選了量化版但還沒轉出量化檔時，會自動改用完整版並提示轉換指令；骨架姿勢（ControlNet）一律用完整版。"
+                    with gr.Accordion("📁 輸出位置（圖片、影片、成片存在哪）", open=True):
+                        with gr.Row(equal_height=True):
+                            out_dir_box = gr.Textbox(
+                                value=od.current(), label="輸出資料夾（完整路徑）", scale=6,
+                                placeholder="例如 D:\\Videos\\H3　（要回到預設請按「恢復預設」）")  # fmt: skip
+                            out_apply_btn = gr.Button("套用", variant="primary", scale=1, min_width=80)
+                            out_reset_btn = gr.Button("↩ 恢復預設", scale=1, min_width=110)
+                            out_open_btn = gr.Button("📂 開啟", scale=1, min_width=80)
+                        out_dir_info = gr.Markdown(_output_dir_note(), elem_classes="desk-hint")
+                    gr.Markdown("## ① 生成圖片")
+                    with gr.Row():
+                        with gr.Column():
+                            still_prompt = gr.Textbox(
+                                label="圖片描述（中文或英文都行，中文會先自動翻成英文；人物要是成年人）", lines=4,
+                                placeholder="例如：a young adult Taiwanese woman in her mid-twenties wearing a cream apron, "
+                                            "laughing in a home kitchen, steam rising from a pot")
+                            with gr.Row():
+                                still_model = gr.Radio(
+                                    [v["label"] for v in H3_STILL_MODELS.values()],
+                                    value=next(iter(H3_STILL_MODELS.values()))["label"], label="圖片模型")
+                                still_seed = gr.Number(value=8201, label="Seed", precision=0)
+                            still_negative = gr.Textbox(
+                                label="負面詞（選填，中文英文都行；加在系統固定的安全負面詞後面，固定的那些拿不掉）", lines=2,
+                                placeholder="例如：模糊, 多餘的手指, 文字, 浮水印")
+                            still_people = gr.Radio(
+                                [v[0] for v in H3_PEOPLE.values()], value=H3_PEOPLE[1][0],
+                                label="畫面人數（都是成年人；2 人以上描述裡也可以自己寫誰在做什麼）")
+                            still_btn = gr.Button("生成圖片", variant="primary")
+                        with gr.Column():
+                            still_output = gr.Image(label="圖片結果", type="filepath", interactive=False)
+                            still_info = gr.Markdown()
+                            still_use_btn = gr.Button("➡️ 用這張當首幀（帶到下面的影片區塊）")
+                    still_log = gr.Textbox(label="執行過程（即時更新）", lines=10, max_lines=18, autoscroll=True, interactive=False)
+
+                    gr.Markdown("## ② 生成影片")
+                    with gr.Row():
+                        with gr.Column():
+                            h3_image = gr.Image(label="首幀（①帶過來的，或自己上傳／拖進來的圖）", type="filepath")
+                            # Right under the picture: a picture uploaded here (not made by ①) needs the owner's declaration once.
+                            h3_attest = gr.Checkbox(value=False, label=H3_ATTEST_LABEL)
+                            with gr.Row():
+                                h3_gender = gr.Radio(["女", "男", "一男一女"], value="女", label="人物（一男一女：女 S1、男 S2 都在畫面裡）")
+                                h3_seed = gr.Number(value=8201, label="Seed", precision=0)
+                            h3_idea_box = gr.Textbox(label="中文情境（做什麼）", lines=2,
+                                                     placeholder="例如：她笑著指向冒煙的鍋子")
+                            h3_line = gr.Textbox(label="台詞（原樣放進影片，20 字內；一男一女時是女生說的）", placeholder="例如：快！關小火！")
+                            h3_others = gr.Checkbox(
+                                value=False, label="畫面裡可以有其他成年人（只有主角說話；背景人物容易變形，先試一次看看）")
+                            h3_line2 = gr.Textbox(label="男生的回答（選填，只有「一男一女」才用；兩個人同時說話的配音沒有驗證過）")
+                            h3_write_btn = gr.Button("✍️ 用 Qwen 寫描述")
+                            h3_desc = gr.Textbox(
+                                label="影片描述（英文；改成中文也行，會先自動翻譯；台詞要放在 <d>[Chinese] …</d> 裡，不會被翻）", lines=7)
+                            h3_sound = gr.Textbox(label="環境聲（選填，中文英文都行）", placeholder="例如：Home kitchen: a soft sizzle ...")
+                            h3_static = gr.Checkbox(value=False, label="人物與背景保持靜止（貓、蒸氣、背景最容易變形時勾）")
+                            h3_btn = gr.Button("生成影片（本機 H3）", variant="primary")
+                        with gr.Column():
+                            h3_output = gr.Video(label="影片結果")
+                            h3_info = gr.Markdown()
+                    h3_log = gr.Textbox(label="執行過程（即時更新）", lines=10, max_lines=18, autoscroll=True, interactive=False)
+
+                    with gr.Accordion("📈 執行指標（折線圖：看溫度、顯存、RAM、分頁檔，找出慢在哪）", open=True):
+                        with gr.Row(equal_height=True):
+                            metrics_pick = gr.Dropdown(choices=_metrics_choices(), label="選一次執行（預設最新的一次）", scale=6)
+                            metrics_refresh_btn = gr.Button("🔄 重新整理", scale=1, min_width=110)
+                        metrics_notes = gr.Markdown()
+                        metrics_chart = gr.HTML()
+                    still_btn.click(
+                        generate_h3_still_ui,
+                        inputs=[still_prompt, still_model, still_seed, still_people, still_negative],
+                        outputs=[still_output, still_info, still_prompt, still_log],
+                        concurrency_id="gpu",
+                    ).then(metrics_refresh, inputs=None, outputs=[metrics_pick, metrics_chart, metrics_notes])  # also after a failure
+                    still_use_btn.click(use_still_as_first_frame, inputs=still_output, outputs=[h3_image, h3_attest])
+                    h3_write_btn.click(
+                        write_h3_description_ui,
+                        inputs=[h3_idea_box, h3_line, h3_gender, h3_line2, h3_others],
+                        outputs=[h3_desc, h3_log],
+                        concurrency_id="gpu",  # the local Qwen takes ~6.7 GB of the card while it answers
+                    )
+                    _h3_run = h3_btn.click(
+                        generate_h3_local_ui,
+                        inputs=[h3_image, h3_desc, h3_sound, h3_static, h3_seed, h3_attest],
+                        outputs=[h3_output, h3_info, h3_desc, h3_log],
+                        concurrency_id="gpu",
+                    )
+                    _metrics_out = [metrics_pick, metrics_chart, metrics_notes]
+                    metrics_refresh_btn.click(metrics_refresh, inputs=None, outputs=_metrics_out)
+                    metrics_pick.input(metrics_show, inputs=metrics_pick, outputs=[metrics_chart, metrics_notes])
+
+                with gr.Tab("🎯 圖片選擇生圖"):
+                    gr.Markdown(
+                        "**點圖就好，不用自己想 prompt。**選人物、姿勢、場景各一張，系統會依照你選的 checkpoint "
+                        "組出它聽得懂的敘述——Pony 系自動加品質標籤、SD1.5 自動加性別權重，"
+                        "而且在 SDXL/Pony 上姿勢是走 ControlNet 骨架、臉是走 FaceID，不是只用文字講。\n\n"
+                        "Z-Image 跟 SD1.5 沒有這兩個功能，選到那些 checkpoint 時姿勢和臉會**自動改成文字描述**，"
+                        "下方會明講哪些被降級了。送出的完整 prompt 會即時顯示在預覽欄，不用猜。"
+                    )
+                    pick_char_state = gr.State(None)
+                    pick_pose_state = gr.State(None)
+                    pick_scene_state = gr.State(None)
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            with gr.Row():
+                                gr.Markdown("### 1. 人物")
+                                pick_char_clear = gr.Button("清除人物", size="sm", scale=0)
+                            pick_char_gallery = gr.Gallery(
+                                value=_gallery_value(picker_characters()), columns=5, height=250,
+                                allow_preview=False, object_fit="cover", show_label=False, buttons=[],
+                            )
+                            _picker_skipped = [t for t in sorted(gc.CHARACTERS) if not gc.picker_anchor_path(t)]
+                            if _picker_skipped:
+                                gr.Markdown(
+                                    f"（{'、'.join(_picker_skipped)} 還沒有 anchor 圖，先不列在這裡——"
+                                    "用 `generate_character.py anchors` 產生後就會自動出現）"
+                                )
+                            with gr.Row():
+                                gr.Markdown("### 2. 姿勢")
+                                pick_pose_clear = gr.Button("清除姿勢", size="sm", scale=0)
+                            pick_pose_gallery = gr.Gallery(
+                                value=_gallery_value(picker_pose_items()), columns=6, height=300,
+                                allow_preview=False, object_fit="contain", show_label=False, buttons=[],
+                            )
+                            with gr.Row():
+                                gr.Markdown("### 3. 場景")
+                                pick_scene_clear = gr.Button("清除場景", size="sm", scale=0)
+                            pick_scene_gallery = gr.Gallery(
+                                value=_gallery_value(picker_scene_items("safe")), columns=5, height=250,
+                                allow_preview=False, object_fit="cover", show_label=False, buttons=[],
+                            )
+                        with gr.Column(scale=2):
+                            pick_checkpoint = gr.Dropdown(
+                                CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
+                            )
+                            pick_tier = gr.Radio(
+                                ["safe", "suggestive"], value="safe",
+                                label="內容分級（suggestive 會多出海灘/泳池等場景；露骨內容依然封鎖）",
+                            )
+                            # Distinct from every other tab's default (9000: 自訂生圖/GIF; 6001: AnimateDiff/SVD) -
+                            # measured 2026-09-12: two GUI sessions both defaulting to 9000 submitted around the
+                            # same time and one clobbered gui_seed9000.png before the other's client read it back,
+                            # so a tab's own client displayed a completely different generation as its result.
+                            # Different defaults across tabs reduce how often that collision fires; it doesn't
+                            # eliminate it (nothing stops someone typing 9000 here too, or two picker tabs racing
+                            # each other), since output filenames are seed-keyed rather than job-id-keyed.
+                            pick_seed = gr.Number(value=4001, label="Seed", precision=0)
+                            pick_extra = gr.Textbox(
+                                label="補充描述（選填，中文也可以，送出前會自動翻成英文）", lines=2,
+                                placeholder="例如：手上拿著紙杯、戴著耳機",
+                            )
+                            pick_preview = gr.Textbox(
+                                label="實際送出的 prompt（唯讀，含這個 checkpoint 需要的標籤）",
+                                lines=6, interactive=False,
+                            )
+                            pick_notice = gr.Markdown("選一個場景或姿勢（或填補充描述）就會在這裡看到實際送出的 prompt。")
+                            pick_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
+                            pick_btn = gr.Button("生成", variant="primary")
+                            pick_output = gr.Image(label="結果")
+
+                    _preview_inputs = [pick_char_state, pick_pose_state, pick_scene_state,
+                                       pick_checkpoint, pick_tier, pick_extra]
+                    _preview_outputs = [pick_preview, pick_notice]
+                    pick_char_gallery.select(select_picker_character, inputs=None, outputs=pick_char_state).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_pose_gallery.select(select_picker_pose, inputs=None, outputs=pick_pose_state).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_scene_gallery.select(select_picker_scene, inputs=[pick_tier], outputs=pick_scene_state).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_char_clear.click(
+                        lambda: (None, gr.update(selected_index=None)), inputs=None,
+                        outputs=[pick_char_state, pick_char_gallery]).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_pose_clear.click(
+                        lambda: (None, gr.update(selected_index=None)), inputs=None,
+                        outputs=[pick_pose_state, pick_pose_gallery]).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_scene_clear.click(
+                        lambda: (None, gr.update(selected_index=None)), inputs=None,
+                        outputs=[pick_scene_state, pick_scene_gallery]).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_tier.change(
+                        refresh_picker_scenes, inputs=pick_tier, outputs=[pick_scene_gallery, pick_scene_state]).then(
+                        update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_checkpoint.change(update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_extra.change(update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
+                    pick_btn.click(
+                        generate_from_picker,
+                        inputs=[pick_char_state, pick_pose_state, pick_scene_state, pick_checkpoint,
+                                pick_tier, pick_seed, pick_extra, pick_force_local],
+                        outputs=pick_output,
+                        concurrency_id="gpu",
+                    )
+
+                with gr.Tab("🧩 Pony × Z-Image 整合"):
+                    gr.Markdown(
+                        "**分工**：Realistic Pony 決定「長什麼樣」——人是誰（Anchor 鎖臉）、姿勢、構圖；"
+                        "Z-Image Turbo 再把那張圖重畫一次，只改「質感」——皮膚紋理、光影、布料。"
+                        "兩張都會顯示，方便對照。\n\n"
+                        "**重畫強度**是關鍵：低（0.3）= 同一張圖、材質更好；高（0.5 以上）= 臉和姿勢開始被 Z-Image 改掉。"
+                        "建議同一個 seed 用 0.3 / 0.4 / 0.5 各跑一次再挑。\n\n"
+                        "⚠️ 底圖來自 Pony 系模型，授權不能商用，所以成品也不能直接商用。"
+                    )
+                    with gr.Row():
+                        with gr.Column():
+                            pz_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填）", value=NO_CHARACTER)
+                            pz_anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
+                            pz_anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=160)
+                            pz_custom_anchor = gr.Image(label="或自行上傳身分參考圖（僅限虛構/AI生成角色，禁止真人照片）",
+                                                        type="filepath", height=160)
+                            pz_pose_library = gr.Dropdown([POSE_NONE] + pose_skeletons.list_names(), value=POSE_NONE,
+                                                          label="姿勢骨架庫（選填，由 Pony 這段用 ControlNet 壓住姿勢）")
+                            pz_controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
+                                                               label="骨架控制強度")
+                            pz_prompt = gr.Textbox(label="Prompt（中文或英文都可以；中文會自動翻成英文，Pony 和 Z-Image 兩段共用）", lines=3,
+                                                   placeholder="例如: 坐在溫暖圖書館裡看書的女人，午後的陽光")
+                            pz_negative = gr.Textbox(label="額外負面詞（選填）", lines=1)
+                            pz_pony = gr.Dropdown(sorted(client.PONY_CHECKPOINTS), value=gc.PONY_ZIMAGE_DEFAULT_PONY,
+                                                  label="底圖用的 Pony checkpoint")
+                            pz_resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例")
+                            pz_denoise = gr.Slider(0.2, 0.8, value=client.ZIMAGE_REFINE_DENOISE, step=0.05,
+                                                   label="Z-Image 重畫強度（0.2～0.3 臉還認得出來，0.4 以上開始換人）")
+                            pz_qwen = gr.Checkbox(value=True, label="用 Qwen 改寫（本機 qwen3.5:9b：中文 → Pony 標籤＋Z-Image 句子，兩段各用適合的寫法；"
+                                                                    "沒勾就用一般翻譯。需要本機有 Ollama 和 qwen3.5:9b，約多 10-30 秒）")
+                            pz_skip = gr.Checkbox(value=False, label="只出 Pony 底圖，不做 Z-Image 重畫（先確認構圖再花時間）")
+                            pz_tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級")
+                            pz_seed = gr.Number(value=9000, label="Seed", precision=0)
+                            pz_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05,
+                                                     label="IP-Adapter 權重（有選角色才有作用）")
+                            pz_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
+                            pz_btn = gr.Button("生成（Pony 底圖 → Z-Image 質感）", variant="primary")
+                        with gr.Column():
+                            pz_base_out = gr.Image(label="① Pony 底圖（長什麼樣）")
+                            pz_final_out = gr.Image(label="② Z-Image 重畫（質感）")
+                            pz_sent_prompt = gr.Textbox(label="實際送出的英文 prompt（中文翻譯結果）", interactive=False, lines=2)
+                    pz_character.change(refresh_anchors, inputs=pz_character, outputs=[pz_anchor, pz_anchor_preview])
+                    pz_anchor.change(lambda path: path, inputs=pz_anchor, outputs=pz_anchor_preview)
+                    pz_btn.click(generate_pony_zimage,
+                                 inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_tier, pz_negative,
+                                         pz_seed, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
+                                         pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_force_local],
+                                 outputs=[pz_base_out, pz_final_out, pz_sent_prompt], concurrency_id="gpu")
+                with gr.Tab("🎬 導演台") as desk_tab:
+                    _desk_items, _desk_paths = desk_library()
+                    with gr.Row(elem_classes="desk-toolbar", equal_height=True):
+                        gr.Markdown("### 🎬 導演台")
+                        desk_template = gr.Dropdown(choices=list(H3_DESK_TEMPLATES), value=None, label="範本",
+                                                    scale=3, container=False)  # fmt: skip
+                        desk_template_btn = gr.Button("套用範本", size="sm", scale=1)
+                        cut_btn = gr.Button("🎬 輸出成片", variant="primary", scale=2)
+                    desk_template_info = gr.Markdown(
+                        "點素材庫縮圖加入時間軸 → 點時間軸卡片編輯 → 右邊加文字、疊圖、音效、字卡、配樂 → 輸出成片"
+                        "（ffmpeg，不用 GPU；每支片段自動對齊音量，整支 −14 LUFS，1080×1920）。", elem_classes="desk-hint")
+                    with gr.Row(equal_height=False):
+                        with gr.Column(scale=3, min_width=260, elem_classes="desk-panel desk-library"):
+                            with gr.Tabs():
+                                with gr.Tab("素材庫"):
+                                    desk_library_gallery = gr.Gallery(
+                                        value=_desk_items, columns=3, height=430, allow_preview=False, object_fit="cover",
+                                        show_label=False, label="素材庫")  # fmt: skip
+                                    desk_refresh_btn = gr.Button("🔄 重新整理", size="sm")
+                                with gr.Tab("匯入"):
+                                    desk_upload_files = gr.File(
+                                        label="拖檔案進來或點一下選檔（影片、圖片、音訊，可多選）", file_count="multiple",
+                                        file_types=["video", "image", "audio"])  # fmt: skip
+                                    desk_import_text = gr.Textbox(
+                                        label="或貼上檔案／資料夾路徑（多個用 ; 分開）", placeholder=r"D:\素材\clip.mp4 或 D:\素材")
+                                    desk_import_btn = gr.Button("📂 從路徑匯入", size="sm")
+                                    desk_import_info = gr.Markdown(f"匯入的檔案會複製到 `{od.imports_dir()}`")
+                        with gr.Column(scale=4, min_width=300, elem_classes="desk-monitor"):
+                            desk_preview = gr.Video(label="播放器", height=500)
+                        with gr.Column(scale=3, min_width=280, elem_classes="desk-panel"):
+                            with gr.Tabs():
+                                with gr.Tab("片段"):
+                                    desk_sel_info = gr.Markdown("點下方時間軸的片段卡片來編輯它")
+                                    desk_transition = gr.Dropdown(
+                                        choices=list(H3_DESK_TRANSITIONS), value=H3_DESK_TRANSITIONS[0], label="進場轉場",
+                                        interactive=False)  # fmt: skip
+                                    desk_image_secs = gr.Slider(0.5, 15, value=3, step=0.5, label="圖片秒數", visible=False)
+                                    with gr.Row():
+                                        desk_left_btn = gr.Button("◀ 前移", size="sm")
+                                        desk_right_btn = gr.Button("後移 ▶", size="sm")
+                                    with gr.Row():
+                                        desk_remove_btn = gr.Button("🗑 移除", size="sm", variant="stop")
+                                        desk_clear_btn = gr.Button("清空全部", size="sm")
+                                with gr.Tab("文字"):
+                                    desk_text = gr.Textbox(label="文字", placeholder="例如：今天跟她去哪？")
+                                    with gr.Row():
+                                        desk_text_start = gr.Number(value=0, label="開始秒")
+                                        desk_text_end = gr.Number(value=2.5, label="結束秒")
+                                    with gr.Row():
+                                        desk_text_pos = gr.Radio(["上方", "中間", "下方"], value="上方", label="位置")
+                                        desk_text_size = gr.Radio(["小", "中", "大"], value="中", label="大小")
+                                    with gr.Row():
+                                        desk_text_add = gr.Button("＋ 加到文字軌", size="sm", variant="primary")
+                                        desk_text_undo_btn = gr.Button("↶ 移除最後一段", size="sm")
+                                with gr.Tab("疊圖"):
+                                    desk_overlay_pick = gr.Dropdown(choices=_overlay_choices(), label="圖片（匯入的或①生成的）")
+                                    with gr.Row():
+                                        desk_overlay_start = gr.Number(value=0, label="開始秒")
+                                        desk_overlay_end = gr.Number(value=5, label="結束秒")
+                                    desk_overlay_pos = gr.Radio(["左上", "右上", "中間", "左下", "右下"], value="右上", label="位置")
+                                    desk_overlay_scale = gr.Slider(5, 100, value=25, step=1, label="寬度（畫面的 %）")
+                                    with gr.Row():
+                                        desk_overlay_add = gr.Button("＋ 加到疊圖軌", size="sm", variant="primary")
+                                        desk_overlay_undo_btn = gr.Button("↶ 移除最後一張", size="sm")
+                                with gr.Tab("音效"):
+                                    desk_sfx_pick = gr.Dropdown(choices=_audio_choices(), label="音效（到「匯入」上傳）")
+                                    with gr.Row():
+                                        desk_sfx_start = gr.Number(value=0, label="開始秒")
+                                        desk_sfx_volume = gr.Slider(-40, 12, value=-6, step=1, label="音量 dB")
+                                    with gr.Row():
+                                        desk_sfx_add = gr.Button("＋ 加到音效軌", size="sm", variant="primary")
+                                        desk_sfx_undo_btn = gr.Button("↶ 移除最後一段", size="sm")
+                                with gr.Tab("字卡"):
+                                    cut_title1 = gr.Textbox(label="片頭標題", placeholder="例如：一起去約會")
+                                    cut_title2 = gr.Textbox(label="片頭副標（選填）", placeholder="例如：三個地方，三種心情")
+                                    cut_title_secs = gr.Slider(0, 5, value=0, step=0.5, label="片頭秒數（0 = 不要）")
+                                    cut_end1 = gr.Textbox(label="片尾第一行", placeholder="例如：下載 App")
+                                    cut_end2 = gr.Textbox(label="片尾第二行（選填）", placeholder="例如：跟她一起出門")
+                                    cut_end_secs = gr.Slider(0, 5, value=2.5, step=0.5, label="片尾秒數（0 = 不要）")
+                                with gr.Tab("音樂"):
+                                    cut_music = gr.Audio(label="配樂（不上傳 = 沒有配樂）", type="filepath")
+                                    cut_music_db = gr.Slider(6, 30, value=18, step=1, label="比人聲低幾 dB（越大越小聲）")
+                                    cut_music_fade = gr.Slider(0, 5, value=1.5, step=0.5, label="結尾淡出秒數")
+                                    cut_bed = gr.Checkbox(value=False, label="加極輕的環境底噪（−48 LUFS）")
+                                    cut_ai_label = gr.Checkbox(value=False, label="每一格加「AI 生成影片｜MiniMax H3」標示")
+                    with gr.Column(elem_classes="desk-panel desk-timeline"):
+                        desk_summary = gr.Markdown("### 時間軸")
+                        desk_tracks_html = gr.HTML(
+                            "<div style='padding:18px;color:#9aa4b2'>時間軸是空的：點左邊素材庫的縮圖加入，或到「匯入」上傳檔案</div>")
+                        desk_timeline_gallery = gr.Gallery(
+                            columns=10, rows=1, height=150, allow_preview=False, object_fit="cover", show_label=True,
+                            label="主影片軌（點卡片選取片段）")  # fmt: skip
+                    with gr.Row(elem_classes="desk-export"):
+                        cut_info = gr.Markdown()
+                    with gr.Accordion("執行過程（即時更新）", open=True):
+                        cut_log = gr.Textbox(show_label=False, lines=10, max_lines=18, autoscroll=True, interactive=False)
+                    desk_state = gr.State([])
+                    desk_sel = gr.State(None)
+                    desk_tracks = gr.State({"texts": [], "overlays": [], "sfx": []})
+                    desk_media = gr.State(_desk_paths)
+
+                    desk_out = [desk_state, desk_sel, desk_tracks, desk_timeline_gallery, desk_tracks_html, desk_summary,
+                                desk_sel_info, desk_transition, desk_image_secs, desk_preview]  # fmt: skip
+                    desk_in = [desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                               cut_end_secs, cut_music]  # fmt: skip
+                    _out_view = [out_dir_box, out_dir_info, desk_library_gallery, desk_media, desk_overlay_pick,
+                                 desk_sfx_pick, desk_import_info]  # fmt: skip
+                    out_apply_btn.click(output_dir_apply, inputs=out_dir_box, outputs=_out_view)
+                    out_dir_box.submit(output_dir_apply, inputs=out_dir_box, outputs=_out_view)
+                    out_reset_btn.click(output_dir_reset, inputs=None, outputs=_out_view)
+                    out_open_btn.click(output_dir_open, inputs=None, outputs=out_dir_info)
+                    demo.load(output_dir_show, inputs=None, outputs=[out_dir_box, out_dir_info])  # F5 shows the saved setting
+                    desk_refresh_btn.click(desk_library_refresh, inputs=None,
+                                           outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
+                    desk_upload_files.upload(desk_upload, inputs=desk_upload_files,
+                                             outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick,
+                                                      desk_import_info])  # fmt: skip
+                    desk_import_btn.click(desk_import_path, inputs=desk_import_text,
+                                          outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick,
+                                                   desk_import_info])  # fmt: skip
+                    desk_library_gallery.select(
+                        desk_add,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_media],
+                        outputs=desk_out,
+                    )  # fmt: skip
+                    desk_timeline_gallery.select(desk_select, inputs=desk_in, outputs=desk_out)
+                    desk_transition.input(
+                        desk_set_transition,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_transition],
+                        outputs=desk_out,
+                    )  # fmt: skip
+                    desk_image_secs.release(
+                        desk_set_seconds,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_image_secs],
+                        outputs=desk_out,
+                    )  # fmt: skip
+                    desk_left_btn.click(desk_move_left, inputs=desk_in, outputs=desk_out)
+                    desk_right_btn.click(desk_move_right, inputs=desk_in, outputs=desk_out)
+                    desk_remove_btn.click(desk_remove, inputs=desk_in, outputs=desk_out)
+                    desk_clear_btn.click(desk_clear, inputs=desk_in, outputs=desk_out)
+                    desk_text_add.click(
+                        desk_add_text,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_text, desk_text_start, desk_text_end, desk_text_pos,
+                                desk_text_size],
+                        outputs=desk_out,
+                    )  # fmt: skip
+                    desk_overlay_add.click(
+                        desk_add_overlay,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_overlay_pick, desk_overlay_start, desk_overlay_end,
+                                desk_overlay_pos, desk_overlay_scale],
+                        outputs=desk_out,
+                    )  # fmt: skip
+                    desk_sfx_add.click(
+                        desk_add_sfx,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_sfx_pick, desk_sfx_start, desk_sfx_volume],
+                        outputs=desk_out,
+                    )  # fmt: skip
+                    desk_text_undo_btn.click(desk_text_undo, inputs=desk_in, outputs=desk_out)
+                    desk_overlay_undo_btn.click(desk_overlay_undo, inputs=desk_in, outputs=desk_out)
+                    desk_sfx_undo_btn.click(desk_sfx_undo, inputs=desk_in, outputs=desk_out)
+                    for _desk_input in (cut_title_secs, cut_end_secs):
+                        _desk_input.release(desk_view, inputs=desk_in, outputs=desk_out)
+                    for _desk_text_input in (cut_title1, cut_title2, cut_end1, cut_end2):
+                        _desk_text_input.blur(desk_view, inputs=desk_in, outputs=desk_out)
+                    cut_music.change(desk_view, inputs=desk_in, outputs=desk_out)
+                    desk_template_btn.click(
+                        desk_apply_template,
+                        inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, desk_template],
+                        outputs=[desk_state, desk_sel, desk_tracks, desk_timeline_gallery, desk_tracks_html, desk_summary,
+                                 desk_sel_info, desk_transition, desk_image_secs, desk_preview, cut_title1, cut_title2,
+                                 cut_title_secs, cut_end1, cut_end2, cut_end_secs, cut_music_db, cut_bed, cut_ai_label,
+                                 desk_template_info],
+                    )  # fmt: skip
+                    cut_btn.click(
+                        render_cut_ui,
+                        inputs=[desk_state, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
+                                cut_end_secs, cut_music, cut_music_db, cut_music_fade, cut_bed, cut_ai_label],
+                        outputs=[desk_preview, cut_info, cut_log],
+                        concurrency_id="ffmpeg",  # CPU only: never queued behind a GPU job, one cut at a time
+                        concurrency_limit=1,
+                    )  # fmt: skip
+                    desk_tab.select(desk_library_refresh, inputs=None,  # the drive is read when the tab is opened, not on page load
+                                    outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
+                    _h3_run.then(desk_library_refresh, inputs=None,
+                                 outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick]
+                    ).then(metrics_refresh, inputs=None, outputs=[metrics_pick, metrics_chart, metrics_notes])  # fmt: skip
+
+        with gr.Tab("🧰 其他分類"):
+            with gr.Tabs():
+                with gr.Tab("🖼️ 自訂生圖"):
+                    with gr.Row():
+                        with gr.Column():
+                            character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
+                            anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
+                            anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
+                            custom_anchor = gr.Image(
+                                label="或自行上傳身分參考圖（會覆蓋上面的 Anchor 選擇）— 僅限虛構/AI生成的角色照，禁止上傳真人照片",
+                                type="filepath",
+                            )
+                            with gr.Accordion("依圖片產生 Prompt（上傳一張圖，自動轉成英文 prompt）", open=False):
+                                caption_upload = gr.Image(label="上傳圖片", type="filepath")
+                                with gr.Row():
+                                    caption_btn = gr.Button("產生描述（自然語言）")
+                                    tag_btn = gr.Button("產生標籤（WD14，Pony 系適用）")
+                                caption_output = gr.Textbox(label="結果（僅供參考，可自行編輯後使用）", lines=2, interactive=False)
+                                gr.Markdown(
+                                    "「描述」用 BLIP 出自然語言句子，juggernaut 和 SD1.5 吃這種。"
+                                    "「標籤」用 WD14 出 booru 標籤（`1girl, solo, long hair, ...`），"
+                                    "Pony 系 checkpoint 是用這種格式訓練的，通常不必再自己補太多字。"
+                                    "標籤模式需要 ComfyUI（第一次按會自動啟動），單張約 3 秒。"
+                                )
+                            with gr.Accordion("HQ 兩段式生成（預設開啟，5 分鐘內高品質）", open=True):
+                                use_hq = gr.Checkbox(
+                                    value=True,
+                                    label="兩段式：先低解析度生成 → ESRGAN 放大 → 低 denoise 重採樣補細節 → 臉部/手部精修。"
+                                          "修正失真與「3D render」感，並在有訓練好的角色 LoRA 時自動套用。關掉則走舊的單段式",
+                                )
+                                hires_denoise = gr.Slider(0.2, 0.6, value=client.HIRES_DENOISE, step=0.05,
+                                                          label="Hires 第二段 denoise（0.4 建議；太高會讓臉飄移，太低補不到細節）")
+                                character_lora_strength = gr.Slider(0.0, 1.2, value=client.CHARACTER_LORA_STRENGTH, step=0.05,
+                                                                     label="角色 LoRA 強度（僅在該角色有訓練好的 LoRA 時作用，否則忽略）")
+                            with gr.Accordion("骨架姿勢控制（ControlNet，選填）", open=False):
+                                pose_library = gr.Dropdown(
+                                    [POSE_NONE] + pose_skeletons.list_names(), value=POSE_NONE,
+                                    label="姿勢骨架庫（選一個內建姿勢；用來壓住 checkpoint 靠文字壓不住的姿勢，例如各種躺姿）。"
+                                          "若同時上傳了下方的參考照片，以照片為準",
+                                )
+                                skeleton_preview = gr.Image(label="骨架預覽", interactive=False, height=200)
+                                pose_reference = gr.Image(
+                                    label="或：自訂姿勢參考照片（自動抽取骨架）。此圖只抽取關節骨架，"
+                                          "不會保留臉部/身分資訊，可以是任何照片",
+                                    type="filepath",
+                                )
+                                controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
+                                                                 label="骨架控制強度（0=忽略骨架，1=嚴格鎖定姿勢）")
+                                gr.Markdown("ℹ️ 內建骨架庫用預先畫好的骨架直接餵 ControlNet（跳過 preprocessor），"
+                                            "不掛 FaceID 時單張約 60-90 秒。上傳照片則多一道骨架抽取。")
+                                pose_library.change(_pose_preview, inputs=pose_library, outputs=skeleton_preview)
+                            with gr.Accordion("臉部/手部精修（ADetailer，HQ 模式預設開啟）", open=True):
+                                use_facedetailer = gr.Checkbox(
+                                    value=True,
+                                    label="生成後自動偵測臉部+手部，各自裁切放大重繪一次，修正常見的臉部/手指小瑕疵。"
+                                          "HQ 模式可與骨架姿勢控制同時使用",
+                                )
+                                face_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_FACE_DENOISE, step=0.05,
+                                                         label="臉部精修強度（0=不變，1=該區域完全重畫）")
+                                hand_denoise = gr.Slider(0.0, 1.0, value=client.FACEDETAILER_HAND_DENOISE, step=0.05,
+                                                         label="手部精修強度（手部通常用比臉部略低的值，避免重畫出更糟的手）")
+                                facedetailer_backend = gr.Radio(
+                                    FACEDETAILER_BACKEND_CHOICES, value=FACEDETAILER_BACKEND_YOLO,
+                                    label="臉部偵測方式（HQ 模式一律用 YOLO；MediaPipe 只在關掉 HQ 的舊單段式路徑有作用）",
+                                )
+                            resolution = gr.Radio(RESOLUTION_CHOICES, value=RESOLUTION_AUTO, label="畫布比例（HQ 最終尺寸：正方形→1248×1248、直式→1056×1536、橫式→1536×1056；正方形沒有足夠垂直空間放全身，會被裁成上半身）")
+                            with gr.Accordion("Pony 關鍵字（點選代替打字：必備 4 類 ＋ 其他 9 類）", open=False):
+                                gr.Markdown(
+                                    "「必備」是 Pony 系 checkpoint 的標配：品質分數、來源風格、內容分級、主體與人數。"
+                                    "少了它們畫面會偏插畫，人數和年齡也比較不受控。"
+                                    "「其他」是想到才加的：鏡頭、姿勢、表情、髮型體態、服裝、光線、場景、風格、額外負面詞。\n\n"
+                                    f"{PONY_TAG_QUALITY_NOTE}\n\n"
+                                    "非 Pony 系（juggernaut / SD1.5 / Z-Image）會自動收起 `score_*`、`source_*`、"
+                                    "`rating_*` 這幾類——它們沒有被這樣訓練過；描述性的字則所有 checkpoint 都能用。\n\n"
+                                    "打自然語言本來就會自動補上推導出的 booru 標籤（`prompt_adapter`），"
+                                    "這裡是想「明確指定」時用的——特別是 `rating_*` / `source_*`，那是句子推不出來的。"
+                                )
+                                pony_tag_groups = [
+                                    gr.CheckboxGroup(
+                                        pony_tags.choices(_cat), value=[],
+                                        label=f"{'必備' if _cat['role'] == 'required' else '其他'}｜{_cat['name_zh']}",
+                                        info=_cat["note_zh"],
+                                    )
+                                    for _cat in PONY_TAG_INITIAL
+                                ]
+                                pony_tag_preview_box = gr.Textbox(
+                                    label="會加進去的內容（唯讀預覽）", value=PONY_TAG_PREVIEW_HINT,
+                                    lines=3, interactive=False,
+                                )
+                                with gr.Row():
+                                    pony_tag_append_btn = gr.Button("加入 Prompt", variant="secondary")
+                                    pony_tag_clear_btn = gr.Button("清除勾選", size="sm", scale=0)
+                            prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting in a cozy library, reading a book, warm afternoon light")
+                            translate_btn = gr.Button("翻譯成英文（CLIP 對中文支援不佳，建議先翻譯再送出；已經是英文按下去不會被改動）")
+                            negative_prompt = gr.Textbox(label="額外負面詞（選填，一次性追加，不影響下面的風格詞預設值）", lines=1)
+                            with gr.Accordion("風格正/負面詞（進階 - 可直接在這裡調整寫實感等風格用詞，不用改程式碼）", open=False):
+                                gr.Markdown(
+                                    "下面兩欄會自動接在 prompt/negative prompt 後面，預設值就是目前程式碼裡用的寫實化詞彙。"
+                                    "**這裡改不到年齡保護詞、露骨內容封鎖詞**，那些永遠固定套用、不會因為這裡的設定被移除或減弱。"
+                                )
+                                style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                                style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+                            gr.Markdown(
+                                "**目前預設（cyberrealistic_pony + HQ + 精修）就是實測最真實、失真最少的組合，不用改就能直接用。**"
+                                "純文字生圖、不需要鎖臉/姿勢/精修時，`z_image_turbo` 寫實度和手部更好，可以切過去試試。\n\n"
+                                "**什麼時候要切換 checkpoint：**\n"
+                                "- 需要「Anchor 身分鎖定」「骨架姿勢控制」或「臉部/手部精修」任一項 → 只能選 SDXL 系列"
+                                "（juggernaut / pony / cyberrealistic_pony / pony_realism），這三個功能都是接在 SDXL 專用模型檔上，"
+                                "選 SD1.5 送出時會直接跳錯誤。\n"
+                                "- 只要純文字生圖、想要更自然語言的 prompt、或想要 512×768 左右的原生解析度 → 可以切到 SD1.5 系列"
+                                "（realistic_vision / cyberrealistic），但切過去後 anchor / 姿勢控制 / 精修都會被鎖住，畫布比例也只能選「自動」。\n"
+                                "- pony / cyberrealistic_pony / pony_realism 需要的 `score_9, score_8_up, score_7_up` 品質 tag 前綴"
+                                "會自動加上，Prompt 欄位一樣打自然語言就好，不用自己記得加。"
+                                "下面的「寫實風格 LoRA 強度」建議切到 0（這顆 LoRA 是針對 juggernaut 調的，套在 pony 系會打架）。"
+                                "\n- `z_image_turbo`（Z-Image Turbo）→ 純文字生圖，寫實度、手指跟畫面裡的文字（包括中文字）都比 SDXL 好，"
+                                "Prompt 可以直接打中文不用翻譯；但沒有 anchor 鎖臉、姿勢控制、精修（選了角色只會用文字描述），"
+                                "要先依 README 下載模型，第一張要載入約 11 GB 模型，會比較久。"
+                            )
+                            with gr.Accordion("模型版本（完整版 / 量化版）", open=False):
+                                gr.Markdown(
+                                    "SDXL / Pony 四個模型可以各自選「完整版」或「量化版 fp8」。量化版把主模型權重存成 fp8，"
+                                    "VRAM、記憶體和硬碟用量比較少，換模型時搬得比較快；在這張 RTX 2070 上運算仍是 fp16，不會算得比較快。"
+                                    "這是全域設定：這裡、批次 GIF 和 CLI 都會套用，按「儲存」後下一張就生效。"
+                                    "選了量化版但還沒轉出量化檔時，會自動改用完整版並提示轉換指令；骨架姿勢（ControlNet）一律用完整版。"
+                                )
+                                variant_radios = [
+                                    gr.Radio([("完整版", "full"), ("量化版 fp8", "quant")], value=_row["chosen"],
+                                             label=_variant_label(_row), interactive=not _row["unsupported"])
+                                    for _row in client.variant_status()
+                                ]
+                                variant_table = gr.Markdown(_variant_table())
+                                with gr.Row():
+                                    variant_save_btn = gr.Button("儲存模型版本設定")
+                                    variant_refresh_btn = gr.Button("重新檢查檔案")
+                            checkpoint_choice = gr.Dropdown(
+                                CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
+                            )
+                            capability_box = gr.Markdown(capability_notice(CHECKPOINT_DEFAULT)["value"])
+                            lora_strength = gr.Slider(
+                                0.0, 3.0, value=0.0, step=0.1,
+                                label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
+                            )
+                            use_cloud = gr.Checkbox(
+                                value=False,
+                                label="用 RunPod 雲端 GPU 生成（同一套 workflow 送到雲端跑，不佔本機 8GB 卡；"
+                                      "需先在「☁️ 雲端影片」分頁設定 endpoint 與環境變數 RUNPOD_API_KEY）",
+                            )
+                            tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
+                            seed = gr.Number(value=9000, label="Seed", precision=0)
+                            ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
+                            custom_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
+                            with gr.Row():
+                                custom_route = gr.Markdown()
+                                custom_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
+                            btn = gr.Button("生成", variant="primary")
+                        with gr.Column():
+                            output = gr.Image(label="結果")
+
+                    character.change(refresh_anchors, inputs=character, outputs=[anchor, anchor_preview])
+                    anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
+                    # The Pony keyword groups follow both the tier and the checkpoint: the tier decides
+                    # whether the suggestive-only entries exist at all, the checkpoint whether the
+                    # score/source/rating categories apply. Chained onto the existing resolution reset
+                    # rather than replacing it - a second .change() on the same component would not
+                    # remove the first, but keeping them in one chain makes the order explicit.
+                    _pony_tag_inputs = pony_tag_groups + [tier, checkpoint_choice]
+                    checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution).then(
+                        pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
+                        pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box).then(
+                        capability_notice, inputs=checkpoint_choice, outputs=capability_box)
+                    tier.change(pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
+                        pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
+                    for _group in pony_tag_groups:
+                        _group.change(pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
+                    pony_tag_append_btn.click(
+                        pony_tag_append,
+                        inputs=pony_tag_groups + [tier, checkpoint_choice, prompt, negative_prompt],
+                        outputs=[prompt, negative_prompt],
+                    )
+                    pony_tag_clear_btn.click(
+                        pony_tag_clear, inputs=None, outputs=pony_tag_groups + [pony_tag_preview_box])
+                    variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
+                    variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
+                    caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
+                    tag_btn.click(tag_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
+                    translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
+                    # concurrency_id="gpu" on every generation button in this file: Gradio's default
+                    # concurrency_limit=1 is PER LISTENER, so without a shared id one browser tab could
+                    # start "生成" while another starts "生成 GIF" - two jobs aimed at the same 8GB card.
+                    # comfyui_client's own lock would serialise them anyway, but the second user would
+                    # just see their button spin with no explanation; a shared concurrency_id makes
+                    # Gradio queue it visibly instead. Includes the SadTalker button, which does not go
+                    # through ComfyUI but competes for the same VRAM.
+                    btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud, custom_force_local], outputs=output, concurrency_id="gpu")
+                    _custom_route_inputs = [checkpoint_choice, use_hq, pose_library, pose_reference, use_cloud,
+                                            custom_force_local]
+                    for _source in (use_hq, pose_library, pose_reference, use_cloud, custom_force_local):
+                        _source.change(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+                    checkpoint_choice.change(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+                    custom_route_btn.click(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+                    demo.load(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
+
+                with gr.Tab("🎬 AnimateDiff 動態影片"):
+                    gr.Markdown(
+                        "跟「自訂生圖」分頁是分開的 workflow，用 SD1.5 + AnimateDiff motion module 生成短動態影片，"
+                        "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分，再把所有影格的臉部一起重新採樣精修（不會一幀一個樣）——"
+                        "解決純 SVD img2vid（見 README「幫已有的圖片配上動作」）常見的臉部變形/融化問題。"
+                        "**目前預設（realistic_vision、高清開、精修開、LCM 關）就是實測畫質最完整的組合，不用改就能直接用；"
+                        "只有女性角色、想省時間才建議勾 LCM 快速模式——男性角色開 LCM 常常會被畫成女生，見下方勾選框說明。**"
+                        "預設流程：採樣 512² → 二段式高清 768² → 臉部精修 → ESRGAN 放大到長邊 1024 → mp4。"
+                        "第一次執行會比較久（SD1.5 checkpoint、motion module、FaceID SD1.5 模型是分開載入的新模型組合）。"
+                    )
+                    with gr.Row():
+                        with gr.Column():
+                            video_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分敘述）", value=NO_CHARACTER)
+                            video_face_ref = gr.Image(
+                                label="臉部參考圖（FaceID 用，僅限虛構/AI生成，禁止上傳真人照片）",
+                                type="filepath",
+                            )
+                            video_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting by a window, gentle breeze, turning head slightly")
+                            video_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
+                            video_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
+                            video_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
+                            with gr.Row():
+                                video_seed = gr.Number(value=6001, label="Seed", precision=0)
+                                video_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重")
+                            with gr.Row():
+                                video_frames = gr.Slider(8, 16, value=client.ANIMATEDIFF_FRAMES, step=1, label="採樣影格數（motion module 訓練上限 16）")
+                                video_fps = gr.Slider(0, 32, value=0, step=1, label="輸出 FPS（0 = 自動：8 × 補幀倍數，片長不變只變順；調低可拉長成慢動作）")
+                            with gr.Row():
+                                video_width = gr.Number(value=client.ANIMATEDIFF_WIDTH, label="寬", precision=0)
+                                video_height = gr.Number(value=client.ANIMATEDIFF_HEIGHT, label="高")
+                            with gr.Group():
+                                gr.Markdown("**畫質 / 流暢度 / 速度**")
+                                with gr.Row():
+                                    video_hires = gr.Checkbox(value=True, label="二段式高清（1.5x，上限 768²；VRAM 不足會自動退回）")
+                                    video_upscale = gr.Dropdown(UPSCALE_CHOICES, value=f"長邊 {client.ANIMATEDIFF_UPSCALE_TO}px",
+                                                                label="最終放大（ESRGAN 4x-UltraSharp，逐幀）")
+                                with gr.Row():
+                                    video_interp = gr.Radio(list(client.ANIMATEDIFF_INTERP_CHOICES), value=1,
+                                                            label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
+                                    video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
+                                video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README。男性角色實測常被畫成女生，不建議勾）")
+                            video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.ANIMATEDIFF_FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
+                            with gr.Row():
+                                video_faceid_v2_weight = gr.Slider(0.0, 3.0, value=client.ANIMATEDIFF_FACEID_V2_WEIGHT, step=0.1,
+                                                                   label="FaceID 臉部結構權重（越高臉越固定但動作越少；實測對相似度幾乎沒幫助）")
+                                video_motion_scale = gr.Slider(0.5, 1.2, value=client.ANIMATEDIFF_MOTION_SCALE, step=0.05,
+                                                               label="動作幅度（1.0 = 完整動作；0.85 就幾乎靜止）")
+                            video_checkpoint_choice = gr.Dropdown(
+                                ANIMATEDIFF_CHECKPOINT_CHOICES, value=ANIMATEDIFF_CHECKPOINT_DEFAULT,
+                                label="Checkpoint 模型（必須是 SD1.5，跟「自訂生圖」分頁的選項是分開的清單）",
+                            )
+                            with gr.Accordion("風格正/負面詞（進階，跟「自訂生圖」分頁獨立設定）", open=False):
+                                video_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                                video_style_negative = gr.Textbox(label="風格負面詞（影片版不含 symmetrical face，避免臉被推向不對稱）",
+                                                                  value=gc.VIDEO_REALISTIC_NEGATIVE, lines=2)
+                            with gr.Accordion("Motion LoRA（選用，鏡頭運動控制）", open=False):
+                                gr.Markdown(
+                                    "官方 AnimateDiff Motion LoRA，控制的是**整個畫面的鏡頭運動**（縮放/平移/"
+                                    "傾斜/旋轉），**不是特定身體部位的物理晃動效果**（沒有「彈跳」「晃動」這類選項，"
+                                    "motion module 本身沒有對應的控制機制）。要先下載對應的 `.ckpt` 檔案放到"
+                                    "`ComfyUI/models/animatediff_motion_lora/`，見 README「AnimateDiff Motion LoRA」"
+                                    "安裝章節，沒下載的話選了會生成失敗。"
+                                )
+                                video_motion_lora = gr.Dropdown(MOTION_LORA_CHOICES, value=MOTION_LORA_NONE, label="鏡頭運動")
+                                video_motion_lora_strength = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="強度（超過 1 容易讓畫面明顯扭曲）")
+                            video_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                            with gr.Row():
+                                video_route = gr.Markdown()
+                                video_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
+                            with gr.Row():
+                                video_btn = gr.Button("生成影片", variant="primary")
+                                video_cloud_btn = gr.Button("☁️ 改送雲端（RunPod）", variant="secondary")
+                        with gr.Column():
+                            video_output = gr.Video(label="結果")
+
+                    video_translate_btn.click(translate_prompt_to_english, inputs=video_prompt, outputs=video_prompt)
+                    video_btn.click(
+                        generate_video_animatediff,
+                        inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed,
+                                video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
+                                video_style_positive, video_style_negative, video_checkpoint_choice,
+                                video_motion_lora, video_motion_lora_strength,
+                                video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
+                                video_faceid_v2_weight, video_motion_scale, video_force_local],
+                        outputs=video_output,
+                        concurrency_id="gpu",
+                    )
+                    video_cloud_btn.click(
+                        send_animatediff_to_cloud,
+                        inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed],
+                        outputs=video_output,
+                        concurrency_id="cloud",
+                        concurrency_limit=1,
+                    )
+                    _video_route_inputs = [video_hires, video_use_facedetailer, video_upscale, video_interp, video_lcm,
+                                           video_force_local]
+                    for _source in _video_route_inputs:
+                        _source.change(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
+                    video_route_btn.click(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
+                    demo.load(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
+
+                with gr.Tab("🗣️ SadTalker 對嘴影片"):
+                    gr.Markdown(
+                        "上傳一張人像 + 一段語音，產生嘴型跟著語音動的說話影片（mp4，含聲音）。"
+                        "**來源人像僅限虛構/AI生成的臉（例如上面生成的 anchor），禁止上傳真人照片。**"
+                        "跑在 SadTalker 自己的 Python 環境，不用開 ComfyUI；如果 ComfyUI 正開著，會先請它釋放顯存。"
+                        "256 比較快（約 2-3GB VRAM），512 比較清楚（約 4-6GB）。半身/全身圖建議選 full + 勾 still。"
+                    )
+                    with gr.Row():
+                        with gr.Column():
+                            talk_image = gr.Image(label="來源人像（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath")
+                            talk_audio = gr.Audio(label="語音檔（wav/mp3 等，會自動轉成 16kHz wav）", type="filepath")
+                            with gr.Row():
+                                talk_size = gr.Radio(list(talking_head.SIZES), value=512, label="臉部渲染尺寸")
+                                talk_preprocess = gr.Dropdown(list(talking_head.PREPROCESS_MODES), value="crop",
+                                                              label="範圍（crop 只有臉；full/extfull 貼回整張圖）")
+                            with gr.Row():
+                                talk_still = gr.Checkbox(value=False, label="still（頭部幾乎不動，搭配 full 使用）")
+                                talk_enhancer = gr.Dropdown([TALK_ENHANCER_NONE] + list(talking_head.ENHANCERS), value=TALK_ENHANCER_NONE,
+                                                            label="臉部修復（gfpgan 第一次使用會下載 ~348MB）")
+                            with gr.Row():
+                                talk_expression = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="表情/嘴型幅度")
+                                talk_pose_style = gr.Slider(0, 45, value=0, step=1, label="頭部動作風格")
+                            talk_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                            talk_btn = gr.Button("生成說話影片", variant="primary")
+                        with gr.Column():
+                            talk_output = gr.Video(label="結果")
+
+                    talk_btn.click(
+                        generate_talking_head_ui,
+                        inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
+                                talk_enhancer, talk_pose_style, talk_force_local],
+                        outputs=talk_output,
+                        concurrency_id="gpu",
+                    )
+
+                with gr.Tab("📹 SVD 圖生影片"):
+                    gr.Markdown(
+                        "上傳一張既有的圖片（例如上面生成的 anchor 或 dataset 照片），用 Stable Video Diffusion "
+                        "直接讓那張圖動起來——跟「AnimateDiff 動態影片」分頁不同，這裡不是用 prompt 生成新內容，"
+                        "是直接讓那張圖本身動起來。**這條路線沒有 FaceID 鎖臉，動態幅度大時臉容易變形/融化**，"
+                        "低解析度/低影格數，只是「動起來測試」用途，非最終畫質。想要臉部穩定的動態影片，"
+                        "請用「AnimateDiff 動態影片」分頁。"
+                    )
+                    with gr.Row():
+                        with gr.Column():
+                            svd_character = gr.Dropdown(sorted(gc.CHARACTERS), label="角色（決定輸出資料夾位置）")
+                            svd_init_image = gr.Image(label="要配上動作的圖片", type="filepath")
+                            svd_seed = gr.Number(value=6001, label="Seed", precision=0)
+                            with gr.Row():
+                                svd_frames = gr.Slider(6, 25, value=client.VIDEO_FRAMES, step=1, label="影格數")
+                                svd_fps = gr.Slider(2, 12, value=client.VIDEO_FPS, step=1, label="FPS")
+                            svd_motion = gr.Slider(1, 255, value=client.MOTION_BUCKET_ID, step=1,
+                                                    label="動態強度（越高動作越大，但越容易變形/融化，人像建議偏低）")
+                            svd_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                            svd_btn = gr.Button("生成影片（SVD）", variant="primary")
+                        with gr.Column():
+                            svd_output = gr.Video(label="結果")
+
+                    svd_btn.click(
+                        generate_video_svd,
+                        inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion, svd_force_local],
+                        outputs=svd_output,
+                        concurrency_id="gpu",
+                    )
+
+                with gr.Tab("🎞️ 批次生成 GIF"):
+                    gr.Markdown(
+                        "先生成第一張（完整生成），後面每一張都是拿**同一張第一張的圖**用低 denoise 的 img2img 去微調"
+                        "（同一個 prompt，只有 seed 不同），組成一個會動的 GIF——同一個人、同一個姿勢、同一個場景，"
+                        "只有細節隨每張的 seed 有小幅變化，靠「動作幅度」滑桿控制變化大小。"
+                        "**這不是像 AnimateDiff 那樣有時序關聯的平滑動態**，是同一張圖反覆微調出來的效果，"
+                        "沒有動作連貫的「進行中」的感覺，比較像是原地小幅度的浮動/晃動；想要真正平滑、有動作進展的"
+                        "動態影片，請用「AnimateDiff 動態影片」分頁。生成速度比 AnimateDiff 快很多"
+                        "（每張都是普通靜態圖，沒有影格數的額外負擔）。"
+                    )
+                    with gr.Row():
+                        with gr.Column():
+                            gif_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
+                            gif_anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
+                            gif_anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
+                            gif_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: standing in a park, looking at the camera")
+                            gif_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
+                            gif_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
+                            with gr.Accordion("風格正/負面詞（進階，跟「自訂生圖」分頁獨立設定）", open=False):
+                                gif_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
+                                gif_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
+                            gif_checkpoint_choice = gr.Dropdown(
+                                CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT,
+                                label="Checkpoint 模型（選了角色/anchor 就只能 SDXL 系列，跟「自訂生圖」分頁的規則一樣）",
+                            )
+                            gif_lora_strength = gr.Slider(0.0, 3.0, value=0.0, step=0.1, label="寫實風格 LoRA 強度（pony 系建議 0）")
+                            gif_tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（露骨內容依然封鎖）")
+                            gif_seed = gr.Number(value=9000, label="起始 Seed（每張圖依序 +1）", precision=0)
+                            with gr.Row():
+                                gif_frames = gr.Slider(2, 20, value=8, step=1, label="張數")
+                                gif_duration = gr.Slider(100, 1000, value=300, step=50, label="每張顯示時間（毫秒）")
+                            gif_denoise = gr.Slider(
+                                0.0, 1.0, value=gc.GIF_WIGGLE_DENOISE, step=0.05,
+                                label="動作幅度（實測：0.3 幾乎看不出變化，0.7 姿勢已經明顯跑掉；0.45 是還沒驗證過的中間值，"
+                                      "看起來太靜止就往上調，姿勢跑掉就往下調）",
+                            )
+                            gif_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（有選角色才有作用）")
+                            gif_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                            gif_btn = gr.Button("生成 GIF", variant="primary")
+                        with gr.Column():
+                            gif_output = gr.Image(label="結果（GIF，會自動播放）")
+
+                    gif_character.change(refresh_anchors, inputs=gif_character, outputs=[gif_anchor, gif_anchor_preview])
+                    gif_anchor.change(lambda path: path, inputs=gif_anchor, outputs=gif_anchor_preview)
+                    gif_translate_btn.click(translate_prompt_to_english, inputs=gif_prompt, outputs=gif_prompt)
+                    gif_btn.click(
+                        generate_gif,
+                        inputs=[gif_character, gif_anchor, gif_prompt, gif_tier, gif_negative_prompt, gif_seed, gif_frames,
+                                gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
+                                gif_checkpoint_choice, gif_lora_strength, gif_force_local],
+                        outputs=gif_output,
+                        concurrency_id="gpu",
+                    )
+
+                with gr.Tab("☁️ 雲端影片"):
+                    gr.Markdown(
+                        "在雲端 GPU 上生成影片，不佔用本機這張 8GB 卡。**Wan 2.2 圖生影片**是新一代模型："
+                        "拿一張角色圖當第一幀，生成動作自然的 720p 影片（沒有 FaceID，身分靠第一幀維持）。"
+                        "**AnimateDiff 雲端高畫質**是本機同一套 FaceID 鎖臉流程，只是解除 8GB 的高清上限，"
+                        "只能跑在 RunPod。所有 prompt 一樣會套用年齡保護與內容分級的負面詞。"
+                    )
+                    cloud_status = gr.Markdown(cloud_status_markdown())
+                    with gr.Accordion("雲端設定（endpoint ID／模型；API 金鑰請用環境變數）", open=False):
+                        _cloud_settings = cloud_video.load_cloud_settings()
+                        cloud_endpoint = gr.Textbox(
+                            label="RunPod Serverless endpoint ID", value=_cloud_settings["runpod"]["endpoint_id"],
                         )
-                        variant_radios = [
-                            gr.Radio([("完整版", "full"), ("量化版 fp8", "quant")], value=_row["chosen"],
-                                     label=_variant_label(_row), interactive=not _row["unsupported"])
-                            for _row in client.variant_status()
-                        ]
-                        variant_table = gr.Markdown(_variant_table())
-                        with gr.Row():
-                            variant_save_btn = gr.Button("儲存模型版本設定")
-                            variant_refresh_btn = gr.Button("重新檢查檔案")
-                    checkpoint_choice = gr.Dropdown(
-                        CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
-                    )
-                    capability_box = gr.Markdown(capability_notice(CHECKPOINT_DEFAULT)["value"])
-                    lora_strength = gr.Slider(
-                        0.0, 3.0, value=0.0, step=0.1,
-                        label="寫實風格 LoRA 強度（針對 Juggernaut 調的，換成 pony 等其他 checkpoint 時建議調到 0）",
-                    )
-                    use_cloud = gr.Checkbox(
-                        value=False,
-                        label="用 RunPod 雲端 GPU 生成（同一套 workflow 送到雲端跑，不佔本機 8GB 卡；"
-                              "需先在「☁️ 雲端影片」分頁設定 endpoint 與環境變數 RUNPOD_API_KEY）",
-                    )
-                    tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（suggestive 上限跟 test-suggestive 一樣，露骨內容依然封鎖）")
-                    seed = gr.Number(value=9000, label="Seed", precision=0)
-                    ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（FaceID 量表，有選角色才有作用）")
-                    custom_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
-                    with gr.Row():
-                        custom_route = gr.Markdown()
-                        custom_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
-                    btn = gr.Button("生成", variant="primary")
-                with gr.Column():
-                    output = gr.Image(label="結果")
-
-            character.change(refresh_anchors, inputs=character, outputs=[anchor, anchor_preview])
-            anchor.change(lambda path: path, inputs=anchor, outputs=anchor_preview)
-            # The Pony keyword groups follow both the tier and the checkpoint: the tier decides
-            # whether the suggestive-only entries exist at all, the checkpoint whether the
-            # score/source/rating categories apply. Chained onto the existing resolution reset
-            # rather than replacing it - a second .change() on the same component would not
-            # remove the first, but keeping them in one chain makes the order explicit.
-            _pony_tag_inputs = pony_tag_groups + [tier, checkpoint_choice]
-            checkpoint_choice.change(reset_resolution_for_sd15, inputs=checkpoint_choice, outputs=resolution).then(
-                pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
-                pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box).then(
-                capability_notice, inputs=checkpoint_choice, outputs=capability_box)
-            tier.change(pony_tag_refresh, inputs=_pony_tag_inputs, outputs=pony_tag_groups).then(
-                pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
-            for _group in pony_tag_groups:
-                _group.change(pony_tag_preview, inputs=_pony_tag_inputs, outputs=pony_tag_preview_box)
-            pony_tag_append_btn.click(
-                pony_tag_append,
-                inputs=pony_tag_groups + [tier, checkpoint_choice, prompt, negative_prompt],
-                outputs=[prompt, negative_prompt],
-            )
-            pony_tag_clear_btn.click(
-                pony_tag_clear, inputs=None, outputs=pony_tag_groups + [pony_tag_preview_box])
-            variant_save_btn.click(save_variant_choices, inputs=variant_radios, outputs=variant_table)
-            variant_refresh_btn.click(refresh_variant_status, inputs=None, outputs=variant_radios + [variant_table])
-            caption_btn.click(caption_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
-            tag_btn.click(tag_uploaded_image, inputs=caption_upload, outputs=[caption_output, prompt])
-            translate_btn.click(translate_prompt_to_english, inputs=prompt, outputs=prompt)
-            # concurrency_id="gpu" on every generation button in this file: Gradio's default
-            # concurrency_limit=1 is PER LISTENER, so without a shared id one browser tab could
-            # start "生成" while another starts "生成 GIF" - two jobs aimed at the same 8GB card.
-            # comfyui_client's own lock would serialise them anyway, but the second user would
-            # just see their button spin with no explanation; a shared concurrency_id makes
-            # Gradio queue it visibly instead. Includes the SadTalker button, which does not go
-            # through ComfyUI but competes for the same VRAM.
-            btn.click(generate, inputs=[character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_weight, pose_reference, pose_library, controlnet_strength, resolution, use_hq, hires_denoise, character_lora_strength, use_facedetailer, face_denoise, hand_denoise, facedetailer_backend, style_positive, style_negative, checkpoint_choice, lora_strength, use_cloud, custom_force_local], outputs=output, concurrency_id="gpu")
-            _custom_route_inputs = [checkpoint_choice, use_hq, pose_library, pose_reference, use_cloud,
-                                    custom_force_local]
-            for _source in (use_hq, pose_library, pose_reference, use_cloud, custom_force_local):
-                _source.change(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
-            checkpoint_choice.change(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
-            custom_route_btn.click(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
-            demo.load(custom_route_preview, inputs=_custom_route_inputs, outputs=custom_route)
-
-        with gr.Tab("🎬 AnimateDiff 動態影片"):
-            gr.Markdown(
-                "跟「自訂生圖」分頁是分開的 workflow，用 SD1.5 + AnimateDiff motion module 生成短動態影片，"
-                "並用 IPAdapter-FaceID 鎖住整段影片的臉部身分，再把所有影格的臉部一起重新採樣精修（不會一幀一個樣）——"
-                "解決純 SVD img2vid（見 README「幫已有的圖片配上動作」）常見的臉部變形/融化問題。"
-                "**目前預設（realistic_vision、高清開、精修開、LCM 關）就是實測畫質最完整的組合，不用改就能直接用；"
-                "只有女性角色、想省時間才建議勾 LCM 快速模式——男性角色開 LCM 常常會被畫成女生，見下方勾選框說明。**"
-                "預設流程：採樣 512² → 二段式高清 768² → 臉部精修 → ESRGAN 放大到長邊 1024 → mp4。"
-                "第一次執行會比較久（SD1.5 checkpoint、motion module、FaceID SD1.5 模型是分開載入的新模型組合）。"
-            )
-            with gr.Row():
-                with gr.Column():
-                    video_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分敘述）", value=NO_CHARACTER)
-                    video_face_ref = gr.Image(
-                        label="臉部參考圖（FaceID 用，僅限虛構/AI生成，禁止上傳真人照片）",
-                        type="filepath",
-                    )
-                    video_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: sitting by a window, gentle breeze, turning head slightly")
-                    video_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
-                    video_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
-                    video_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
-                    with gr.Row():
-                        video_seed = gr.Number(value=6001, label="Seed", precision=0)
-                        video_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重")
-                    with gr.Row():
-                        video_frames = gr.Slider(8, 16, value=client.ANIMATEDIFF_FRAMES, step=1, label="採樣影格數（motion module 訓練上限 16）")
-                        video_fps = gr.Slider(0, 32, value=0, step=1, label="輸出 FPS（0 = 自動：8 × 補幀倍數，片長不變只變順；調低可拉長成慢動作）")
-                    with gr.Row():
-                        video_width = gr.Number(value=client.ANIMATEDIFF_WIDTH, label="寬", precision=0)
-                        video_height = gr.Number(value=client.ANIMATEDIFF_HEIGHT, label="高")
-                    with gr.Group():
-                        gr.Markdown("**畫質 / 流暢度 / 速度**")
-                        with gr.Row():
-                            video_hires = gr.Checkbox(value=True, label="二段式高清（1.5x，上限 768²；VRAM 不足會自動退回）")
-                            video_upscale = gr.Dropdown(UPSCALE_CHOICES, value=f"長邊 {client.ANIMATEDIFF_UPSCALE_TO}px",
-                                                        label="最終放大（ESRGAN 4x-UltraSharp，逐幀）")
-                        with gr.Row():
-                            video_interp = gr.Radio(list(client.ANIMATEDIFF_INTERP_CHOICES), value=1,
-                                                    label="RIFE 補幀倍數（2/4 需先安裝 ComfyUI-Frame-Interpolation，見 README）")
-                            video_use_facedetailer = gr.Checkbox(value=True, label="臉部精修（關掉比較快，但臉可能變糊/漂移）")
-                        video_lcm = gr.Checkbox(value=False, label="LCM 快速模式（AnimateLCM，8 步取代 20 步；需先下載模型，見 README。男性角色實測常被畫成女生，不建議勾）")
-                    video_facedetailer_denoise = gr.Slider(0.0, 1.0, value=client.ANIMATEDIFF_FACEDETAILER_DENOISE, step=0.05, label="臉部精修強度")
-                    with gr.Row():
-                        video_faceid_v2_weight = gr.Slider(0.0, 3.0, value=client.ANIMATEDIFF_FACEID_V2_WEIGHT, step=0.1,
-                                                           label="FaceID 臉部結構權重（越高臉越固定但動作越少；實測對相似度幾乎沒幫助）")
-                        video_motion_scale = gr.Slider(0.5, 1.2, value=client.ANIMATEDIFF_MOTION_SCALE, step=0.05,
-                                                       label="動作幅度（1.0 = 完整動作；0.85 就幾乎靜止）")
-                    video_checkpoint_choice = gr.Dropdown(
-                        ANIMATEDIFF_CHECKPOINT_CHOICES, value=ANIMATEDIFF_CHECKPOINT_DEFAULT,
-                        label="Checkpoint 模型（必須是 SD1.5，跟「自訂生圖」分頁的選項是分開的清單）",
-                    )
-                    with gr.Accordion("風格正/負面詞（進階，跟「自訂生圖」分頁獨立設定）", open=False):
-                        video_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                        video_style_negative = gr.Textbox(label="風格負面詞（影片版不含 symmetrical face，避免臉被推向不對稱）",
-                                                          value=gc.VIDEO_REALISTIC_NEGATIVE, lines=2)
-                    with gr.Accordion("Motion LoRA（選用，鏡頭運動控制）", open=False):
-                        gr.Markdown(
-                            "官方 AnimateDiff Motion LoRA，控制的是**整個畫面的鏡頭運動**（縮放/平移/"
-                            "傾斜/旋轉），**不是特定身體部位的物理晃動效果**（沒有「彈跳」「晃動」這類選項，"
-                            "motion module 本身沒有對應的控制機制）。要先下載對應的 `.ckpt` 檔案放到"
-                            "`ComfyUI/models/animatediff_motion_lora/`，見 README「AnimateDiff Motion LoRA」"
-                            "安裝章節，沒下載的話選了會生成失敗。"
+                        cloud_replicate_model = gr.Textbox(
+                            label="Replicate 模型（owner/name 或 owner/name:version；不符合安全條件的模型會被拒絕）",
+                            value=_cloud_settings["replicate"]["model"],
                         )
-                        video_motion_lora = gr.Dropdown(MOTION_LORA_CHOICES, value=MOTION_LORA_NONE, label="鏡頭運動")
-                        video_motion_lora_strength = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="強度（超過 1 容易讓畫面明顯扭曲）")
-                    video_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
+                        cloud_save_btn = gr.Button("儲存設定")
                     with gr.Row():
-                        video_route = gr.Markdown()
-                        video_route_btn = gr.Button("🔄 重新判斷", size="sm", scale=0)
-                    with gr.Row():
-                        video_btn = gr.Button("生成影片", variant="primary")
-                        video_cloud_btn = gr.Button("☁️ 改送雲端（RunPod）", variant="secondary")
-                with gr.Column():
-                    video_output = gr.Video(label="結果")
-
-            video_translate_btn.click(translate_prompt_to_english, inputs=video_prompt, outputs=video_prompt)
-            video_btn.click(
-                generate_video_animatediff,
-                inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed,
-                        video_ip_weight, video_facedetailer_denoise, video_frames, video_fps, video_width, video_height,
-                        video_style_positive, video_style_negative, video_checkpoint_choice,
-                        video_motion_lora, video_motion_lora_strength,
-                        video_hires, video_upscale, video_interp, video_use_facedetailer, video_lcm,
-                        video_faceid_v2_weight, video_motion_scale, video_force_local],
-                outputs=video_output,
-                concurrency_id="gpu",
-            )
-            video_cloud_btn.click(
-                send_animatediff_to_cloud,
-                inputs=[video_character, video_face_ref, video_prompt, video_tier, video_negative_prompt, video_seed],
-                outputs=video_output,
-                concurrency_id="cloud",
-                concurrency_limit=1,
-            )
-            _video_route_inputs = [video_hires, video_use_facedetailer, video_upscale, video_interp, video_lcm,
-                                   video_force_local]
-            for _source in _video_route_inputs:
-                _source.change(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
-            video_route_btn.click(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
-            demo.load(animatediff_route_preview, inputs=_video_route_inputs, outputs=video_route)
-
-        with gr.Tab("🗣️ SadTalker 對嘴影片"):
-            gr.Markdown(
-                "上傳一張人像 + 一段語音，產生嘴型跟著語音動的說話影片（mp4，含聲音）。"
-                "**來源人像僅限虛構/AI生成的臉（例如上面生成的 anchor），禁止上傳真人照片。**"
-                "跑在 SadTalker 自己的 Python 環境，不用開 ComfyUI；如果 ComfyUI 正開著，會先請它釋放顯存。"
-                "256 比較快（約 2-3GB VRAM），512 比較清楚（約 4-6GB）。半身/全身圖建議選 full + 勾 still。"
-            )
-            with gr.Row():
-                with gr.Column():
-                    talk_image = gr.Image(label="來源人像（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath")
-                    talk_audio = gr.Audio(label="語音檔（wav/mp3 等，會自動轉成 16kHz wav）", type="filepath")
-                    with gr.Row():
-                        talk_size = gr.Radio(list(talking_head.SIZES), value=512, label="臉部渲染尺寸")
-                        talk_preprocess = gr.Dropdown(list(talking_head.PREPROCESS_MODES), value="crop",
-                                                      label="範圍（crop 只有臉；full/extfull 貼回整張圖）")
-                    with gr.Row():
-                        talk_still = gr.Checkbox(value=False, label="still（頭部幾乎不動，搭配 full 使用）")
-                        talk_enhancer = gr.Dropdown([TALK_ENHANCER_NONE] + list(talking_head.ENHANCERS), value=TALK_ENHANCER_NONE,
-                                                    label="臉部修復（gfpgan 第一次使用會下載 ~348MB）")
-                    with gr.Row():
-                        talk_expression = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="表情/嘴型幅度")
-                        talk_pose_style = gr.Slider(0, 45, value=0, step=1, label="頭部動作風格")
-                    talk_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
-                    talk_btn = gr.Button("生成說話影片", variant="primary")
-                with gr.Column():
-                    talk_output = gr.Video(label="結果")
-
-            talk_btn.click(
-                generate_talking_head_ui,
-                inputs=[talk_image, talk_audio, talk_size, talk_preprocess, talk_still, talk_expression,
-                        talk_enhancer, talk_pose_style, talk_force_local],
-                outputs=talk_output,
-                concurrency_id="gpu",
-            )
-
-        with gr.Tab("📹 SVD 圖生影片"):
-            gr.Markdown(
-                "上傳一張既有的圖片（例如上面生成的 anchor 或 dataset 照片），用 Stable Video Diffusion "
-                "直接讓那張圖動起來——跟「AnimateDiff 動態影片」分頁不同，這裡不是用 prompt 生成新內容，"
-                "是直接讓那張圖本身動起來。**這條路線沒有 FaceID 鎖臉，動態幅度大時臉容易變形/融化**，"
-                "低解析度/低影格數，只是「動起來測試」用途，非最終畫質。想要臉部穩定的動態影片，"
-                "請用「AnimateDiff 動態影片」分頁。"
-            )
-            with gr.Row():
-                with gr.Column():
-                    svd_character = gr.Dropdown(sorted(gc.CHARACTERS), label="角色（決定輸出資料夾位置）")
-                    svd_init_image = gr.Image(label="要配上動作的圖片", type="filepath")
-                    svd_seed = gr.Number(value=6001, label="Seed", precision=0)
-                    with gr.Row():
-                        svd_frames = gr.Slider(6, 25, value=client.VIDEO_FRAMES, step=1, label="影格數")
-                        svd_fps = gr.Slider(2, 12, value=client.VIDEO_FPS, step=1, label="FPS")
-                    svd_motion = gr.Slider(1, 255, value=client.MOTION_BUCKET_ID, step=1,
-                                            label="動態強度（越高動作越大，但越容易變形/融化，人像建議偏低）")
-                    svd_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
-                    svd_btn = gr.Button("生成影片（SVD）", variant="primary")
-                with gr.Column():
-                    svd_output = gr.Video(label="結果")
-
-            svd_btn.click(
-                generate_video_svd,
-                inputs=[svd_character, svd_init_image, svd_seed, svd_frames, svd_fps, svd_motion, svd_force_local],
-                outputs=svd_output,
-                concurrency_id="gpu",
-            )
-
-        with gr.Tab("🎬 圖片→影片（本機）"):
-            gr.Markdown(
-                "兩個區塊：**① 生成圖片**（文字 → 首幀圖，Z-Image 或 Qwen-Image 2.1）、**② 生成影片**"
-                "（首幀 → 5 秒帶配音的 MiniMax H3 影片）。都跑在這台顯示卡上，不花 Colab 運算單元。"
-                "①生好按「➡️ 用這張當首幀」就會帶到②；也可以直接在②上傳自己的圖。\n\n"
-                "**要先知道**：圖片 Z-Image 約 30 秒、Qwen 約 2 分鐘；影片本機 5 秒約 8～10 分鐘，顯存幾乎滿"
-                "（約 15.7／16 GB），RAM 會用到分頁檔、SSD 會接近 100%。一次只做一件事，聊天模型會被卸載。"
-                "超過 5 秒本機沒量過，所以固定 5 秒。所有描述都先過跟 Colab 版一樣的內容過濾，有禁字就拒絕。"
-            )
-            gr.Markdown("## ① 生成圖片")
-            with gr.Row():
-                with gr.Column():
-                    still_prompt = gr.Textbox(
-                        label="圖片描述（中文或英文都行，中文會先自動翻成英文；人物要是成年人）", lines=4,
-                        placeholder="例如：a young adult Taiwanese woman in her mid-twenties wearing a cream apron, "
-                                    "laughing in a home kitchen, steam rising from a pot")
-                    with gr.Row():
-                        still_model = gr.Radio(
-                            [v["label"] for v in H3_STILL_MODELS.values()],
-                            value=next(iter(H3_STILL_MODELS.values()))["label"], label="圖片模型")
-                        still_seed = gr.Number(value=8201, label="Seed", precision=0)
-                    still_negative = gr.Textbox(
-                        label="負面詞（選填，中文英文都行；加在系統固定的安全負面詞後面，固定的那些拿不掉）", lines=2,
-                        placeholder="例如：模糊, 多餘的手指, 文字, 浮水印")
-                    still_people = gr.Radio(
-                        [v[0] for v in H3_PEOPLE.values()], value=H3_PEOPLE[1][0],
-                        label="畫面人數（都是成年人；2 人以上描述裡也可以自己寫誰在做什麼）")
-                    still_btn = gr.Button("生成圖片", variant="primary")
-                with gr.Column():
-                    still_output = gr.Image(label="圖片結果", type="filepath", interactive=False)
-                    still_info = gr.Markdown()
-                    still_use_btn = gr.Button("➡️ 用這張當首幀（帶到下面的影片區塊）")
-            still_log = gr.Textbox(label="執行過程（即時更新）", lines=10, max_lines=18, autoscroll=True, interactive=False)
-
-            gr.Markdown("## ② 生成影片")
-            with gr.Row():
-                with gr.Column():
-                    h3_image = gr.Image(label="首幀（①帶過來的，或自己上傳／拖進來的圖）", type="filepath")
-                    # Right under the picture: a picture uploaded here (not made by ①) needs the owner's declaration once.
-                    h3_attest = gr.Checkbox(value=False, label=H3_ATTEST_LABEL)
-                    with gr.Row():
-                        h3_gender = gr.Radio(["女", "男", "一男一女"], value="女", label="人物（一男一女：女 S1、男 S2 都在畫面裡）")
-                        h3_seed = gr.Number(value=8201, label="Seed", precision=0)
-                    h3_idea_box = gr.Textbox(label="中文情境（做什麼）", lines=2,
-                                             placeholder="例如：她笑著指向冒煙的鍋子")
-                    h3_line = gr.Textbox(label="台詞（原樣放進影片，20 字內；一男一女時是女生說的）", placeholder="例如：快！關小火！")
-                    h3_others = gr.Checkbox(
-                        value=False, label="畫面裡可以有其他成年人（只有主角說話；背景人物容易變形，先試一次看看）")
-                    h3_line2 = gr.Textbox(label="男生的回答（選填，只有「一男一女」才用；兩個人同時說話的配音沒有驗證過）")
-                    h3_write_btn = gr.Button("✍️ 用 Qwen 寫描述")
-                    h3_desc = gr.Textbox(
-                        label="影片描述（英文；改成中文也行，會先自動翻譯；台詞要放在 <d>[Chinese] …</d> 裡，不會被翻）", lines=7)
-                    h3_sound = gr.Textbox(label="環境聲（選填，中文英文都行）", placeholder="例如：Home kitchen: a soft sizzle ...")
-                    h3_static = gr.Checkbox(value=False, label="人物與背景保持靜止（貓、蒸氣、背景最容易變形時勾）")
-                    h3_btn = gr.Button("生成影片（本機 H3）", variant="primary")
-                with gr.Column():
-                    h3_output = gr.Video(label="影片結果")
-                    h3_info = gr.Markdown()
-            h3_log = gr.Textbox(label="執行過程（即時更新）", lines=10, max_lines=18, autoscroll=True, interactive=False)
-
-            _desk_items, _desk_paths = desk_library()
-            with gr.Row(elem_classes="desk-toolbar", equal_height=True):
-                gr.Markdown("### 🎬 ③ 導演台")
-                desk_template = gr.Dropdown(choices=list(H3_DESK_TEMPLATES), value=None, label="範本",
-                                            scale=3, container=False)  # fmt: skip
-                desk_template_btn = gr.Button("套用範本", size="sm", scale=1)
-                cut_btn = gr.Button("🎬 輸出成片", variant="primary", scale=2)
-            desk_template_info = gr.Markdown(
-                "點素材庫縮圖加入時間軸 → 點時間軸卡片編輯 → 右邊加文字、疊圖、音效、字卡、配樂 → 輸出成片"
-                "（ffmpeg，不用 GPU；每支片段自動對齊音量，整支 −14 LUFS，1080×1920）。", elem_classes="desk-hint")
-            with gr.Row(equal_height=False):
-                with gr.Column(scale=3, min_width=260, elem_classes="desk-panel desk-library"):
-                    with gr.Tabs():
-                        with gr.Tab("素材庫"):
-                            desk_library_gallery = gr.Gallery(
-                                value=_desk_items, columns=3, height=430, allow_preview=False, object_fit="cover",
-                                show_label=False, label="素材庫")  # fmt: skip
-                            desk_refresh_btn = gr.Button("🔄 重新整理", size="sm")
-                        with gr.Tab("匯入"):
-                            desk_upload_files = gr.File(
-                                label="拖檔案進來或點一下選檔（影片、圖片、音訊，可多選）", file_count="multiple",
-                                file_types=["video", "image", "audio"])  # fmt: skip
-                            desk_import_text = gr.Textbox(
-                                label="或貼上檔案／資料夾路徑（多個用 ; 分開）", placeholder=r"D:\素材\clip.mp4 或 D:\素材")
-                            desk_import_btn = gr.Button("📂 從路徑匯入", size="sm")
-                            desk_import_info = gr.Markdown("匯入的檔案會複製到 `outputs/h3_local/imports/`")
-                with gr.Column(scale=4, min_width=300, elem_classes="desk-monitor"):
-                    desk_preview = gr.Video(label="播放器", height=500)
-                with gr.Column(scale=3, min_width=280, elem_classes="desk-panel"):
-                    with gr.Tabs():
-                        with gr.Tab("片段"):
-                            desk_sel_info = gr.Markdown("點下方時間軸的片段卡片來編輯它")
-                            desk_transition = gr.Dropdown(
-                                choices=list(H3_DESK_TRANSITIONS), value=H3_DESK_TRANSITIONS[0], label="進場轉場",
-                                interactive=False)  # fmt: skip
-                            desk_image_secs = gr.Slider(0.5, 15, value=3, step=0.5, label="圖片秒數", visible=False)
+                        with gr.Column():
+                            cloud_provider = gr.Radio(CLOUD_PROVIDER_CHOICES, value="runpod", label="雲端平台")
+                            cloud_job = gr.Radio([CLOUD_JOB_WAN, CLOUD_JOB_ANIMATEDIFF], value=CLOUD_JOB_WAN,
+                                                 label="工作類型")
+                            cloud_character = gr.Dropdown(CHARACTER_CHOICES, value=NO_CHARACTER,
+                                                          label="角色（選填，會加上角色外貌描述）")
+                            cloud_first_frame = gr.Image(
+                                label="第一幀／臉部參考圖（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath",
+                            )
                             with gr.Row():
-                                desk_left_btn = gr.Button("◀ 前移", size="sm")
-                                desk_right_btn = gr.Button("後移 ▶", size="sm")
+                                cloud_use_anchor_btn = gr.Button("用角色的 anchor", size="sm")
+                                cloud_use_picker_btn = gr.Button("用「圖片選擇生圖」的結果", size="sm")
+                            cloud_prompt = gr.Textbox(
+                                label="Prompt：描述要發生的動作（Wan 看得懂中文；AnimateDiff 會自動翻成英文）", lines=3,
+                                placeholder="例如：她轉頭看向鏡頭微笑，頭髮被微風吹動",
+                            )
+                            cloud_negative = gr.Textbox(label="額外負面詞（選填，安全負面詞一定會加上）", lines=1)
+                            cloud_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
                             with gr.Row():
-                                desk_remove_btn = gr.Button("🗑 移除", size="sm", variant="stop")
-                                desk_clear_btn = gr.Button("清空全部", size="sm")
-                        with gr.Tab("文字"):
-                            desk_text = gr.Textbox(label="文字", placeholder="例如：今天跟她去哪？")
+                                cloud_seed = gr.Number(value=7001, label="Seed", precision=0)
+                                cloud_timeout = gr.Slider(300, 2400, value=1800, step=60,
+                                                          label="最長等待秒數（超過會自動取消雲端工作）")
                             with gr.Row():
-                                desk_text_start = gr.Number(value=0, label="開始秒")
-                                desk_text_end = gr.Number(value=2.5, label="結束秒")
+                                cloud_preset = gr.Radio(list(CLOUD_PRESETS), value=CLOUD_PRESET_DEFAULT,
+                                                        label="畫面方向（只影響 Wan；AnimateDiff 固定 512² 放大到 1024）")
+                                cloud_length = gr.Radio(list(CLOUD_LENGTHS), value=CLOUD_LENGTH_DEFAULT,
+                                                        label="長度（只影響 Wan；AnimateDiff 固定 16 幀）")
                             with gr.Row():
-                                desk_text_pos = gr.Radio(["上方", "中間", "下方"], value="上方", label="位置")
-                                desk_text_size = gr.Radio(["小", "中", "大"], value="中", label="大小")
-                            with gr.Row():
-                                desk_text_add = gr.Button("＋ 加到文字軌", size="sm", variant="primary")
-                                desk_text_undo_btn = gr.Button("↶ 移除最後一段", size="sm")
-                        with gr.Tab("疊圖"):
-                            desk_overlay_pick = gr.Dropdown(choices=_overlay_choices(), label="圖片（匯入的或①生成的）")
-                            with gr.Row():
-                                desk_overlay_start = gr.Number(value=0, label="開始秒")
-                                desk_overlay_end = gr.Number(value=5, label="結束秒")
-                            desk_overlay_pos = gr.Radio(["左上", "右上", "中間", "左下", "右下"], value="右上", label="位置")
-                            desk_overlay_scale = gr.Slider(5, 100, value=25, step=1, label="寬度（畫面的 %）")
-                            with gr.Row():
-                                desk_overlay_add = gr.Button("＋ 加到疊圖軌", size="sm", variant="primary")
-                                desk_overlay_undo_btn = gr.Button("↶ 移除最後一張", size="sm")
-                        with gr.Tab("音效"):
-                            desk_sfx_pick = gr.Dropdown(choices=_audio_choices(), label="音效（到「匯入」上傳）")
-                            with gr.Row():
-                                desk_sfx_start = gr.Number(value=0, label="開始秒")
-                                desk_sfx_volume = gr.Slider(-40, 12, value=-6, step=1, label="音量 dB")
-                            with gr.Row():
-                                desk_sfx_add = gr.Button("＋ 加到音效軌", size="sm", variant="primary")
-                                desk_sfx_undo_btn = gr.Button("↶ 移除最後一段", size="sm")
-                        with gr.Tab("字卡"):
-                            cut_title1 = gr.Textbox(label="片頭標題", placeholder="例如：一起去約會")
-                            cut_title2 = gr.Textbox(label="片頭副標（選填）", placeholder="例如：三個地方，三種心情")
-                            cut_title_secs = gr.Slider(0, 5, value=0, step=0.5, label="片頭秒數（0 = 不要）")
-                            cut_end1 = gr.Textbox(label="片尾第一行", placeholder="例如：下載 App")
-                            cut_end2 = gr.Textbox(label="片尾第二行（選填）", placeholder="例如：跟她一起出門")
-                            cut_end_secs = gr.Slider(0, 5, value=2.5, step=0.5, label="片尾秒數（0 = 不要）")
-                        with gr.Tab("音樂"):
-                            cut_music = gr.Audio(label="配樂（不上傳 = 沒有配樂）", type="filepath")
-                            cut_music_db = gr.Slider(6, 30, value=18, step=1, label="比人聲低幾 dB（越大越小聲）")
-                            cut_music_fade = gr.Slider(0, 5, value=1.5, step=0.5, label="結尾淡出秒數")
-                            cut_bed = gr.Checkbox(value=False, label="加極輕的環境底噪（−48 LUFS）")
-                            cut_ai_label = gr.Checkbox(value=False, label="每一格加「AI 生成影片｜MiniMax H3」標示")
-            with gr.Column(elem_classes="desk-panel desk-timeline"):
-                desk_summary = gr.Markdown("### 時間軸")
-                desk_tracks_html = gr.HTML(
-                    "<div style='padding:18px;color:#9aa4b2'>時間軸是空的：點左邊素材庫的縮圖加入，或到「匯入」上傳檔案</div>")
-                desk_timeline_gallery = gr.Gallery(
-                    columns=10, rows=1, height=150, allow_preview=False, object_fit="cover", show_label=True,
-                    label="主影片軌（點卡片選取片段）")  # fmt: skip
-            with gr.Row(elem_classes="desk-export"):
-                cut_info = gr.Markdown()
-            with gr.Accordion("執行過程（即時更新）", open=True):
-                cut_log = gr.Textbox(show_label=False, lines=10, max_lines=18, autoscroll=True, interactive=False)
-            desk_state = gr.State([])
-            desk_sel = gr.State(None)
-            desk_tracks = gr.State({"texts": [], "overlays": [], "sfx": []})
-            desk_media = gr.State(_desk_paths)
+                                cloud_btn = gr.Button("在雲端生成", variant="primary")
+                                cloud_cancel_btn = gr.Button("取消雲端工作", variant="stop")
+                        with gr.Column():
+                            cloud_output = gr.Video(label="結果")
+                            cloud_info = gr.Markdown()
 
-            still_btn.click(
-                generate_h3_still_ui,
-                inputs=[still_prompt, still_model, still_seed, still_people, still_negative],
-                outputs=[still_output, still_info, still_prompt, still_log],
-                concurrency_id="gpu",
-            )
-            still_use_btn.click(use_still_as_first_frame, inputs=still_output, outputs=[h3_image, h3_attest])
-            h3_write_btn.click(
-                write_h3_description_ui,
-                inputs=[h3_idea_box, h3_line, h3_gender, h3_line2, h3_others],
-                outputs=[h3_desc, h3_log],
-                concurrency_id="gpu",  # the local Qwen takes ~6.7 GB of the card while it answers
-            )
-            h3_btn.click(
-                generate_h3_local_ui,
-                inputs=[h3_image, h3_desc, h3_sound, h3_static, h3_seed, h3_attest],
-                outputs=[h3_output, h3_info, h3_desc, h3_log],
-                concurrency_id="gpu",
-            ).then(desk_library_refresh, inputs=None,
-                   outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
-            desk_out = [desk_state, desk_sel, desk_tracks, desk_timeline_gallery, desk_tracks_html, desk_summary,
-                        desk_sel_info, desk_transition, desk_image_secs, desk_preview]  # fmt: skip
-            desk_in = [desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                       cut_end_secs, cut_music]  # fmt: skip
-            desk_refresh_btn.click(desk_library_refresh, inputs=None,
-                                   outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
-            desk_upload_files.upload(desk_upload, inputs=desk_upload_files,
-                                     outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick,
-                                              desk_import_info])  # fmt: skip
-            desk_import_btn.click(desk_import_path, inputs=desk_import_text,
-                                  outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick,
-                                           desk_import_info])  # fmt: skip
-            desk_library_gallery.select(
-                desk_add,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_media],
-                outputs=desk_out,
-            )  # fmt: skip
-            desk_timeline_gallery.select(desk_select, inputs=desk_in, outputs=desk_out)
-            desk_transition.input(
-                desk_set_transition,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_transition],
-                outputs=desk_out,
-            )  # fmt: skip
-            desk_image_secs.release(
-                desk_set_seconds,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_image_secs],
-                outputs=desk_out,
-            )  # fmt: skip
-            desk_left_btn.click(desk_move_left, inputs=desk_in, outputs=desk_out)
-            desk_right_btn.click(desk_move_right, inputs=desk_in, outputs=desk_out)
-            desk_remove_btn.click(desk_remove, inputs=desk_in, outputs=desk_out)
-            desk_clear_btn.click(desk_clear, inputs=desk_in, outputs=desk_out)
-            desk_text_add.click(
-                desk_add_text,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_text, desk_text_start, desk_text_end, desk_text_pos,
-                        desk_text_size],
-                outputs=desk_out,
-            )  # fmt: skip
-            desk_overlay_add.click(
-                desk_add_overlay,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_overlay_pick, desk_overlay_start, desk_overlay_end,
-                        desk_overlay_pos, desk_overlay_scale],
-                outputs=desk_out,
-            )  # fmt: skip
-            desk_sfx_add.click(
-                desk_add_sfx,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_sfx_pick, desk_sfx_start, desk_sfx_volume],
-                outputs=desk_out,
-            )  # fmt: skip
-            desk_text_undo_btn.click(desk_text_undo, inputs=desk_in, outputs=desk_out)
-            desk_overlay_undo_btn.click(desk_overlay_undo, inputs=desk_in, outputs=desk_out)
-            desk_sfx_undo_btn.click(desk_sfx_undo, inputs=desk_in, outputs=desk_out)
-            for _desk_input in (cut_title_secs, cut_end_secs):
-                _desk_input.release(desk_view, inputs=desk_in, outputs=desk_out)
-            for _desk_text_input in (cut_title1, cut_title2, cut_end1, cut_end2):
-                _desk_text_input.blur(desk_view, inputs=desk_in, outputs=desk_out)
-            cut_music.change(desk_view, inputs=desk_in, outputs=desk_out)
-            desk_template_btn.click(
-                desk_apply_template,
-                inputs=[desk_state, desk_sel, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, desk_template],
-                outputs=[desk_state, desk_sel, desk_tracks, desk_timeline_gallery, desk_tracks_html, desk_summary,
-                         desk_sel_info, desk_transition, desk_image_secs, desk_preview, cut_title1, cut_title2,
-                         cut_title_secs, cut_end1, cut_end2, cut_end_secs, cut_music_db, cut_bed, cut_ai_label,
-                         desk_template_info],
-            )  # fmt: skip
-            cut_btn.click(
-                render_cut_ui,
-                inputs=[desk_state, desk_tracks, cut_title1, cut_title2, cut_title_secs, cut_end1, cut_end2,
-                        cut_end_secs, cut_music, cut_music_db, cut_music_fade, cut_bed, cut_ai_label],
-                outputs=[desk_preview, cut_info, cut_log],
-                concurrency_id="ffmpeg",  # CPU only: never queued behind a GPU job, one cut at a time
-                concurrency_limit=1,
-            )  # fmt: skip
-
-        with gr.Tab("🎞️ 批次生成 GIF"):
-            gr.Markdown(
-                "先生成第一張（完整生成），後面每一張都是拿**同一張第一張的圖**用低 denoise 的 img2img 去微調"
-                "（同一個 prompt，只有 seed 不同），組成一個會動的 GIF——同一個人、同一個姿勢、同一個場景，"
-                "只有細節隨每張的 seed 有小幅變化，靠「動作幅度」滑桿控制變化大小。"
-                "**這不是像 AnimateDiff 那樣有時序關聯的平滑動態**，是同一張圖反覆微調出來的效果，"
-                "沒有動作連貫的「進行中」的感覺，比較像是原地小幅度的浮動/晃動；想要真正平滑、有動作進展的"
-                "動態影片，請用「AnimateDiff 動態影片」分頁。生成速度比 AnimateDiff 快很多"
-                "（每張都是普通靜態圖，沒有影格數的額外負擔）。"
-            )
-            with gr.Row():
-                with gr.Column():
-                    gif_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填，選了會用該角色身分）", value=NO_CHARACTER)
-                    gif_anchor = gr.Dropdown([], label="Anchor 圖（選了角色才需要）")
-                    gif_anchor_preview = gr.Image(label="Anchor 圖預覽", interactive=False, height=200)
-                    gif_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="例如: standing in a park, looking at the camera")
-                    gif_translate_btn = gr.Button("翻譯成英文（已經是英文按下去不會被改動）")
-                    gif_negative_prompt = gr.Textbox(label="額外負面詞（選填）", lines=1)
-                    with gr.Accordion("風格正/負面詞（進階，跟「自訂生圖」分頁獨立設定）", open=False):
-                        gif_style_positive = gr.Textbox(label="風格正面詞", value=gc.REALISTIC_STYLE, lines=2)
-                        gif_style_negative = gr.Textbox(label="風格負面詞", value=gc.REALISTIC_NEGATIVE, lines=2)
-                    gif_checkpoint_choice = gr.Dropdown(
-                        CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT,
-                        label="Checkpoint 模型（選了角色/anchor 就只能 SDXL 系列，跟「自訂生圖」分頁的規則一樣）",
+                    cloud_save_btn.click(save_cloud_config, inputs=[cloud_endpoint, cloud_replicate_model],
+                                         outputs=cloud_status)
+                    cloud_use_anchor_btn.click(cloud_anchor_for, inputs=cloud_character, outputs=cloud_first_frame)
+                    cloud_use_picker_btn.click(lambda image: image, inputs=pick_output, outputs=cloud_first_frame)
+                    cloud_btn.click(
+                        generate_cloud_video,
+                        inputs=[cloud_provider, cloud_job, cloud_character, cloud_first_frame, cloud_prompt, cloud_tier,
+                                cloud_negative, cloud_seed, cloud_preset, cloud_length, cloud_timeout],
+                        outputs=[cloud_output, cloud_info],
+                        # Not "gpu": a cloud job doesn't touch the local card, and a 10-minute remote run must
+                        # not queue local generations behind it. One cloud job at a time keeps spend bounded.
+                        concurrency_id="cloud",
+                        concurrency_limit=1,
                     )
-                    gif_lora_strength = gr.Slider(0.0, 3.0, value=0.0, step=0.1, label="寫實風格 LoRA 強度（pony 系建議 0）")
-                    gif_tier = gr.Radio(["safe", "suggestive"], value="suggestive", label="內容分級（露骨內容依然封鎖）")
-                    gif_seed = gr.Number(value=9000, label="起始 Seed（每張圖依序 +1）", precision=0)
-                    with gr.Row():
-                        gif_frames = gr.Slider(2, 20, value=8, step=1, label="張數")
-                        gif_duration = gr.Slider(100, 1000, value=300, step=50, label="每張顯示時間（毫秒）")
-                    gif_denoise = gr.Slider(
-                        0.0, 1.0, value=gc.GIF_WIGGLE_DENOISE, step=0.05,
-                        label="動作幅度（實測：0.3 幾乎看不出變化，0.7 姿勢已經明顯跑掉；0.45 是還沒驗證過的中間值，"
-                              "看起來太靜止就往上調，姿勢跑掉就往下調）",
-                    )
-                    gif_ip_weight = gr.Slider(0.0, 3.0, value=client.IP_ADAPTER_WEIGHT, step=0.05, label="IP-Adapter 權重（有選角色才有作用）")
-                    gif_force_local = gr.Checkbox(value=False, label=FORCE_LOCAL_LABEL)
-                    gif_btn = gr.Button("生成 GIF", variant="primary")
-                with gr.Column():
-                    gif_output = gr.Image(label="結果（GIF，會自動播放）")
+                    cloud_cancel_btn.click(cancel_cloud_video, inputs=None, outputs=None)
 
-            gif_character.change(refresh_anchors, inputs=gif_character, outputs=[gif_anchor, gif_anchor_preview])
-            gif_anchor.change(lambda path: path, inputs=gif_anchor, outputs=gif_anchor_preview)
-            gif_translate_btn.click(translate_prompt_to_english, inputs=gif_prompt, outputs=gif_prompt)
-            gif_btn.click(
-                generate_gif,
-                inputs=[gif_character, gif_anchor, gif_prompt, gif_tier, gif_negative_prompt, gif_seed, gif_frames,
-                        gif_duration, gif_denoise, gif_ip_weight, gif_style_positive, gif_style_negative,
-                        gif_checkpoint_choice, gif_lora_strength, gif_force_local],
-                outputs=gif_output,
-                concurrency_id="gpu",
-            )
-
-        with gr.Tab("🎯 圖片選擇生圖"):
-            gr.Markdown(
-                "**點圖就好，不用自己想 prompt。**選人物、姿勢、場景各一張，系統會依照你選的 checkpoint "
-                "組出它聽得懂的敘述——Pony 系自動加品質標籤、SD1.5 自動加性別權重，"
-                "而且在 SDXL/Pony 上姿勢是走 ControlNet 骨架、臉是走 FaceID，不是只用文字講。\n\n"
-                "Z-Image 跟 SD1.5 沒有這兩個功能，選到那些 checkpoint 時姿勢和臉會**自動改成文字描述**，"
-                "下方會明講哪些被降級了。送出的完整 prompt 會即時顯示在預覽欄，不用猜。"
-            )
-            pick_char_state = gr.State(None)
-            pick_pose_state = gr.State(None)
-            pick_scene_state = gr.State(None)
-            with gr.Row():
-                with gr.Column(scale=3):
-                    with gr.Row():
-                        gr.Markdown("### 1. 人物")
-                        pick_char_clear = gr.Button("清除人物", size="sm", scale=0)
-                    pick_char_gallery = gr.Gallery(
-                        value=_gallery_value(picker_characters()), columns=5, height=250,
-                        allow_preview=False, object_fit="cover", show_label=False, buttons=[],
-                    )
-                    _picker_skipped = [t for t in sorted(gc.CHARACTERS) if not gc.picker_anchor_path(t)]
-                    if _picker_skipped:
-                        gr.Markdown(
-                            f"（{'、'.join(_picker_skipped)} 還沒有 anchor 圖，先不列在這裡——"
-                            "用 `generate_character.py anchors` 產生後就會自動出現）"
-                        )
-                    with gr.Row():
-                        gr.Markdown("### 2. 姿勢")
-                        pick_pose_clear = gr.Button("清除姿勢", size="sm", scale=0)
-                    pick_pose_gallery = gr.Gallery(
-                        value=_gallery_value(picker_pose_items()), columns=6, height=300,
-                        allow_preview=False, object_fit="contain", show_label=False, buttons=[],
+                with gr.Tab("🖥️ 資源排程"):
+                    _res_settings = rp.load_settings()
+                    gr.Markdown(
+                        "每次按本地生成前，會依這台電腦的配置（RTX 2070 8 GB、32 GB RAM、84°C 降頻）和當下狀態決定："
+                        "**本地執行**、**先等 GPU 降溫**、**排到下個時段**，或**建議改送雲端**。"
+                        "雲端一定要你確認才會送（按各分頁的雲端按鈕／勾選），不會自己花錢。\n\n"
+                        "判斷順序：本地跑不了（Wan）→ RAM 不夠（高清完整版會先建議改量化版）→ VRAM 超過顯卡 → "
+                        "其他程式占著顯卡 → 本地待完成的工作太久 → 不在時段內 → GPU 太熱 → 本地執行。"
+                        "各分頁的「⚡ 忽略資源建議」可以跳過建議與時段，但不會跳過降溫等待（最多等下面設定的秒數）。"
                     )
                     with gr.Row():
-                        gr.Markdown("### 3. 場景")
-                        pick_scene_clear = gr.Button("清除場景", size="sm", scale=0)
-                    pick_scene_gallery = gr.Gallery(
-                        value=_gallery_value(picker_scene_items("safe")), columns=5, height=250,
-                        allow_preview=False, object_fit="cover", show_label=False, buttons=[],
-                    )
-                with gr.Column(scale=2):
-                    pick_checkpoint = gr.Dropdown(
-                        CHECKPOINT_CHOICES, value=CHECKPOINT_DEFAULT, label="Checkpoint 模型",
-                    )
-                    pick_tier = gr.Radio(
-                        ["safe", "suggestive"], value="safe",
-                        label="內容分級（suggestive 會多出海灘/泳池等場景；露骨內容依然封鎖）",
-                    )
-                    # Distinct from every other tab's default (9000: 自訂生圖/GIF; 6001: AnimateDiff/SVD) -
-                    # measured 2026-09-12: two GUI sessions both defaulting to 9000 submitted around the
-                    # same time and one clobbered gui_seed9000.png before the other's client read it back,
-                    # so a tab's own client displayed a completely different generation as its result.
-                    # Different defaults across tabs reduce how often that collision fires; it doesn't
-                    # eliminate it (nothing stops someone typing 9000 here too, or two picker tabs racing
-                    # each other), since output filenames are seed-keyed rather than job-id-keyed.
-                    pick_seed = gr.Number(value=4001, label="Seed", precision=0)
-                    pick_extra = gr.Textbox(
-                        label="補充描述（選填，中文也可以，送出前會自動翻成英文）", lines=2,
-                        placeholder="例如：手上拿著紙杯、戴著耳機",
-                    )
-                    pick_preview = gr.Textbox(
-                        label="實際送出的 prompt（唯讀，含這個 checkpoint 需要的標籤）",
-                        lines=6, interactive=False,
-                    )
-                    pick_notice = gr.Markdown("選一個場景或姿勢（或填補充描述）就會在這裡看到實際送出的 prompt。")
-                    pick_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
-                    pick_btn = gr.Button("生成", variant="primary")
-                    pick_output = gr.Image(label="結果")
-
-            _preview_inputs = [pick_char_state, pick_pose_state, pick_scene_state,
-                               pick_checkpoint, pick_tier, pick_extra]
-            _preview_outputs = [pick_preview, pick_notice]
-            pick_char_gallery.select(select_picker_character, inputs=None, outputs=pick_char_state).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_pose_gallery.select(select_picker_pose, inputs=None, outputs=pick_pose_state).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_scene_gallery.select(select_picker_scene, inputs=[pick_tier], outputs=pick_scene_state).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_char_clear.click(
-                lambda: (None, gr.update(selected_index=None)), inputs=None,
-                outputs=[pick_char_state, pick_char_gallery]).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_pose_clear.click(
-                lambda: (None, gr.update(selected_index=None)), inputs=None,
-                outputs=[pick_pose_state, pick_pose_gallery]).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_scene_clear.click(
-                lambda: (None, gr.update(selected_index=None)), inputs=None,
-                outputs=[pick_scene_state, pick_scene_gallery]).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_tier.change(
-                refresh_picker_scenes, inputs=pick_tier, outputs=[pick_scene_gallery, pick_scene_state]).then(
-                update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_checkpoint.change(update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_extra.change(update_picker_preview, inputs=_preview_inputs, outputs=_preview_outputs)
-            pick_btn.click(
-                generate_from_picker,
-                inputs=[pick_char_state, pick_pose_state, pick_scene_state, pick_checkpoint,
-                        pick_tier, pick_seed, pick_extra, pick_force_local],
-                outputs=pick_output,
-                concurrency_id="gpu",
-            )
-
-        with gr.Tab("☁️ 雲端影片"):
-            gr.Markdown(
-                "在雲端 GPU 上生成影片，不佔用本機這張 8GB 卡。**Wan 2.2 圖生影片**是新一代模型："
-                "拿一張角色圖當第一幀，生成動作自然的 720p 影片（沒有 FaceID，身分靠第一幀維持）。"
-                "**AnimateDiff 雲端高畫質**是本機同一套 FaceID 鎖臉流程，只是解除 8GB 的高清上限，"
-                "只能跑在 RunPod。所有 prompt 一樣會套用年齡保護與內容分級的負面詞。"
-            )
-            cloud_status = gr.Markdown(cloud_status_markdown())
-            with gr.Accordion("雲端設定（endpoint ID／模型；API 金鑰請用環境變數）", open=False):
-                _cloud_settings = cloud_video.load_cloud_settings()
-                cloud_endpoint = gr.Textbox(
-                    label="RunPod Serverless endpoint ID", value=_cloud_settings["runpod"]["endpoint_id"],
-                )
-                cloud_replicate_model = gr.Textbox(
-                    label="Replicate 模型（owner/name 或 owner/name:version；不符合安全條件的模型會被拒絕）",
-                    value=_cloud_settings["replicate"]["model"],
-                )
-                cloud_save_btn = gr.Button("儲存設定")
-            with gr.Row():
-                with gr.Column():
-                    cloud_provider = gr.Radio(CLOUD_PROVIDER_CHOICES, value="runpod", label="雲端平台")
-                    cloud_job = gr.Radio([CLOUD_JOB_WAN, CLOUD_JOB_ANIMATEDIFF], value=CLOUD_JOB_WAN,
-                                         label="工作類型")
-                    cloud_character = gr.Dropdown(CHARACTER_CHOICES, value=NO_CHARACTER,
-                                                  label="角色（選填，會加上角色外貌描述）")
-                    cloud_first_frame = gr.Image(
-                        label="第一幀／臉部參考圖（僅限虛構/AI生成，禁止上傳真人照片）", type="filepath",
-                    )
+                        with gr.Column():
+                            res_status = gr.Markdown(rp.status_markdown(_res_settings))
+                            res_refresh_btn = gr.Button("🔄 重新讀取", size="sm")
+                        with gr.Column():
+                            res_temp = gr.Slider(
+                                40, _res_settings["throttle_temp_c"], value=_res_settings["max_start_temp_c"], step=1,
+                                label=f"批次／排程／API 的開始門檻 °C（到這個溫度就先等降溫；這張卡約 "
+                                      f"{_res_settings['throttle_temp_c']}°C 開始降頻）")
+                            res_itemp = gr.Slider(
+                                40, _res_settings["throttle_temp_c"], value=_res_settings["interactive_start_temp_c"], step=1,
+                                label="單張生圖的開始門檻 °C（自訂生圖、圖片選擇生圖按一次一張；可以比批次高，少等一點）")
+                            res_cooldown = gr.Number(value=_res_settings["cooldown_timeout_s"], precision=0,
+                                                     label="最多等降溫幾秒（超過就照樣開始，不會一直卡住）")
+                            res_margin = gr.Slider(0, 8, value=_res_settings["ram_margin_gb"], step=0.5,
+                                                   label="保留給系統的 RAM（GB）")
+                            res_wait = gr.Number(value=_res_settings["max_local_wait_s"], precision=0,
+                                                 label="本地待完成超過幾秒就建議雲端（只對有雲端路線的工作）")
+                            res_video_windows = gr.Textbox(
+                                value=", ".join(_res_settings["video_windows"]),
+                                label="影片時段（例如 23:00-08:00，可用逗號分隔多段；留空 = 隨時）")
+                            res_image_windows = gr.Textbox(
+                                value=", ".join(_res_settings["image_windows"]),
+                                label="圖片時段（留空 = 隨時）")
+                            res_save_btn = gr.Button("儲存設定", variant="primary")
+                    gr.Markdown("### 排程中的工作\n時段外按下的「自訂生圖」「AnimateDiff」會排在這裡，時段一到、"
+                                "顯卡空下來就自動執行（GUI 要開著；image_api 開著也會跑）。")
+                    res_table = gr.Dataframe(value=_deferred_rows(), headers=["工作", "來源", "類型", "開始時間", "狀態／原因"],
+                                             interactive=False, wrap=True)
                     with gr.Row():
-                        cloud_use_anchor_btn = gr.Button("用角色的 anchor", size="sm")
-                        cloud_use_picker_btn = gr.Button("用「圖片選擇生圖」的結果", size="sm")
-                    cloud_prompt = gr.Textbox(
-                        label="Prompt：描述要發生的動作（Wan 看得懂中文；AnimateDiff 會自動翻成英文）", lines=3,
-                        placeholder="例如：她轉頭看向鏡頭微笑，頭髮被微風吹動",
-                    )
-                    cloud_negative = gr.Textbox(label="額外負面詞（選填，安全負面詞一定會加上）", lines=1)
-                    cloud_tier = gr.Radio(["safe", "suggestive"], value="safe", label="內容分級（露骨內容依然封鎖）")
-                    with gr.Row():
-                        cloud_seed = gr.Number(value=7001, label="Seed", precision=0)
-                        cloud_timeout = gr.Slider(300, 2400, value=1800, step=60,
-                                                  label="最長等待秒數（超過會自動取消雲端工作）")
-                    with gr.Row():
-                        cloud_preset = gr.Radio(list(CLOUD_PRESETS), value=CLOUD_PRESET_DEFAULT,
-                                                label="畫面方向（只影響 Wan；AnimateDiff 固定 512² 放大到 1024）")
-                        cloud_length = gr.Radio(list(CLOUD_LENGTHS), value=CLOUD_LENGTH_DEFAULT,
-                                                label="長度（只影響 Wan；AnimateDiff 固定 16 幀）")
-                    with gr.Row():
-                        cloud_btn = gr.Button("在雲端生成", variant="primary")
-                        cloud_cancel_btn = gr.Button("取消雲端工作", variant="stop")
-                with gr.Column():
-                    cloud_output = gr.Video(label="結果")
-                    cloud_info = gr.Markdown()
+                        res_job = gr.Textbox(label="工作編號（表格第一欄）", scale=2)
+                        res_run_btn = gr.Button("立即本地執行", scale=1)
+                        res_cancel_btn = gr.Button("取消", variant="stop", scale=1)
 
-            cloud_save_btn.click(save_cloud_config, inputs=[cloud_endpoint, cloud_replicate_model],
-                                 outputs=cloud_status)
-            cloud_use_anchor_btn.click(cloud_anchor_for, inputs=cloud_character, outputs=cloud_first_frame)
-            cloud_use_picker_btn.click(lambda image: image, inputs=pick_output, outputs=cloud_first_frame)
-            cloud_btn.click(
-                generate_cloud_video,
-                inputs=[cloud_provider, cloud_job, cloud_character, cloud_first_frame, cloud_prompt, cloud_tier,
-                        cloud_negative, cloud_seed, cloud_preset, cloud_length, cloud_timeout],
-                outputs=[cloud_output, cloud_info],
-                # Not "gpu": a cloud job doesn't touch the local card, and a 10-minute remote run must
-                # not queue local generations behind it. One cloud job at a time keeps spend bounded.
-                concurrency_id="cloud",
-                concurrency_limit=1,
-            )
-            cloud_cancel_btn.click(cancel_cloud_video, inputs=None, outputs=None)
+                    res_refresh_btn.click(resource_panel, inputs=None, outputs=[res_status, res_table])
+                    gr.Timer(15).tick(resource_panel, inputs=None, outputs=[res_status, res_table])
+                    res_save_btn.click(save_resource_settings,
+                                       inputs=[res_temp, res_itemp, res_cooldown, res_margin, res_wait, res_video_windows,
+                                               res_image_windows],
+                                       outputs=[res_status, res_table])
+                    res_run_btn.click(run_deferred_now, inputs=res_job, outputs=[res_status, res_table])
+                    res_cancel_btn.click(cancel_deferred, inputs=res_job, outputs=[res_status, res_table])
 
-        with gr.Tab("🖥️ 資源排程"):
-            _res_settings = rp.load_settings()
-            gr.Markdown(
-                "每次按本地生成前，會依這台電腦的配置（RTX 2070 8 GB、32 GB RAM、84°C 降頻）和當下狀態決定："
-                "**本地執行**、**先等 GPU 降溫**、**排到下個時段**，或**建議改送雲端**。"
-                "雲端一定要你確認才會送（按各分頁的雲端按鈕／勾選），不會自己花錢。\n\n"
-                "判斷順序：本地跑不了（Wan）→ RAM 不夠（高清完整版會先建議改量化版）→ VRAM 超過顯卡 → "
-                "其他程式占著顯卡 → 本地待完成的工作太久 → 不在時段內 → GPU 太熱 → 本地執行。"
-                "各分頁的「⚡ 忽略資源建議」可以跳過建議與時段，但不會跳過降溫等待（最多等下面設定的秒數）。"
-            )
-            with gr.Row():
-                with gr.Column():
-                    res_status = gr.Markdown(rp.status_markdown(_res_settings))
-                    res_refresh_btn = gr.Button("🔄 重新讀取", size="sm")
-                with gr.Column():
-                    res_temp = gr.Slider(
-                        40, _res_settings["throttle_temp_c"], value=_res_settings["max_start_temp_c"], step=1,
-                        label=f"批次／排程／API 的開始門檻 °C（到這個溫度就先等降溫；這張卡約 "
-                              f"{_res_settings['throttle_temp_c']}°C 開始降頻）")
-                    res_itemp = gr.Slider(
-                        40, _res_settings["throttle_temp_c"], value=_res_settings["interactive_start_temp_c"], step=1,
-                        label="單張生圖的開始門檻 °C（自訂生圖、圖片選擇生圖按一次一張；可以比批次高，少等一點）")
-                    res_cooldown = gr.Number(value=_res_settings["cooldown_timeout_s"], precision=0,
-                                             label="最多等降溫幾秒（超過就照樣開始，不會一直卡住）")
-                    res_margin = gr.Slider(0, 8, value=_res_settings["ram_margin_gb"], step=0.5,
-                                           label="保留給系統的 RAM（GB）")
-                    res_wait = gr.Number(value=_res_settings["max_local_wait_s"], precision=0,
-                                         label="本地待完成超過幾秒就建議雲端（只對有雲端路線的工作）")
-                    res_video_windows = gr.Textbox(
-                        value=", ".join(_res_settings["video_windows"]),
-                        label="影片時段（例如 23:00-08:00，可用逗號分隔多段；留空 = 隨時）")
-                    res_image_windows = gr.Textbox(
-                        value=", ".join(_res_settings["image_windows"]),
-                        label="圖片時段（留空 = 隨時）")
-                    res_save_btn = gr.Button("儲存設定", variant="primary")
-            gr.Markdown("### 排程中的工作\n時段外按下的「自訂生圖」「AnimateDiff」會排在這裡，時段一到、"
-                        "顯卡空下來就自動執行（GUI 要開著；image_api 開著也會跑）。")
-            res_table = gr.Dataframe(value=_deferred_rows(), headers=["工作", "來源", "類型", "開始時間", "狀態／原因"],
-                                     interactive=False, wrap=True)
-            with gr.Row():
-                res_job = gr.Textbox(label="工作編號（表格第一欄）", scale=2)
-                res_run_btn = gr.Button("立即本地執行", scale=1)
-                res_cancel_btn = gr.Button("取消", variant="stop", scale=1)
-
-            res_refresh_btn.click(resource_panel, inputs=None, outputs=[res_status, res_table])
-            gr.Timer(15).tick(resource_panel, inputs=None, outputs=[res_status, res_table])
-            res_save_btn.click(save_resource_settings,
-                               inputs=[res_temp, res_itemp, res_cooldown, res_margin, res_wait, res_video_windows,
-                                       res_image_windows],
-                               outputs=[res_status, res_table])
-            res_run_btn.click(run_deferred_now, inputs=res_job, outputs=[res_status, res_table])
-            res_cancel_btn.click(cancel_deferred, inputs=res_job, outputs=[res_status, res_table])
 
 if __name__ == "__main__":
     # 7861, not Gradio's default 7860 - kohya_ss's own training GUI (kohya_gui.py, this repo's parent
@@ -2461,6 +2731,6 @@ if __name__ == "__main__":
         server_name="127.0.0.1",
         server_port=7861,
         share=False,
-        allowed_paths=[os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "outputs", "h3_local"))],
+        allowed_paths=[od.current()],  # the output setting can add more while the GUI runs (_allow_output_dir)
         css=DIRECTOR_CSS,  # only the director desk's own classes (Gradio 6 takes css at launch)
     )
