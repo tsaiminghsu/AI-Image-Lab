@@ -36,6 +36,7 @@ import job_service
 import job_store
 import pony_tags
 import pony_zimage_batch
+import prompt_chat
 import pose_skeletons
 import resource_policy as rp
 import scene_library
@@ -1047,6 +1048,42 @@ def gallery_export(name, repeats, caption_kind, image_kind, trigger):
     skipped = "".join(f"\n- 略過 {x['id']}：{x['why']}" for x in out["skipped"])
     return (f"已匯出 **{out['written']}** 張到 `{out['dataset_dir']}`（資料夾名 `{os.path.basename(out['dataset_dir'])}` "
             f"的數字是重複次數，kohya 格式：每張圖旁邊有同名 .txt 說明文字；`export.json` 記了來源與 seed）{skipped}")
+
+
+def pz_chat_send(message, history):
+    """One turn of the in-page Qwen chat: show the user's message at once, then the reply. A model ComfyUI still holds
+    from the last picture is released first so Qwen (about 6.7 GB) fits; it unloads itself after answering."""
+    history = list(history or [])
+    text = (message or "").strip()
+    if not text:
+        raise gr.Error("請先輸入要問的內容")
+    shown = history + [{"role": "user", "content": text}]
+    yield shown, ""
+    _free_comfyui_models()
+    try:
+        reply = prompt_chat.chat(history, text)
+    except gc.UsageError as exc:
+        raise gr.Error(str(exc)) from exc
+    yield shown + [{"role": "assistant", "content": reply}], ""
+
+
+def _chat_block(history, kind, where):
+    for m in reversed(history or []):
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            block = prompt_chat.extract_block(prompt_chat._text(m.get("content")), kind)
+            if block:
+                gr.Info(f"已填入{where}，可以再改再按生成")
+                return block
+    gr.Warning(f"聊天裡還沒有最終的 ```{kind} 區塊：請跟 Qwen 說「請給我最終的{'prompt' if kind == 'prompt' else '影片動作描述'}」")
+    return gr.update()
+
+
+def pz_chat_use_prompt(history):
+    return _chat_block(history, "prompt", "上面的 Prompt 欄")
+
+
+def pz_chat_use_motion(history):
+    return _chat_block(history, "motion", "影片區的「中文情境」")
 
 
 def pz_use_picture(kind, base_path, final_path):
@@ -2261,6 +2298,22 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         "想要更明顯的質感時，同一個 seed 用 0.2 / 0.3 / 0.4 各跑一次再挑。\n\n"
                         "⚠️ 底圖來自 Pony 系模型，授權不能商用，所以成品也不能直接商用。"
                     )
+                    with gr.Accordion("💬 先跟 Qwen 聊，確認 prompt 再填入（不用另外開 Open WebUI）", open=False):
+                        gr.Markdown(
+                            "用本機 qwen3.5:9b 聊你想要的畫面或影片動作：它會追問、建議，想好了會把定稿放在一個區塊裡。"
+                            "按「填入 Prompt 欄」或「填入影片情境」就會把**最後一個**定稿搬過去，之後照常生成。"
+                            "每則回覆要載入模型約 7～12 秒，答完就卸載，不佔顯卡；聊天和生圖不會同時跑。"
+                            "內容過濾與成人規則照樣適用。"
+                        )
+                        pz_chat = gr.Chatbot(label="和 Qwen 聊 prompt", height=320)
+                        pz_chat_msg = gr.Textbox(
+                            label="想說的話（Enter 送出）", lines=2,
+                            placeholder="例如：我想要一個女生在咖啡廳窗邊看書的畫面，幫我想得更具體")
+                        with gr.Row():
+                            pz_chat_send_btn = gr.Button("送出", variant="primary")
+                            pz_chat_prompt_btn = gr.Button("➡️ 填入 Prompt 欄")
+                            pz_chat_motion_btn = gr.Button("➡️ 填入影片情境")
+                            pz_chat_clear_btn = gr.Button("清除對話")
                     with gr.Row():
                         with gr.Column():
                             pz_character = gr.Dropdown(CHARACTER_CHOICES, label="角色（選填）", value=NO_CHARACTER)
@@ -2366,6 +2419,13 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     # where pz_use_picture leaves the section alone)
                     _pz_picture_run.then(pz_use_picture, inputs=[pz_v_pick, pz_base_out, pz_final_out],
                                          outputs=[pz_v_image, pz_v_attest])
+                    pz_chat_send_btn.click(pz_chat_send, inputs=[pz_chat_msg, pz_chat], outputs=[pz_chat, pz_chat_msg],
+                                           concurrency_id="gpu")
+                    pz_chat_msg.submit(pz_chat_send, inputs=[pz_chat_msg, pz_chat], outputs=[pz_chat, pz_chat_msg],
+                                       concurrency_id="gpu")
+                    pz_chat_prompt_btn.click(pz_chat_use_prompt, inputs=[pz_chat], outputs=[pz_prompt])
+                    pz_chat_motion_btn.click(pz_chat_use_motion, inputs=[pz_chat], outputs=[pz_v_idea])
+                    pz_chat_clear_btn.click(lambda: ([], ""), inputs=None, outputs=[pz_chat, pz_chat_msg])
                     pz_v_load_btn.click(pz_use_picture, inputs=[pz_v_pick, pz_base_out, pz_final_out],
                                         outputs=[pz_v_image, pz_v_attest])
                     pz_v_write_btn.click(
