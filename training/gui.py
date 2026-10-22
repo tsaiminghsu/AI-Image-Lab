@@ -28,6 +28,7 @@ import capability_catalog as catalog
 import caption_image
 import cloud_video
 import comfyui_client as client
+import gallery_log
 import generate_character as gc
 import gpu_guard
 import job_scheduler
@@ -808,6 +809,9 @@ def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negativ
                                   refine_prompt=refine_prompt, pose_name=pose_name,
                                   controlnet_strength=controlnet_strength if pose_name else None,
                                   width=width, height=height, use_facedetailer=bool(anchor_path), hq=True, log=log)
+        _record_picture(log, base=paths[0], final=paths[1], prompt_original=prompt, prompt_pony=english,
+                        prompt_zimage=refine_prompt, negative=negative, seed=int(seed), denoise=float(denoise),
+                        pony_checkpoint=pony_checkpoint, tier=tier, character=trigger, qwen=bool(refine_prompt))
         log("完成")
         sent = english if not refine_prompt else f"Pony：{english}\nZ-Image：{refine_prompt}"
         return paths, sent
@@ -818,6 +822,14 @@ def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negativ
         else:
             (paths, sent), log_text = value
             yield paths[0], paths[1], sent, log_text
+
+
+def _record_picture(log, **fields):
+    """Write the picture and its prompts to the gallery record. A failure here must not lose a finished picture."""
+    try:
+        gallery_log.record(**fields)
+    except (OSError, ValueError) as exc:
+        log(f"⚠️ 圖庫紀錄沒寫成功（圖本身已存好）：{exc}")
 
 
 _BATCH_STOP = threading.Event()
@@ -907,6 +919,13 @@ def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, t
                         start_temp_c=rp.start_temp_c(settings), should_stop=_BATCH_STOP.is_set,
                         batch_dir=batch_dir, meta=meta, log=log):
                     records.append(rec)
+                    if rec["status"] == "ok":
+                        english = rec["english"] or {}
+                        _record_picture(log, base=rec["base"], final=rec["final"], prompt_original=rec["prompt"],
+                                        prompt_pony=english.get("pony", ""), prompt_zimage=english.get("zimage"),
+                                        negative=negative_prompt, seed=rec["seed"], denoise=float(denoise),
+                                        pony_checkpoint=pony_checkpoint, tier=tier, character=trigger,
+                                        qwen=bool(english.get("zimage")), source="batch", batch_dir=batch_dir)
                     shown = rec["final"] or rec["base"]
                     if shown:
                         items.append((shown, f"#{rec['index']} · prompt {rec['prompt_no']} · seed {rec['seed']}"))
@@ -928,6 +947,85 @@ def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, t
                    _batch_status(records, len(jobs), "（已停止）" if stopped else "（完成）")
                    + f"\n\n清單與原圖：`{batch_dir}`（manifest.json 有每張的 seed 與英文 prompt）",
                    value[1])
+
+
+# --- 📚 gallery of the recorded Pony x Z-Image pictures (training/gallery_log.py) ----------------------------------
+
+GALLERY_CAPTION_CHOICES = [("Pony 標籤（訓練 Pony 系 LoRA）", "pony"), ("Z-Image 句子（訓練 Z-Image LoRA）", "zimage"),
+                           ("中文原句", "original")]
+GALLERY_IMAGE_CHOICES = [("Z-Image 成品", "final"), ("Pony 底圖", "base")]
+GALLERY_NO_SELECTION = "點一張圖，這裡會顯示它的 prompt 和設定。"
+
+
+def _gallery_view(text, only_marked, image_kind):
+    """(gallery items, ids in the same order, status line) for the current filter."""
+    records = gallery_log.search(gallery_log.load(), text, only_marked)
+    items, ids = [], []
+    for r in records:
+        path = gallery_log.picture(r, image_kind)
+        if path:
+            mark = "★ " if r.get("marked") else ""
+            items.append((path, f"{mark}{r['created'][5:16]} · seed {r['seed']} · denoise {r['denoise']}"))
+            ids.append(r["id"])
+    marked = sum(1 for r in gallery_log.load() if r.get("marked"))
+    return items, ids, f"符合 {len(items)} 張｜已標記訓練用 {marked} 張（★）"
+
+
+def gallery_refresh(text, only_marked, image_kind):
+    items, ids, status = _gallery_view(text, only_marked, image_kind)
+    return items, ids, status
+
+
+def gallery_import_batches(text, only_marked, image_kind):
+    added = gallery_log.import_batches(os.path.join(os.path.dirname(__file__), "reference_candidates"))
+    gr.Info(f"從舊的批次清單補進 {added} 張" if added else "沒有可補進的舊批次（單張生成的舊圖當時沒存 prompt，補不進來）")
+    return gallery_refresh(text, only_marked, image_kind)
+
+
+def gallery_select(ids, evt: gr.SelectData):
+    rec = gallery_log.find(ids[evt.index]) if 0 <= evt.index < len(ids) else None
+    if rec is None:
+        return "", GALLERY_NO_SELECTION, "", "", "", ""
+    detail = (f"**{'★ 已標記訓練用' if rec.get('marked') else '未標記'}**｜{rec['created']}｜seed {rec['seed']}｜"
+              f"Z-Image denoise {rec['denoise']}｜{rec['pony_checkpoint']}｜分級 {rec['tier']}"
+              f"{'｜角色 ' + rec['character'] if rec.get('character') else ''}｜{'Qwen 改寫' if rec.get('qwen') else '一般翻譯'}\n\n"
+              f"Pony 底圖：`{rec.get('base')}`\n\nZ-Image 成品：`{rec.get('final')}`")
+    return (rec["id"], detail, rec.get("prompt_original") or "", rec.get("prompt_pony") or "",
+            rec.get("prompt_zimage") or "", rec.get("negative") or "")
+
+
+def gallery_toggle_mark(rec_id, text, only_marked, image_kind):
+    if not rec_id:
+        raise gr.Error("先點一張圖")
+    rec = gallery_log.find(rec_id)
+    if rec is None:
+        raise gr.Error("找不到這張圖的紀錄")
+    gallery_log.set_marked(rec_id, not rec.get("marked"))
+    items, ids, status = _gallery_view(text, only_marked, image_kind)
+    return items, ids, status + ("　（已取消標記）" if rec.get("marked") else "　（已標記為訓練用）")
+
+
+def gallery_use(rec_id):
+    """Load a recorded picture's idea back into the generator tab: the original prompt, its seed and denoise."""
+    rec = gallery_log.find(rec_id) if rec_id else None
+    if rec is None:
+        raise gr.Error("先點一張圖")
+    gr.Info("已載入到「🧩 Pony × Z-Image 整合」分頁：同樣的 prompt、seed 和重畫強度；切過去按生成就能重現或微調")
+    return rec.get("prompt_original") or rec.get("prompt_pony") or "", rec["seed"], rec["denoise"]
+
+
+def gallery_export(name, repeats, caption_kind, image_kind, trigger):
+    ids = [r["id"] for r in gallery_log.load() if r.get("marked")]
+    if not ids:
+        raise gr.Error("還沒有標記任何圖：點圖後按「⭐ 標記／取消標記」")
+    try:
+        out = gallery_log.export_dataset(ids, name=name, repeats=int(repeats), caption_kind=caption_kind,
+                                         image_kind=image_kind, trigger=trigger or "")
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+    skipped = "".join(f"\n- 略過 {x['id']}：{x['why']}" for x in out["skipped"])
+    return (f"已匯出 **{out['written']}** 張到 `{out['dataset_dir']}`（資料夾名 `{os.path.basename(out['dataset_dir'])}` "
+            f"的數字是重複次數，kohya 格式：每張圖旁邊有同名 .txt 說明文字；`export.json` 記了來源與 seed）{skipped}")
 
 
 def select_picker_character(evt: gr.SelectData):
@@ -2198,6 +2296,61 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                        outputs=[pz_wall, pz_batch_status, pz_batch_log], concurrency_id="gpu")
                     # no concurrency_id: the stop click must run while the batch holds the "gpu" slot
                     pz_batch_stop_btn.click(pony_zimage_batch_stop, inputs=None, outputs=pz_batch_status)
+                with gr.Tab("📚 圖庫（圖片＋prompt）") as gallery_tab:
+                    gr.Markdown(
+                        "「🧩 Pony × Z-Image 整合」生成的每張圖都會記下當時的 prompt（中文原句、Pony 標籤、Z-Image 句子）和設定。"
+                        "這裡可以挑圖：看它的 prompt、載回生成分頁微調，或**標記為訓練用**再一鍵匯出成 LoRA／微調用的資料夾"
+                        "（圖＋同名說明文字）。圖檔留在原處，只是記錄指向它。\n\n"
+                        "⚠️ 這些圖來自 Pony 系模型，授權不能商用；Z-Image 成品的臉常比底圖老，訓練人物 LoRA 時建議選「Pony 底圖」。"
+                    )
+                    with gr.Row():
+                        gal_filter = gr.Textbox(label="搜尋（prompt、seed、模型；多個詞都要符合）", scale=3)
+                        gal_marked_only = gr.Checkbox(label="只看已標記訓練用（★）", value=False, scale=1)
+                        gal_kind = gr.Radio(GALLERY_IMAGE_CHOICES, value="final", label="顯示哪一張", scale=2)
+                    with gr.Row():
+                        gal_refresh_btn = gr.Button("🔄 重新整理")
+                        gal_import_btn = gr.Button("📥 補進舊批次的圖")
+                    gal_status = gr.Markdown()
+                    gal_ids = gr.State([])
+                    gal_sel = gr.State("")
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            gal = gr.Gallery(columns=4, height=560, object_fit="contain", allow_preview=True,
+                                             show_label=False)
+                        with gr.Column(scale=2):
+                            gal_detail = gr.Markdown(GALLERY_NO_SELECTION)
+                            gal_orig = gr.Textbox(label="中文原句", lines=2, interactive=False)
+                            gal_pony = gr.Textbox(label="Pony 標籤（英文）", lines=3, interactive=False)
+                            gal_zimg = gr.Textbox(label="Z-Image 句子（英文；一般翻譯時空白）", lines=3, interactive=False)
+                            gal_neg = gr.Textbox(label="額外負面詞", lines=1, interactive=False)
+                            with gr.Row():
+                                gal_mark_btn = gr.Button("⭐ 標記／取消標記為訓練用")
+                                gal_use_btn = gr.Button("📋 載入到生成分頁")
+                    with gr.Accordion("匯出訓練資料夾（只匯出有 ★ 標記的圖）", open=False):
+                        with gr.Row():
+                            gal_name = gr.Textbox(label="資料集名稱（英數字、底線）", value="my_dataset")
+                            gal_trigger = gr.Textbox(label="觸發詞（選填，會加在每張說明文字最前面）")
+                            gal_repeats = gr.Number(label="重複次數（資料夾名前綴）", value=10, precision=0)
+                        with gr.Row():
+                            gal_caption_kind = gr.Radio(GALLERY_CAPTION_CHOICES, value="pony", label="說明文字用哪一種")
+                            gal_image_kind = gr.Radio(GALLERY_IMAGE_CHOICES, value="base", label="匯出哪一張圖")
+                        gal_export_btn = gr.Button("匯出", variant="primary")
+                        gal_export_status = gr.Markdown()
+                    _gal_filters = [gal_filter, gal_marked_only, gal_kind]
+                    _gal_view = [gal, gal_ids, gal_status]
+                    gallery_tab.select(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_refresh_btn.click(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_filter.submit(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_marked_only.change(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_kind.change(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_import_btn.click(gallery_import_batches, inputs=_gal_filters, outputs=_gal_view)
+                    gal.select(gallery_select, inputs=[gal_ids],
+                               outputs=[gal_sel, gal_detail, gal_orig, gal_pony, gal_zimg, gal_neg])
+                    gal_mark_btn.click(gallery_toggle_mark, inputs=[gal_sel, gal_filter, gal_marked_only, gal_kind], outputs=_gal_view)
+                    gal_use_btn.click(gallery_use, inputs=[gal_sel], outputs=[pz_prompt, pz_seed, pz_denoise])
+                    gal_export_btn.click(gallery_export,
+                                         inputs=[gal_name, gal_repeats, gal_caption_kind, gal_image_kind, gal_trigger],
+                                         outputs=gal_export_status)
                 with gr.Tab("🎬 導演台") as desk_tab:
                     _desk_items, _desk_paths = desk_library()
                     with gr.Row(elem_classes="desk-toolbar", equal_height=True):
