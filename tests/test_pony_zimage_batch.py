@@ -205,3 +205,32 @@ def test_the_real_generator_gets_the_jobs_own_seed_and_the_zimage_sentence(monke
     for _, prompt, negative in seen:
         assert prompt.startswith("A woman in her early twenties reads.")
         assert gc.AGE_SAFETY_NEGATIVE.split(",")[0].strip() in negative
+
+
+def test_the_terminal_bar_shows_stage_fill_steps_and_percent():
+    assert pb.format_bar("生成", 0, 30).startswith("生成 [" + "░" * 24 + "] 0/30 步 0%")
+    assert pb.format_bar("生成", 15, 30) == "生成 [" + "█" * 12 + "░" * 12 + "] 15/30 步 50%"
+    assert pb.format_bar("生成", 30, 30).endswith("30/30 步 100%")
+    # a counter that runs past its total, or a zero total, never breaks the line
+    assert pb.format_bar("x", 99, 30).endswith("30/30 步 100%") and "1/1" in pb.format_bar("x", 1, 0)
+
+
+def test_gen_pony_zimage_tells_the_log_which_stage_starts_and_ends(monkeypatch, tmp_path):
+    import comfyui_client as client
+
+    monkeypatch.setattr(gc, "gen_custom", lambda *a, **k: (tmp_path / f"{a[7]}.png").write_bytes(b"x"))
+    monkeypatch.setattr(client, "zimage_missing_files", lambda model="z_image_turbo": [])
+
+    def fake_refine(path, prompt, negative, seed, prefix, denoise, **kw):
+        raw = tmp_path / "raw.png"
+        raw.write_bytes(b"x")
+        return str(raw)
+
+    monkeypatch.setattr(client, "submit_img2img_refine_zimage", fake_refine)
+    lines = []
+    gc.gen_pony_zimage("tags", "", "safe", None, None, str(tmp_path), 5, "s", 1.0, log=lines.append)
+    assert [ln[:2] for ln in lines] == ["① ", "① ", "② ", "② "]
+    assert "seed 5" in lines[0] and "denoise" in lines[2]
+    lines.clear()
+    gc.gen_pony_zimage("tags", "", "safe", None, None, str(tmp_path), 5, "s2", 1.0, skip_refine=True, log=lines.append)
+    assert [ln[:2] for ln in lines] == ["① ", "① "]

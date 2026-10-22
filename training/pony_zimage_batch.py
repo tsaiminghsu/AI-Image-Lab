@@ -140,3 +140,11 @@ def run_batch(
         records.append(record)
         _write_manifest(batch_dir, meta, records, stopped)
         yield record
+
+
+def format_bar(stage, current, total, width=24):
+    """One terminal line for a ComfyUI step counter: 'stage [████░░░░] 12/30 步 40%'."""
+    total = max(int(total), 1)
+    current = min(max(int(current), 0), total)
+    filled = round(width * current / total)
+    return f"{stage} [{'█' * filled}{'░' * (width - filled)}] {current}/{total} 步 {100 * current // total}%"

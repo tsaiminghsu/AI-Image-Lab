@@ -110,6 +110,46 @@ def _step_reporter(progress):
     return report
 
 
+_console_lock = threading.Lock()
+_console_bar_open = False
+
+
+def _console_line(text):
+    """Print one line to the terminal the GUI runs in. A progress bar that is still being redrawn is ended first."""
+    global _console_bar_open
+    with _console_lock:
+        if _console_bar_open:
+            print(flush=True)
+            _console_bar_open = False
+        print(text, flush=True)
+
+
+def _console_bar(stage, current, total):
+    """Redraw the terminal progress bar in place; the line is ended when the stage reaches its last step."""
+    global _console_bar_open
+    with _console_lock:
+        print("\r" + pony_zimage_batch.format_bar(stage, current, total), end="", flush=True)
+        _console_bar_open = current < total
+        if not _console_bar_open:
+            print(flush=True)
+
+
+def _step_logger(progress, log):
+    """_step_reporter plus the same steps in the terminal (a redrawn bar) and the stage changes in the page's log."""
+    gradio_bar = _step_reporter(progress)
+    seen = {"stage": None}
+
+    def report(stage, current, total):
+        if stage != seen["stage"]:
+            seen["stage"] = stage
+            log(f"階段：{stage}" + (f"（共 {total} 步）" if total else ""))
+        gradio_bar(stage, current, total)
+        if total:
+            _console_bar(stage, current, total)
+
+    return report
+
+
 def _ensure_comfyui(announce=True):
     """Start ComfyUI on first actual generation instead of requiring it
     pre-started just to open the GUI - keeps the ~2GB process off when the
@@ -716,25 +756,11 @@ def _pony_zimage_inputs(character, anchor, custom_anchor, pose_library, resoluti
 def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
                          pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
                          use_qwen, force_local, progress=gr.Progress()):
-    """The 🧩 integration tab: Pony decides who and what pose, Z-Image re-renders the material. Returns
-    (Pony picture, final picture); the first stays visible so the two can be compared."""
+    """The 🧩 integration tab: Pony decides who and what pose, Z-Image re-renders the material. Streams
+    (Pony picture, final picture, English prompts, log): the log box and the terminal show each step, the ComfyUI step
+    bar and a GPU/RAM line every 10 s; the two pictures stay visible so they can be compared."""
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
-    # CLIP (Pony) largely ignores Chinese, so Chinese input is translated here instead of making the user press a
-    # button first; already-English text is left untouched. The text actually sent is shown back in the third output.
-    refine_prompt = None
-    if use_qwen and not prompt.isascii():
-        # Qwen writes Pony tags and Z-Image sentences separately. It runs before ComfyUI loads anything and unloads
-        # itself (keep_alive 0); a model ComfyUI still holds from the last picture is released first so both fit.
-        progress(None, desc="Qwen 改寫提示詞中…")
-        _free_comfyui_models()
-        try:
-            prompt, refine_prompt = prompt_rewrite.rewrite(prompt)
-        except (requests.RequestException, KeyError, ValueError) as exc:
-            raise gr.Error(f"Qwen 改寫失敗（{exc}）——取消勾選「用 Qwen 改寫」就會改用一般翻譯") from exc
-    else:
-        prompt = _picker_extra_in_english(prompt)
-    negative_prompt = _picker_extra_in_english(negative_prompt)
     trigger, anchor_path, pose_name, width, height = _pony_zimage_inputs(
         character, anchor, custom_anchor, pose_library, resolution)
     decision = _route(rp.image_kind(pony_checkpoint, True, uses_pose=bool(pose_name)), force_local,
@@ -750,18 +776,48 @@ def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negativ
     plan = _Plan(decision, mode=catalog.MODE_TXT2IMG_HQ, media_kind="image",
                  catalog_id=f"{pony_checkpoint}:pony_zimage", params=dict(prompt=prompt, seed=int(seed)),
                  output_path=os.path.join(out_dir, f"{stem}.png"))
-    with client.progress_reporter(_step_reporter(progress)):
-        paths = _run_or_defer(gc.gen_pony_zimage, plan,
-                              prompt=prompt, extra_negative=negative_prompt, tier=tier, trigger=trigger,
-                              anchor_path=anchor_path, out_dir=out_dir, seed=int(seed), filename=stem,
-                              ip_adapter_weight=ip_adapter_weight, denoise=float(denoise),
-                              pony_checkpoint=pony_checkpoint, skip_refine=bool(skip_refine), refine_prompt=refine_prompt,
-                              pose_name=pose_name,
-                              controlnet_strength=controlnet_strength if pose_name else None,
-                              width=width, height=height, use_facedetailer=bool(anchor_path), hq=True)
-    base_path, final_path = paths
-    sent = prompt if not refine_prompt else f"Pony：{prompt}\nZ-Image：{refine_prompt}"
-    return base_path, final_path, sent
+
+    def work(log):
+        log(f"開始：{pony_checkpoint} 底圖 → Z-Image 重畫（denoise {float(denoise)}），seed {int(seed)}")
+        # CLIP (Pony) largely ignores Chinese, so Chinese input is translated instead of making the user press a
+        # button first; already-English text is left untouched.
+        refine_prompt = None
+        if use_qwen and not prompt.isascii():
+            # Qwen writes Pony tags and Z-Image sentences separately. It runs before ComfyUI loads anything and
+            # unloads itself (keep_alive 0); a model ComfyUI still holds from the last picture is released first.
+            log("Qwen 改寫提示詞：先請 ComfyUI 釋放模型，再載入 qwen3.5:9b（約 10-30 秒）…")
+            _free_comfyui_models()
+            try:
+                english, refine_prompt = prompt_rewrite.rewrite(prompt)
+            except (requests.RequestException, KeyError, ValueError) as exc:
+                raise gr.Error(f"Qwen 改寫失敗（{exc}）——取消勾選「用 Qwen 改寫」就會改用一般翻譯") from exc
+            log(f"Pony 標籤：{english}")
+            log(f"Z-Image 句子：{refine_prompt}")
+        else:
+            english = _picker_extra_in_english(prompt)
+            if english != prompt:
+                log(f"翻譯成英文：{english}")
+        negative = _picker_extra_in_english(negative_prompt)
+        log(f"GPU 狀態：{_h3_local_choices.machine_status()}")
+        with client.progress_reporter(_step_logger(progress, log)), _h3_local_choices._Heartbeat(log, "生成中"):
+            paths = _run_or_defer(gc.gen_pony_zimage, plan,
+                                  prompt=english, extra_negative=negative, tier=tier, trigger=trigger,
+                                  anchor_path=anchor_path, out_dir=out_dir, seed=int(seed), filename=stem,
+                                  ip_adapter_weight=ip_adapter_weight, denoise=float(denoise),
+                                  pony_checkpoint=pony_checkpoint, skip_refine=bool(skip_refine),
+                                  refine_prompt=refine_prompt, pose_name=pose_name,
+                                  controlnet_strength=controlnet_strength if pose_name else None,
+                                  width=width, height=height, use_facedetailer=bool(anchor_path), hq=True, log=log)
+        log("完成")
+        sent = english if not refine_prompt else f"Pony：{english}\nZ-Image：{refine_prompt}"
+        return paths, sent
+
+    for kind, value in _live(work):
+        if kind == "log":
+            yield gr.update(), gr.update(), gr.update(), value
+        else:
+            (paths, sent), log_text = value
+            yield paths[0], paths[1], sent, log_text
 
 
 _BATCH_STOP = threading.Event()
@@ -786,7 +842,8 @@ def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, t
                                pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
                                use_qwen, per_prompt, force_local, progress=gr.Progress()):
     """Batch button of the 🧩 tab: one prompt per line, `per_prompt` pictures each, every picture with its own random seed.
-    Yields (gallery items, status) after every picture so the wall fills up while the card is still working."""
+    Streams (gallery items, status, log) while the card works: the log box and the terminal show every step, the ComfyUI
+    step bar and a GPU/RAM line every 10 s, and each finished picture is added to the wall."""
     prompts = pony_zimage_batch.parse_prompts(prompts_text)
     jobs = pony_zimage_batch.plan_jobs(prompts, per_prompt)
     negative_prompt = _picker_extra_in_english(negative_prompt)
@@ -795,63 +852,82 @@ def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, t
     kind = rp.image_kind(pony_checkpoint, True, uses_pose=bool(pose_name))
     est = (rp.JOB_COSTS[kind].seconds + (0 if skip_refine else ZIMAGE_REFINE_SECONDS)) * len(jobs)
     _route(kind, force_local, est_seconds=est, progress=progress)
+    _ensure_comfyui()
     if not skip_refine:
-        # asked of the local server, so it needs ComfyUI up first
-        _ensure_comfyui()
         missing = client.zimage_missing_files("z_image_turbo")
         if missing:
             raise gr.Error(f"找不到 Z-Image 模型檔：{', '.join(missing)}——下載指令見 README「Z-Image Turbo（選用安裝）」")
-    else:
-        _ensure_comfyui()
     gr.Info(f"批次 {len(jobs)} 張（{len(prompts)} 行 prompt），每張各自隨機 seed、依序生成，每張之間會等 GPU 降溫；"
             "「停止批次」會在目前這張跑完後停下")
     _BATCH_STOP.clear()
-
-    def _batch_prepare(prompt):
-        # Chinese -> English once per distinct line, before any picture: Qwen and ComfyUI must not share the card
-        if use_qwen and not prompt.isascii():
-            _free_comfyui_models()
-            try:
-                pony, zimage = prompt_rewrite.rewrite(prompt)
-            except (requests.RequestException, KeyError, ValueError) as exc:
-                raise RuntimeError(f"Qwen 改寫失敗（{exc}）") from exc
-            return {"pony": pony, "zimage": zimage}
-        return {"pony": _picker_extra_in_english(prompt), "zimage": None}
-
     out_root = os.path.join(os.path.dirname(__file__), "reference_candidates")
     batch_dir = pony_zimage_batch.new_batch_dir(out_root)
-
-    def _batch_generate(job, prepared, stem):
-        progress(None, desc=f"第 {job.index}/{len(jobs)} 張 · seed {job.seed}")
-        with client.progress_reporter(_step_reporter(progress)):
-            return gc.gen_pony_zimage(
-                prepared["pony"], negative_prompt, tier, trigger, anchor_path, batch_dir, job.seed, stem,
-                ip_adapter_weight, denoise=float(denoise), pony_checkpoint=pony_checkpoint,
-                skip_refine=bool(skip_refine), refine_prompt=prepared["zimage"], pose_name=pose_name,
-                controlnet_strength=controlnet_strength if pose_name else None,
-                width=width, height=height, use_facedetailer=bool(anchor_path), hq=True)
-
     settings = rp.load_settings()
     meta = {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "pony_checkpoint": pony_checkpoint,
             "denoise": float(denoise), "skip_refine": bool(skip_refine), "tier": tier, "qwen": bool(use_qwen),
             "per_prompt": int(per_prompt), "prompts": prompts}
     items, records = [], []
-    yield items, f"準備中：改寫 {len(prompts)} 行 prompt…"
-    try:
-        with rp.track(kind, est):
-            for rec in pony_zimage_batch.run_batch(
-                    jobs, prepare=_batch_prepare, generate=_batch_generate, guard=gpu_guard,
-                    start_temp_c=rp.start_temp_c(settings), should_stop=_BATCH_STOP.is_set,
-                    batch_dir=batch_dir, meta=meta):
-                records.append(rec)
-                shown = rec["final"] or rec["base"]
-                if shown:
-                    items.append((shown, f"#{rec['index']} · prompt {rec['prompt_no']} · seed {rec['seed']}"))
-                yield items, _batch_status(records, len(jobs), "（生成中…）" if len(records) < len(jobs) else "")
-    except gpu_guard.GpuBusy as exc:
-        raise gr.Error(f"GPU 現在不能開始批次：{exc}") from exc
-    stopped = any(r["status"] == "stopped" for r in records)
-    yield items, _batch_status(records, len(jobs), "（已停止）" if stopped else "（完成）") + f"\n\n清單與原圖：`{batch_dir}`（manifest.json 有每張的 seed 與英文 prompt）"
+
+    def work(log):
+        log(f"批次開始：{len(prompts)} 行 prompt × {int(per_prompt)} 張 = {len(jobs)} 張，每張各自隨機 seed")
+        log(f"輸出資料夾：{batch_dir}")
+
+        def _batch_prepare(prompt):
+            # Chinese -> English once per distinct line, before any picture: Qwen and ComfyUI must not share the card
+            if use_qwen and not prompt.isascii():
+                log(f"Qwen 改寫：{prompt[:40]}…")
+                _free_comfyui_models()
+                try:
+                    pony, zimage = prompt_rewrite.rewrite(prompt)
+                except (requests.RequestException, KeyError, ValueError) as exc:
+                    raise RuntimeError(f"Qwen 改寫失敗（{exc}）") from exc
+                log(f"  Pony 標籤：{pony}")
+                log(f"  Z-Image 句子：{zimage}")
+                return {"pony": pony, "zimage": zimage}
+            english = _picker_extra_in_english(prompt)
+            log(f"翻譯：{english}")
+            return {"pony": english, "zimage": None}
+
+        def _batch_generate(job, prepared, stem):
+            progress(None, desc=f"第 {job.index}/{len(jobs)} 張 · seed {job.seed}")
+            log(f"▶ #{job.index}/{len(jobs)}（prompt {job.prompt_no}，seed {job.seed}）開始｜{_h3_local_choices.machine_status()}")
+            with client.progress_reporter(_step_logger(progress, log)), \
+                    _h3_local_choices._Heartbeat(log, f"#{job.index} 生成中"):
+                return gc.gen_pony_zimage(
+                    prepared["pony"], negative_prompt, tier, trigger, anchor_path, batch_dir, job.seed, stem,
+                    ip_adapter_weight, denoise=float(denoise), pony_checkpoint=pony_checkpoint,
+                    skip_refine=bool(skip_refine), refine_prompt=prepared["zimage"], pose_name=pose_name,
+                    controlnet_strength=controlnet_strength if pose_name else None,
+                    width=width, height=height, use_facedetailer=bool(anchor_path), hq=True, log=log)
+
+        try:
+            with rp.track(kind, est):
+                for rec in pony_zimage_batch.run_batch(
+                        jobs, prepare=_batch_prepare, generate=_batch_generate, guard=gpu_guard,
+                        start_temp_c=rp.start_temp_c(settings), should_stop=_BATCH_STOP.is_set,
+                        batch_dir=batch_dir, meta=meta, log=log):
+                    records.append(rec)
+                    shown = rec["final"] or rec["base"]
+                    if shown:
+                        items.append((shown, f"#{rec['index']} · prompt {rec['prompt_no']} · seed {rec['seed']}"))
+                    mark = {"ok": "✔", "error": "✖", "stopped": "⏹"}[rec["status"]]
+                    log(f"{mark} #{rec['index']}（seed {rec['seed']}）{rec['status']}"
+                        + (f"：{rec['seconds']} 秒，等降溫 {rec['waited_seconds']} 秒" if rec["status"] == "ok" else "")
+                        + (f"：{rec['error']}" if rec["error"] else ""))
+        except gpu_guard.GpuBusy as exc:
+            raise gc.UsageError(f"GPU 現在不能開始批次：{exc}") from exc
+        log(f"批次結束：成功 {sum(r['status'] == 'ok' for r in records)}／{len(jobs)}｜清單 {batch_dir}")
+
+    yield items, f"準備中：{len(prompts)} 行 prompt…", ""
+    for kind_, value in _live(work):
+        if kind_ == "log":
+            yield list(items), _batch_status(records, len(jobs), "（生成中…）"), value
+        else:
+            stopped = any(r["status"] == "stopped" for r in records)
+            yield (list(items),
+                   _batch_status(records, len(jobs), "（已停止）" if stopped else "（完成）")
+                   + f"\n\n清單與原圖：`{batch_dir}`（manifest.json 有每張的 seed 與英文 prompt）",
+                   value[1])
 
 
 def select_picker_character(evt: gr.SelectData):
@@ -1050,7 +1126,9 @@ def _live(work, interval=1.0):
     q, lines, box = queue.Queue(), [], {}
 
     def log(msg):
-        q.put(f"[{datetime.datetime.now():%H:%M:%S}] {msg}")
+        line = f"[{datetime.datetime.now():%H:%M:%S}] {msg}"
+        _console_line(line)
+        q.put(line)
 
     def target():
         try:
@@ -1076,6 +1154,8 @@ def _live(work, interval=1.0):
         message = str(exc) or type(exc).__name__
         lines.append(f"[{datetime.datetime.now():%H:%M:%S}] ✖ {message}")
         yield "log", "\n".join(lines)
+        if isinstance(exc, gr.Error):
+            raise exc
         if isinstance(exc, (gc.UsageError, client.ComfyUIUnavailable, SystemExit)):
             raise gr.Error(message) from exc
         raise gr.Error(f"{type(exc).__name__}：{message}") from exc
@@ -2095,9 +2175,13 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         with gr.Column():
                             pz_base_out = gr.Image(label="① Pony 底圖（長什麼樣）")
                             pz_final_out = gr.Image(label="② Z-Image 重畫（質感）")
+                            pz_log = gr.Textbox(label="執行過程（每一步、ComfyUI 步數、GPU／RAM；終端機也看得到）", lines=8,
+                                                max_lines=14, interactive=False, autoscroll=True)
                             pz_wall = gr.Gallery(label="批次結果牆（Z-Image 成品；點開看大圖，標題有 prompt 編號與 seed）",
                                                  columns=3, height=420, object_fit="contain")
                             pz_batch_status = gr.Markdown()
+                            pz_batch_log = gr.Textbox(label="批次執行過程（終端機也看得到）", lines=10, max_lines=16,
+                                                      interactive=False, autoscroll=True)
                             pz_sent_prompt = gr.Textbox(label="實際送出的英文 prompt（中文翻譯結果）", interactive=False, lines=2)
                     pz_character.change(refresh_anchors, inputs=pz_character, outputs=[pz_anchor, pz_anchor_preview])
                     pz_anchor.change(lambda path: path, inputs=pz_anchor, outputs=pz_anchor_preview)
@@ -2105,13 +2189,13 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                  inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_tier, pz_negative,
                                          pz_seed, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
                                          pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_force_local],
-                                 outputs=[pz_base_out, pz_final_out, pz_sent_prompt], concurrency_id="gpu")
+                                 outputs=[pz_base_out, pz_final_out, pz_sent_prompt, pz_log], concurrency_id="gpu")
                     pz_batch_btn.click(generate_pony_zimage_batch,
                                        inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_tier,
                                                pz_negative, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
                                                pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_per_prompt,
                                                pz_force_local],
-                                       outputs=[pz_wall, pz_batch_status], concurrency_id="gpu")
+                                       outputs=[pz_wall, pz_batch_status, pz_batch_log], concurrency_id="gpu")
                     # no concurrency_id: the stop click must run while the batch holds the "gpu" slot
                     pz_batch_stop_btn.click(pony_zimage_batch_stop, inputs=None, outputs=pz_batch_status)
                 with gr.Tab("🎬 導演台") as desk_tab:
