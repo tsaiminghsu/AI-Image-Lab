@@ -136,3 +136,12 @@ def test_an_empty_or_failing_answer_is_a_readable_error():
 
     with pytest.raises(pc.ChatError, match="沒有回應"):
         pc.chat([], "想法", model="m", post=boom, get=get_with("m"), starter=None)
+
+
+def test_the_animated_thinking_bubble_is_never_sent_to_the_model():
+    history = [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": f"{pc.THINKING_MARK} Qwen 思考中...（3 秒）"},
+        {"role": "assistant", "content": "好的"},
+    ]
+    assert [m["content"] for m in pc.clean_history(history)] == ["你好", "好的"]

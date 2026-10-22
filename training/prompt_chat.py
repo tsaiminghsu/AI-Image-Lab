@@ -22,6 +22,7 @@ import h3_idea
 MAX_HISTORY_MESSAGES = 12
 MAX_MESSAGE_CHARS = 1500
 BLOCK_KINDS = ("prompt", "motion")
+THINKING_MARK = "💭"  # the animated "Qwen is thinking" bubble the GUI shows while waiting; never sent to the model
 BLOCKED_MARK = "⛔"  # a chat bubble that starts with this is a notice from the tool, never sent back to the model
 
 SYSTEM = (
@@ -62,6 +63,8 @@ def clean_history(history):
     for m in history or []:
         role = m.get("role") if isinstance(m, dict) else None
         text = _text(m.get("content")).strip() if isinstance(m, dict) else ""
+        if role == "assistant" and text.startswith(THINKING_MARK):
+            continue
         if role == "assistant" and text.startswith(BLOCKED_MARK):
             # a notice that the previous user message was stopped: neither the notice nor that message goes to the model
             if out and out[-1]["role"] == "user":

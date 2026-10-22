@@ -1059,15 +1059,37 @@ def pz_chat_send(message, history):
         raise gr.Error("請先輸入要問的內容")
     shown = history + [{"role": "user", "content": text}]
     yield shown, ""
-    _free_comfyui_models()
+    box = {}
+
+    def ask():
+        try:
+            _free_comfyui_models()
+            box["reply"] = prompt_chat.chat(history, text)
+        except BaseException as exc:  # noqa: BLE001 - re-raised below, in the handler's own thread
+            box["error"] = exc
+
+    worker = threading.Thread(target=ask, daemon=True)
+    worker.start()
+    started, tick = time.time(), 0
+    # Like the chat apps people know: a bubble that animates (cycling dots and the seconds so far) until the reply
+    # arrives, so a 10-20 s wait (model load + answer) never looks like a hang. It is replaced by the reply, or dropped.
+    while worker.is_alive():
+        dots = "." * (tick % 3 + 1) + " " * (2 - tick % 3)
+        thinking = f"{prompt_chat.THINKING_MARK} Qwen 思考中{dots}（{int(time.time() - started)} 秒）"
+        yield shown + [{"role": "assistant", "content": thinking}], ""
+        tick += 1
+        worker.join(timeout=0.45)
     try:
-        reply = prompt_chat.chat(history, text)
+        if "error" in box:
+            raise box["error"]
+        reply = box["reply"]
     except prompt_chat.ChatBlocked as exc:
         # the reason goes into the chat itself: a toast disappears before it can be read
         yield shown + [{"role": "assistant", "content": f"{prompt_chat.BLOCKED_MARK} {exc}"}], ""
         return
-    except gc.UsageError as exc:
-        raise gr.Error(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - drop the animated bubble first, or it would stay frozen on screen
+        yield shown, ""
+        raise gr.Error(str(exc) if isinstance(exc, gc.UsageError) else f"{type(exc).__name__}：{exc}") from exc
     yield shown + [{"role": "assistant", "content": reply}], ""
 
 
