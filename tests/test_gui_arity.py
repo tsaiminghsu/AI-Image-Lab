@@ -41,6 +41,8 @@ GENERATION_HANDLERS = {
     "generate_video_svd",
     "generate_gif",
     "generate_from_picker",
+    "generate_pony_zimage",
+    "generate_pony_zimage_batch",
     "generate_cloud_video",
     "send_animatediff_to_cloud",
 }

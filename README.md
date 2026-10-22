@@ -1170,6 +1170,7 @@ powershell -ExecutionPolicy Bypass -File D:\AI-Image-Lab\training\stop_comfyui.p
 - 兩段式：Realistic Pony 決定人是誰、姿勢、構圖（可選 Anchor 與骨架姿勢），Z-Image Turbo 再把那張圖重畫一次，只改皮膚、光影、布料的質感。
 - 「Z-Image 重畫強度」是關鍵：預設 0.2（臉部相似度約 0.75，人臉特寫最認得出來），0.3 質感更明顯但臉會變老（約 0.62～0.65），0.4 以上開始換人；Z-Image 的臉會比 Pony 底圖老、皮膚較粗，人臉特寫要先看結果。可勾「只出 Pony 底圖」先確認構圖再重畫。
 - 需要先裝好 Z-Image 模型檔（見「Z-Image Turbo（選用安裝）」）。底圖來自 Pony 系模型，成品不能直接商用。
+- **批次比較**：Prompt 欄一行一個，展開「批次比較（每張各自隨機 seed）」設每個 prompt 生幾張，按「批次生成」。每張都抽自己的隨機 seed，所以可以比較不同 prompt，也可以只放一行比較不同 seed。顯卡一次只能跑一張，所以是排隊依序跑（每張之間等 GPU 降到 60°C），做完一張就出現在結果牆；「停止批次」會在目前這張跑完後停下。一批最多 10 行、每行 8 張、共 24 張；每批存在 `training/reference_candidates/ponyz_batch_<時間>/`，`manifest.json` 記每張的 seed 與實際送出的英文 prompt，要重現某一張就用它的 seed。
 
 #### 圖片選擇生圖（點縮圖組 prompt，不用自己打字）
 

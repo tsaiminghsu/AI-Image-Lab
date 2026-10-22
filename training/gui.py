@@ -16,6 +16,7 @@ import contextlib
 import datetime
 import functools
 import glob
+import inspect
 import os
 import threading
 import time
@@ -28,10 +29,12 @@ import caption_image
 import cloud_video
 import comfyui_client as client
 import generate_character as gc
+import gpu_guard
 import job_scheduler
 import job_service
 import job_store
 import pony_tags
+import pony_zimage_batch
 import pose_skeletons
 import resource_policy as rp
 import scene_library
@@ -62,11 +65,25 @@ def _show_usage_errors(fn):
     cloud_video.CloudJobFailed covers a remote job that failed, timed out or was cancelled.
     """
 
+    errors = (gc.UsageError, client.ComfyUIUnavailable, cloud_video.CloudJobFailed, SystemExit)
+
+    if inspect.isgeneratorfunction(fn):
+        # A streaming handler (the batch button) has to stay a generator, or Gradio receives the generator object
+        # itself as the output value and fails with "didn't return enough output values".
+        @functools.wraps(fn)
+        def stream_wrapper(*args, **kwargs):
+            try:
+                yield from fn(*args, **kwargs)
+            except errors as exc:
+                raise gr.Error(str(exc)) from exc
+
+        return stream_wrapper
+
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (gc.UsageError, client.ComfyUIUnavailable, cloud_video.CloudJobFailed, SystemExit) as exc:
+        except errors as exc:
             raise gr.Error(str(exc)) from exc
 
     return wrapper
@@ -671,6 +688,30 @@ def _free_comfyui_models():
         pass
 
 
+def _pony_zimage_inputs(character, anchor, custom_anchor, pose_library, resolution):
+    """The checks the single and the batch button share: (trigger, anchor_path, pose_name, width, height)."""
+    trigger = None if character == NO_CHARACTER else character
+    anchor_path = custom_anchor or anchor
+    if trigger and not anchor_path:
+        raise gr.Error("選了角色就要選一張 anchor 圖，或自行上傳一張")
+    pose_name = None if (not pose_library or pose_library == POSE_NONE) else pose_library
+    if resolution == RESOLUTION_SQUARE:
+        width, height = client.WIDTH, client.HEIGHT
+    elif resolution == RESOLUTION_PORTRAIT:
+        width, height = gc.FULL_BODY_RESOLUTION
+    elif resolution == RESOLUTION_LANDSCAPE:
+        height, width = gc.FULL_BODY_RESOLUTION
+    else:
+        width, height = None, None
+    if pose_name and width:
+        loss = pose_skeletons.crop_fraction(pose_name, width, height)
+        if loss > pose_skeletons.CANVAS_CROP_TOLERANCE:
+            sw, sh = pose_skeletons.canvas_for(pose_name)
+            raise gr.Error(f"骨架庫姿勢「{pose_name}」是 {sw}x{sh} 直式，這個畫布比例會把骨架裁掉 {loss * 100:.0f}%。"
+                           "畫布比例請改成「自動」或「直向」。")
+    return trigger, anchor_path, pose_name, width, height
+
+
 @_show_usage_errors
 def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
                          pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
@@ -694,25 +735,8 @@ def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negativ
     else:
         prompt = _picker_extra_in_english(prompt)
     negative_prompt = _picker_extra_in_english(negative_prompt)
-    trigger = None if character == NO_CHARACTER else character
-    anchor_path = custom_anchor or anchor
-    if trigger and not anchor_path:
-        raise gr.Error("選了角色就要選一張 anchor 圖，或自行上傳一張")
-    pose_name = None if (not pose_library or pose_library == POSE_NONE) else pose_library
-    if resolution == RESOLUTION_SQUARE:
-        width, height = client.WIDTH, client.HEIGHT
-    elif resolution == RESOLUTION_PORTRAIT:
-        width, height = gc.FULL_BODY_RESOLUTION
-    elif resolution == RESOLUTION_LANDSCAPE:
-        height, width = gc.FULL_BODY_RESOLUTION
-    else:
-        width, height = None, None
-    if pose_name and width:
-        loss = pose_skeletons.crop_fraction(pose_name, width, height)
-        if loss > pose_skeletons.CANVAS_CROP_TOLERANCE:
-            sw, sh = pose_skeletons.canvas_for(pose_name)
-            raise gr.Error(f"骨架庫姿勢「{pose_name}」是 {sw}x{sh} 直式，這個畫布比例會把骨架裁掉 {loss * 100:.0f}%。"
-                           "畫布比例請改成「自動」或「直向」。")
+    trigger, anchor_path, pose_name, width, height = _pony_zimage_inputs(
+        character, anchor, custom_anchor, pose_library, resolution)
     decision = _route(rp.image_kind(pony_checkpoint, True, uses_pose=bool(pose_name)), force_local,
                       progress=progress, interactive=True)
     _ensure_comfyui()
@@ -738,6 +762,96 @@ def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negativ
     base_path, final_path = paths
     sent = prompt if not refine_prompt else f"Pony：{prompt}\nZ-Image：{refine_prompt}"
     return base_path, final_path, sent
+
+
+_BATCH_STOP = threading.Event()
+ZIMAGE_REFINE_SECONDS = 40  # measured 2026-10-21: the Z-Image pass on top of the Pony picture
+
+
+def pony_zimage_batch_stop():
+    _BATCH_STOP.set()
+    return "⏹ 已要求停止：目前這張跑完就會停下，後面的不會再開始"
+
+
+def _batch_status(records, total, note=""):
+    done = [r for r in records if r["status"] == "ok"]
+    bad = [r for r in records if r["status"] == "error"]
+    lines = [f"進度 {len(records)}/{total}：成功 {len(done)}、失敗 {len(bad)}" + (f"　{note}" if note else "")]
+    lines += [f"- ❌ #{r['index']}（prompt {r['prompt_no']}，seed {r['seed']}）：{r['error']}" for r in bad]
+    return "\n".join(lines)
+
+
+@_show_usage_errors
+def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, tier, negative_prompt, ip_adapter_weight,
+                               pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
+                               use_qwen, per_prompt, force_local, progress=gr.Progress()):
+    """Batch button of the 🧩 tab: one prompt per line, `per_prompt` pictures each, every picture with its own random seed.
+    Yields (gallery items, status) after every picture so the wall fills up while the card is still working."""
+    prompts = pony_zimage_batch.parse_prompts(prompts_text)
+    jobs = pony_zimage_batch.plan_jobs(prompts, per_prompt)
+    negative_prompt = _picker_extra_in_english(negative_prompt)
+    trigger, anchor_path, pose_name, width, height = _pony_zimage_inputs(
+        character, anchor, custom_anchor, pose_library, resolution)
+    kind = rp.image_kind(pony_checkpoint, True, uses_pose=bool(pose_name))
+    est = (rp.JOB_COSTS[kind].seconds + (0 if skip_refine else ZIMAGE_REFINE_SECONDS)) * len(jobs)
+    _route(kind, force_local, est_seconds=est, progress=progress)
+    if not skip_refine:
+        # asked of the local server, so it needs ComfyUI up first
+        _ensure_comfyui()
+        missing = client.zimage_missing_files("z_image_turbo")
+        if missing:
+            raise gr.Error(f"找不到 Z-Image 模型檔：{', '.join(missing)}——下載指令見 README「Z-Image Turbo（選用安裝）」")
+    else:
+        _ensure_comfyui()
+    gr.Info(f"批次 {len(jobs)} 張（{len(prompts)} 行 prompt），每張各自隨機 seed、依序生成，每張之間會等 GPU 降溫；"
+            "「停止批次」會在目前這張跑完後停下")
+    _BATCH_STOP.clear()
+
+    def _batch_prepare(prompt):
+        # Chinese -> English once per distinct line, before any picture: Qwen and ComfyUI must not share the card
+        if use_qwen and not prompt.isascii():
+            _free_comfyui_models()
+            try:
+                pony, zimage = prompt_rewrite.rewrite(prompt)
+            except (requests.RequestException, KeyError, ValueError) as exc:
+                raise RuntimeError(f"Qwen 改寫失敗（{exc}）") from exc
+            return {"pony": pony, "zimage": zimage}
+        return {"pony": _picker_extra_in_english(prompt), "zimage": None}
+
+    out_root = os.path.join(os.path.dirname(__file__), "reference_candidates")
+    batch_dir = pony_zimage_batch.new_batch_dir(out_root)
+
+    def _batch_generate(job, prepared, stem):
+        progress(None, desc=f"第 {job.index}/{len(jobs)} 張 · seed {job.seed}")
+        with client.progress_reporter(_step_reporter(progress)):
+            return gc.gen_pony_zimage(
+                prepared["pony"], negative_prompt, tier, trigger, anchor_path, batch_dir, job.seed, stem,
+                ip_adapter_weight, denoise=float(denoise), pony_checkpoint=pony_checkpoint,
+                skip_refine=bool(skip_refine), refine_prompt=prepared["zimage"], pose_name=pose_name,
+                controlnet_strength=controlnet_strength if pose_name else None,
+                width=width, height=height, use_facedetailer=bool(anchor_path), hq=True)
+
+    settings = rp.load_settings()
+    meta = {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "pony_checkpoint": pony_checkpoint,
+            "denoise": float(denoise), "skip_refine": bool(skip_refine), "tier": tier, "qwen": bool(use_qwen),
+            "per_prompt": int(per_prompt), "prompts": prompts}
+    items, records = [], []
+    yield items, f"準備中：改寫 {len(prompts)} 行 prompt…"
+    try:
+        with rp.track(kind, est):
+            for rec in pony_zimage_batch.run_batch(
+                    jobs, prepare=_batch_prepare, generate=_batch_generate, guard=gpu_guard,
+                    start_temp_c=rp.start_temp_c(settings), should_stop=_BATCH_STOP.is_set,
+                    batch_dir=batch_dir, meta=meta):
+                records.append(rec)
+                shown = rec["final"] or rec["base"]
+                if shown:
+                    items.append((shown, f"#{rec['index']} · prompt {rec['prompt_no']} · seed {rec['seed']}"))
+                yield items, _batch_status(records, len(jobs), "（生成中…）" if len(records) < len(jobs) else "")
+    except gpu_guard.GpuBusy as exc:
+        raise gr.Error(f"GPU 現在不能開始批次：{exc}") from exc
+    stopped = any(r["status"] == "stopped" for r in records)
+    yield items, _batch_status(records, len(jobs), "（已停止）" if stopped else "（完成）") + f"\n\n清單與原圖：`{batch_dir}`（manifest.json 有每張的 seed 與英文 prompt）"
 
 
 def select_picker_character(evt: gr.SelectData):
@@ -1949,7 +2063,7 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                                           label="姿勢骨架庫（選填，由 Pony 這段用 ControlNet 壓住姿勢）")
                             pz_controlnet_strength = gr.Slider(0.0, 1.5, value=client.CONTROLNET_STRENGTH, step=0.05,
                                                                label="骨架控制強度")
-                            pz_prompt = gr.Textbox(label="Prompt（中文或英文都可以；中文會自動翻成英文，Pony 和 Z-Image 兩段共用）", lines=3,
+                            pz_prompt = gr.Textbox(label="Prompt（中文或英文都可以；中文會自動翻成英文。批次生成時一行一個 prompt）", lines=3,
                                                    placeholder="例如: 坐在溫暖圖書館裡看書的女人，午後的陽光")
                             pz_negative = gr.Textbox(label="額外負面詞（選填）", lines=1)
                             pz_pony = gr.Dropdown(sorted(client.PONY_CHECKPOINTS), value=gc.PONY_ZIMAGE_DEFAULT_PONY,
@@ -1966,9 +2080,24 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                                      label="IP-Adapter 權重（有選角色才有作用）")
                             pz_force_local = gr.Checkbox(value=True, label=FORCE_LOCAL_LABEL)
                             pz_btn = gr.Button("生成（Pony 底圖 → Z-Image 質感）", variant="primary")
+                            with gr.Accordion("批次比較（每張各自隨機 seed）", open=False):
+                                gr.Markdown(
+                                    "上面的 Prompt 欄**一行一個 prompt**，每行各生下面設定的張數；**每張都抽自己的隨機 seed**，"
+                                    "所以可以比較不同 prompt，也可以只放一行比較不同 seed。顯卡一次只能跑一張，所以是排隊依序跑，"
+                                    "每張之間會等 GPU 降到 60°C；做完一張就出現在右邊的結果牆。上面的 seed 欄位在批次時不使用。"
+                                )
+                                pz_per_prompt = gr.Slider(1, pony_zimage_batch.MAX_PER_PROMPT, value=2, step=1,
+                                                          label="每個 prompt 生幾張（一批最多 "
+                                                                f"{pony_zimage_batch.MAX_TOTAL} 張）")
+                                with gr.Row():
+                                    pz_batch_btn = gr.Button("批次生成", variant="primary")
+                                    pz_batch_stop_btn = gr.Button("⏹ 停止批次", variant="stop")
                         with gr.Column():
                             pz_base_out = gr.Image(label="① Pony 底圖（長什麼樣）")
                             pz_final_out = gr.Image(label="② Z-Image 重畫（質感）")
+                            pz_wall = gr.Gallery(label="批次結果牆（Z-Image 成品；點開看大圖，標題有 prompt 編號與 seed）",
+                                                 columns=3, height=420, object_fit="contain")
+                            pz_batch_status = gr.Markdown()
                             pz_sent_prompt = gr.Textbox(label="實際送出的英文 prompt（中文翻譯結果）", interactive=False, lines=2)
                     pz_character.change(refresh_anchors, inputs=pz_character, outputs=[pz_anchor, pz_anchor_preview])
                     pz_anchor.change(lambda path: path, inputs=pz_anchor, outputs=pz_anchor_preview)
@@ -1977,6 +2106,14 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                          pz_seed, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
                                          pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_force_local],
                                  outputs=[pz_base_out, pz_final_out, pz_sent_prompt], concurrency_id="gpu")
+                    pz_batch_btn.click(generate_pony_zimage_batch,
+                                       inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_tier,
+                                               pz_negative, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
+                                               pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_per_prompt,
+                                               pz_force_local],
+                                       outputs=[pz_wall, pz_batch_status], concurrency_id="gpu")
+                    # no concurrency_id: the stop click must run while the batch holds the "gpu" slot
+                    pz_batch_stop_btn.click(pony_zimage_batch_stop, inputs=None, outputs=pz_batch_status)
                 with gr.Tab("🎬 導演台") as desk_tab:
                     _desk_items, _desk_paths = desk_library()
                     with gr.Row(elem_classes="desk-toolbar", equal_height=True):
