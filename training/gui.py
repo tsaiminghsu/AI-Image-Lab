@@ -1062,6 +1062,10 @@ def pz_chat_send(message, history):
     _free_comfyui_models()
     try:
         reply = prompt_chat.chat(history, text)
+    except prompt_chat.ChatBlocked as exc:
+        # the reason goes into the chat itself: a toast disappears before it can be read
+        yield shown + [{"role": "assistant", "content": f"{prompt_chat.BLOCKED_MARK} {exc}"}], ""
+        return
     except gc.UsageError as exc:
         raise gr.Error(str(exc)) from exc
     yield shown + [{"role": "assistant", "content": reply}], ""

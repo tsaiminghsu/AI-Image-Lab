@@ -22,7 +22,7 @@ import h3_idea
 MAX_HISTORY_MESSAGES = 12
 MAX_MESSAGE_CHARS = 1500
 BLOCK_KINDS = ("prompt", "motion")
-BLOCKED_REPLY = "（這則回覆含有被內容過濾擋下的字，已丟掉，請換個說法再問一次。）"
+BLOCKED_MARK = "⛔"  # a chat bubble that starts with this is a notice from the tool, never sent back to the model
 
 SYSTEM = (
     "You are the prompt assistant inside a local tool that makes pictures and short videos of fictional adult "
@@ -42,6 +42,10 @@ class ChatError(gc.UsageError):
     pass
 
 
+class ChatBlocked(ChatError):
+    """The content gate stopped the user's message or the model's reply; str(exc) says which and names the terms."""
+
+
 def _text(content):
     """Gradio can hand a message's content as a string or as a list of parts ({"type": "text", "text": ...})."""
     if isinstance(content, str):
@@ -58,6 +62,11 @@ def clean_history(history):
     for m in history or []:
         role = m.get("role") if isinstance(m, dict) else None
         text = _text(m.get("content")).strip() if isinstance(m, dict) else ""
+        if role == "assistant" and text.startswith(BLOCKED_MARK):
+            # a notice that the previous user message was stopped: neither the notice nor that message goes to the model
+            if out and out[-1]["role"] == "user":
+                out.pop()
+            continue
         if role in ("user", "assistant") and text:
             out.append({"role": role, "content": text[:MAX_MESSAGE_CHARS]})
     return out[-MAX_HISTORY_MESSAGES:]
@@ -82,13 +91,16 @@ def chat(
     starter=h3_idea.start_own_ollama,
 ):
     """The assistant's reply to `message` after `history` (a list of {role, content}). Raises ChatError for an empty
-    or blocked message or when Ollama or the model cannot be reached; a blocked reply comes back as BLOCKED_REPLY."""
+    or when Ollama or the model cannot be reached; ChatBlocked (a ChatError) when the content gate stopped the message or the reply."""
     message = (message or "").strip()
     if not message:
         raise ChatError("請先輸入要問的內容")
     if len(message) > MAX_MESSAGE_CHARS:
         raise ChatError(f"一則訊息最多 {MAX_MESSAGE_CHARS} 字，現在是 {len(message)} 字")
-    content_gate.check(message)  # before the model is started: blocked wording is never sent to it
+    try:
+        content_gate.check(message)  # before the model is started: blocked wording is never sent to it
+    except gc.UsageError as exc:
+        raise ChatBlocked(f"你的訊息沒有送出：{exc}") from exc
     own = None
     try:
         base, models = h3_idea.find_ollama(get, url)
@@ -128,6 +140,9 @@ def chat(
         raise ChatError("Qwen 回了空白，請再問一次")
     try:
         content_gate.check(reply)
-    except gc.UsageError:
-        return BLOCKED_REPLY
+    except gc.UsageError as exc:
+        terms = "、".join(content_gate.found_terms(reply)[:5])
+        raise ChatBlocked(
+            f"Qwen 的回覆含有被內容過濾擋下的字（{terms}），這則回覆已丟掉、沒有放進對話；請換個說法再問一次。"
+        ) from exc
     return reply

@@ -3,7 +3,6 @@
 import pytest
 
 import content_gate
-import generate_character as gc
 import prompt_chat as pc
 
 
@@ -92,28 +91,35 @@ def test_empty_and_overlong_messages_are_refused():
         pc.chat([], "字" * (pc.MAX_MESSAGE_CHARS + 1), starter=None)
 
 
-def test_a_blocked_message_never_reaches_the_model(monkeypatch):
-    def block(*texts):
-        raise gc.UsageError("blocked")
+def test_a_blocked_message_never_reaches_the_model_and_the_error_says_why(monkeypatch):
+    import re
 
-    monkeypatch.setattr(content_gate, "check", block)
+    monkeypatch.setattr(content_gate, "_ZH", re.compile("壞字"))
     post = Post()
-    with pytest.raises(gc.UsageError):
-        pc.chat([], "想法", model="m", post=post, get=get_with("m"), starter=None)
+    with pytest.raises(pc.ChatBlocked, match="你的訊息沒有送出.*壞字"):
+        pc.chat([], "這句有壞字", model="m", post=post, get=get_with("m"), starter=None)
     assert post.bodies == []
 
 
-def test_a_blocked_reply_is_replaced_not_shown(monkeypatch):
-    calls = []
+def test_a_blocked_reply_raises_with_the_terms_and_is_not_returned(monkeypatch):
+    import re
 
-    def check(*texts):
-        calls.append(texts)
-        if len(calls) == 2:
-            raise gc.UsageError("blocked reply")
+    monkeypatch.setattr(content_gate, "_ZH", re.compile("壞字"))
+    with pytest.raises(pc.ChatBlocked, match="Qwen 的回覆.*壞字.*已丟掉"):
+        ask(message="正常的問題", content="回答裡有壞字")
 
-    monkeypatch.setattr(content_gate, "check", check)
-    reply, _ = ask(content="被擋的回覆")
-    assert reply == pc.BLOCKED_REPLY and len(calls) == 2  # the message first, then the reply
+
+def test_a_blocked_notice_and_the_message_it_stopped_are_not_sent_back_to_the_model():
+    history = [
+        {"role": "user", "content": "第一句"},
+        {"role": "assistant", "content": "好的"},
+        {"role": "user", "content": "被擋的那句"},
+        {"role": "assistant", "content": f"{pc.BLOCKED_MARK} 你的訊息沒有送出：含有被擋的字"},
+        {"role": "user", "content": "換個說法"},
+    ]
+    assert [m["content"] for m in pc.clean_history(history)] == ["第一句", "好的", "換個說法"]
+    only_notice = [{"role": "assistant", "content": f"{pc.BLOCKED_MARK} 回覆被擋"}]
+    assert pc.clean_history(only_notice) == []
 
 
 def test_a_missing_model_without_a_starter_names_what_is_there():
