@@ -125,6 +125,76 @@ def thumb_path(slug):
     return os.path.join(THUMBS_DIR, f"{slug}.jpg")
 
 
+# --- extra scenes: for the Pony x Z-Image tab's scene menu, no pictures --------------------------------------------
+# The picker needs a thumbnail per scene (each one costs a GPU render and a committed JPEG), a menu does not, so the
+# larger set of everyday settings lives in its own file without `thumb_seed`. load_all()/list_scenes() and the picker
+# do not see it.
+EXTRA_FILE = os.path.join(SCENES_DIR, "extra_scenes.json")
+EXTRA_FIELDS = ("slug", "name_zh", "prompt", "lighting", "tier")
+
+
+def load_extras():
+    """The extra scenes in file order, validated like load_all() (same slug rule, tiers and non-empty texts) and not
+    reusing a slug of the main library. Raises ValueError naming the offending entry."""
+    try:
+        with open(EXTRA_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise ValueError(f"extra scene file not found: {EXTRA_FILE}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{EXTRA_FILE} is not valid JSON: {exc}")
+    scenes = data.get("scenes")
+    if not isinstance(scenes, list) or not scenes:
+        raise ValueError(f"{EXTRA_FILE} has no 'scenes' list")
+    seen = {s["slug"] for s in load_all()}
+    for i, scene in enumerate(scenes):
+        where = scene.get("slug") or f"entry #{i}"
+        missing = [k for k in EXTRA_FIELDS if k not in scene]
+        if missing:
+            raise ValueError(f"extra scene {where}: missing field(s) {missing}")
+        if not SLUG_RE.match(scene["slug"]):
+            raise ValueError(f"extra scene {where}: slug must match {SLUG_RE.pattern}")
+        if scene["slug"] in seen:
+            raise ValueError(f"extra scene {scene['slug']}: duplicate slug")
+        seen.add(scene["slug"])
+        if scene["tier"] not in TIERS:
+            raise ValueError(f"extra scene {scene['slug']}: tier must be one of {TIERS}, got {scene['tier']!r}")
+        for field in ("name_zh", "prompt", "lighting"):
+            if not str(scene[field]).strip():
+                raise ValueError(f"extra scene {scene['slug']}: {field} is empty")
+    return scenes
+
+
+def list_all(tier="safe"):
+    """Main-library scenes followed by the extra ones that this tier may use."""
+    if tier not in TIERS:
+        raise ValueError(f"unknown tier {tier!r} - choices: {TIERS}")
+    scenes = load_all() + load_extras()
+    return scenes if tier == "suggestive" else [s for s in scenes if s["tier"] == "safe"]
+
+
+def get_any(slug):
+    """A scene from the main library or the extra file."""
+    for scene in load_all() + load_extras():
+        if scene["slug"] == slug:
+            return scene
+    raise ValueError(f"unknown scene {slug!r}")
+
+
+def combine_scene(prompt, slug):
+    """Put a scene into the user's prompt. English text gets the scene's English text appended; Chinese text gets the
+    scene named in Chinese with the English wording in brackets, so the Qwen rewrite (or the translation) keeps the
+    curated setting and lighting."""
+    scene = get_any(slug)
+    text = f"{scene['prompt']}, {scene['lighting']}"
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return text
+    if prompt.isascii():
+        return f"{prompt}, {text}"
+    return f"{prompt}，場景：{scene['name_zh']}（{text}）"
+
+
 def _render_one(scene, checkpoint_key, client, gc):
     from PIL import Image
 

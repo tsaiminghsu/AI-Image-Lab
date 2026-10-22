@@ -729,6 +729,23 @@ def _free_comfyui_models():
         pass
 
 
+PZ_SCENES = scene_library.list_all("suggestive")
+PZ_SCENE_CHOICES = [(s["name_zh"] + ("（suggestive）" if s["tier"] == "suggestive" else ""), s["slug"]) for s in PZ_SCENES]
+
+
+def _apply_scene(prompt, slug, tier):
+    """The prompt with a scene from the library (main or extra file) put into it; unchanged when no scene is picked."""
+    if not slug:
+        return prompt
+    try:
+        scene = scene_library.get_any(slug)
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+    if scene["tier"] == "suggestive" and tier == "safe":
+        raise gr.Error(f"場景「{scene['name_zh']}」是 suggestive 級，內容分級是 safe 時不能用；換場景或把分級改成 suggestive")
+    return scene_library.combine_scene(prompt, slug)
+
+
 def _pony_zimage_inputs(character, anchor, custom_anchor, pose_library, resolution):
     """The checks the single and the batch button share: (trigger, anchor_path, pose_name, width, height)."""
     trigger = None if character == NO_CHARACTER else character
@@ -754,14 +771,15 @@ def _pony_zimage_inputs(character, anchor, custom_anchor, pose_library, resoluti
 
 
 @_show_usage_errors
-def generate_pony_zimage(character, anchor, custom_anchor, prompt, tier, negative_prompt, seed, ip_adapter_weight,
-                         pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
-                         use_qwen, force_local, progress=gr.Progress()):
+def generate_pony_zimage(character, anchor, custom_anchor, prompt, scene, tier, negative_prompt, seed,
+                         ip_adapter_weight, pose_library, controlnet_strength, resolution, pony_checkpoint, denoise,
+                         skip_refine, use_qwen, force_local, progress=gr.Progress()):
     """The 🧩 integration tab: Pony decides who and what pose, Z-Image re-renders the material. Streams
     (Pony picture, final picture, English prompts, log): the log box and the terminal show each step, the ComfyUI step
     bar and a GPU/RAM line every 10 s; the two pictures stay visible so they can be compared."""
     if not prompt.strip():
         raise gr.Error("請輸入 prompt")
+    prompt = _apply_scene(prompt, scene, tier)
     trigger, anchor_path, pose_name, width, height = _pony_zimage_inputs(
         character, anchor, custom_anchor, pose_library, resolution)
     decision = _route(rp.image_kind(pony_checkpoint, True, uses_pose=bool(pose_name)), force_local,
@@ -850,13 +868,16 @@ def _batch_status(records, total, note=""):
 
 
 @_show_usage_errors
-def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, tier, negative_prompt, ip_adapter_weight,
-                               pose_library, controlnet_strength, resolution, pony_checkpoint, denoise, skip_refine,
-                               use_qwen, per_prompt, force_local, progress=gr.Progress()):
+def generate_pony_zimage_batch(character, anchor, custom_anchor, prompts_text, scenes, tier, negative_prompt,
+                               ip_adapter_weight, pose_library, controlnet_strength, resolution, pony_checkpoint,
+                               denoise, skip_refine, use_qwen, per_prompt, force_local, progress=gr.Progress()):
     """Batch button of the 🧩 tab: one prompt per line, `per_prompt` pictures each, every picture with its own random seed.
     Streams (gallery items, status, log) while the card works: the log box and the terminal show every step, the ComfyUI
     step bar and a GPU/RAM line every 10 s, and each finished picture is added to the wall."""
     prompts = pony_zimage_batch.parse_prompts(prompts_text)
+    if scenes:
+        # every prompt line in every picked scene: 2 lines x 5 scenes = 10 prompts, each then made `per_prompt` times
+        prompts = [_apply_scene(p, slug, tier) for p in prompts for slug in scenes]
     jobs = pony_zimage_batch.plan_jobs(prompts, per_prompt)
     negative_prompt = _picker_extra_in_english(negative_prompt)
     trigger, anchor_path, pose_name, width, height = _pony_zimage_inputs(
@@ -2243,6 +2264,9 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                                                label="骨架控制強度")
                             pz_prompt = gr.Textbox(label="Prompt（中文或英文都可以；中文會自動翻成英文。批次生成時一行一個 prompt）", lines=3,
                                                    placeholder="例如: 坐在溫暖圖書館裡看書的女人，午後的陽光")
+                            pz_scene = gr.Dropdown(
+                                PZ_SCENE_CHOICES, value=None, label="場景（選填：選一個，會自動和上面的 prompt 結合）",
+                                info=f"場景庫 {len(PZ_SCENES)} 個（程式裡的 training/scenes/）；沒選就只用你寫的 prompt")
                             pz_negative = gr.Textbox(label="額外負面詞（選填）", lines=1)
                             pz_pony = gr.Dropdown(sorted(client.PONY_CHECKPOINTS), value=gc.PONY_ZIMAGE_DEFAULT_PONY,
                                                   label="底圖用的 Pony checkpoint")
@@ -2264,6 +2288,10 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                     "所以可以比較不同 prompt，也可以只放一行比較不同 seed。顯卡一次只能跑一張，所以是排隊依序跑，"
                                     "每張之間會等 GPU 降到 60°C；做完一張就出現在右邊的結果牆。上面的 seed 欄位在批次時不使用。"
                                 )
+                                pz_batch_scenes = gr.Dropdown(
+                                    PZ_SCENE_CHOICES, value=[], multiselect=True,
+                                    label="場景（選填，可多選）：每行 prompt 會在每個選的場景各做一次",
+                                    info="例如 2 行 prompt × 5 個場景 = 10 個 prompt，再乘上下面的張數（一批最多 24 張）")
                                 pz_per_prompt = gr.Slider(1, pony_zimage_batch.MAX_PER_PROMPT, value=2, step=1,
                                                           label="每個 prompt 生幾張（一批最多 "
                                                                 f"{pony_zimage_batch.MAX_TOTAL} 張）")
@@ -2284,13 +2312,13 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     pz_character.change(refresh_anchors, inputs=pz_character, outputs=[pz_anchor, pz_anchor_preview])
                     pz_anchor.change(lambda path: path, inputs=pz_anchor, outputs=pz_anchor_preview)
                     pz_btn.click(generate_pony_zimage,
-                                 inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_tier, pz_negative,
-                                         pz_seed, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
+                                 inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_scene, pz_tier,
+                                         pz_negative, pz_seed, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
                                          pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_force_local],
                                  outputs=[pz_base_out, pz_final_out, pz_sent_prompt, pz_log], concurrency_id="gpu")
                     pz_batch_btn.click(generate_pony_zimage_batch,
-                                       inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_tier,
-                                               pz_negative, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
+                                       inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_batch_scenes,
+                                               pz_tier, pz_negative, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
                                                pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_per_prompt,
                                                pz_force_local],
                                        outputs=[pz_wall, pz_batch_status, pz_batch_log], concurrency_id="gpu")

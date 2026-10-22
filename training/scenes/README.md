@@ -66,3 +66,12 @@ and makes the batch finish unattended, which is the right trade for something ru
 3. Commit the JSON and the JPEG together. `tests/test_scene_library.py` fails on a scene with no
    committed thumbnail, since it would otherwise show as a blank tile only when someone opens
    the tab.
+
+## Extra scenes (no thumbnails)
+
+`extra_scenes.json` holds everyday settings for the Pony x Z-Image tab's scene menu. Same fields as above without
+`thumb_seed`, and no picture: the picker needs a committed thumbnail per scene (a GPU render each, enforced by a
+test), a menu does not, so these stay out of `scenes.json`, `list_scenes()` and the picker. Slugs must not repeat a
+slug of `scenes.json`. `scene_library.list_all(tier)` returns both; `combine_scene(prompt, slug)` puts a scene into a
+user prompt (English: appended; Chinese: "…，場景：夜市（english text）"). Keep them about the place: the user's own
+prompt brings the person (a test refuses person words).

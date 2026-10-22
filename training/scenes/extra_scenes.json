@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "scenes": [
+    {"slug": "train_platform", "name_zh": "火車站月台", "prompt": "train station platform", "lighting": "soft overcast daylight", "tier": "safe"},
+    {"slug": "subway_car", "name_zh": "捷運車廂", "prompt": "inside a subway train car", "lighting": "cool fluorescent lighting", "tier": "safe"},
+    {"slug": "night_market", "name_zh": "夜市", "prompt": "busy night market street with food stalls", "lighting": "warm string lights at night", "tier": "safe"},
+    {"slug": "convenience_store", "name_zh": "便利商店", "prompt": "inside a convenience store", "lighting": "bright fluorescent lighting", "tier": "safe"},
+    {"slug": "office_interior", "name_zh": "辦公室", "prompt": "modern office interior", "lighting": "soft daylight from large windows", "tier": "safe"},
+    {"slug": "public_library", "name_zh": "圖書館", "prompt": "quiet public library with tall bookshelves", "lighting": "warm reading lamps", "tier": "safe"},
+    {"slug": "home_kitchen", "name_zh": "家中廚房", "prompt": "bright home kitchen", "lighting": "soft morning light", "tier": "safe"},
+    {"slug": "living_room_sofa", "name_zh": "客廳沙發", "prompt": "cozy living room with a sofa", "lighting": "warm lamp light", "tier": "safe"},
+    {"slug": "balcony_morning", "name_zh": "陽台早晨", "prompt": "apartment balcony with potted plants", "lighting": "soft morning sunlight", "tier": "safe"},
+    {"slug": "mountain_trail", "name_zh": "山間步道", "prompt": "forest mountain trail", "lighting": "dappled sunlight through trees", "tier": "safe"},
+    {"slug": "seaside_promenade", "name_zh": "海邊步道", "prompt": "seaside promenade", "lighting": "late afternoon sunlight", "tier": "safe"},
+    {"slug": "rainy_street", "name_zh": "雨天街道", "prompt": "city street in light rain with umbrellas", "lighting": "overcast soft light with wet reflections", "tier": "safe"},
+    {"slug": "snowy_street", "name_zh": "雪景街道", "prompt": "snowy town street", "lighting": "cool soft winter light", "tier": "safe"},
+    {"slug": "autumn_park", "name_zh": "秋天公園", "prompt": "autumn park with fallen leaves", "lighting": "golden hour sunlight", "tier": "safe"},
+    {"slug": "flower_field", "name_zh": "花田", "prompt": "field of blooming flowers", "lighting": "soft spring sunlight", "tier": "safe"},
+    {"slug": "amusement_park", "name_zh": "遊樂園", "prompt": "amusement park with a ferris wheel", "lighting": "bright afternoon daylight", "tier": "safe"},
+    {"slug": "aquarium_tunnel", "name_zh": "水族館", "prompt": "aquarium tunnel with fish swimming overhead", "lighting": "blue ambient light", "tier": "safe"},
+    {"slug": "art_museum", "name_zh": "美術館", "prompt": "modern art museum gallery", "lighting": "soft gallery lighting", "tier": "safe"},
+    {"slug": "dinner_restaurant", "name_zh": "餐廳晚餐", "prompt": "cozy restaurant interior at dinner time", "lighting": "warm candlelight", "tier": "safe"},
+    {"slug": "gym_interior", "name_zh": "健身房", "prompt": "bright gym interior", "lighting": "bright even lighting", "tier": "safe"}
+  ]
+}

@@ -168,3 +168,89 @@ def test_thumbnails_are_small_enough_to_commit():
         path = scene_library.thumb_path(scene["slug"])
         size = os.path.getsize(path)
         assert 1024 < size < 120 * 1024, f"{scene['slug']}: thumbnail is {size} bytes, expected a ~256px JPEG"
+
+
+# --- extra scenes (the Pony x Z-Image tab's scene menu; no thumbnails) ---------------------------------------------
+
+
+def test_the_extra_scenes_are_well_formed_and_do_not_reuse_a_library_slug():
+    extras = scene_library.load_extras()
+    assert len(extras) >= 20
+    main = {s["slug"] for s in scene_library.load_all()}
+    slugs = [s["slug"] for s in extras]
+    assert len(slugs) == len(set(slugs)) and not main & set(slugs)
+    for s in extras:
+        assert any("一" <= c <= "鿿" for c in s["name_zh"]), f"{s['slug']}: name_zh isn't Chinese"
+        assert s["prompt"].isascii() and s["lighting"].isascii(), f"{s['slug']}: prompt and lighting must be English"
+        assert s["tier"] in scene_library.TIERS
+
+
+def test_extra_scenes_describe_a_place_not_a_person():
+    # the user's own prompt brings the person; a scene that names one would fight it
+    banned = ("woman", "man ", "girl", "boy", "people", "person", "crowd", "child")
+    for s in scene_library.load_extras():
+        text = f"{s['prompt']} {s['lighting']} ".lower()
+        assert not any(w in text for w in banned), f"{s['slug']}: names a person ({text})"
+
+
+def test_list_all_adds_the_extras_and_still_hides_suggestive_scenes_at_the_safe_tier():
+    safe = scene_library.list_all("safe")
+    everything = scene_library.list_all("suggestive")
+    assert {s["tier"] for s in safe} == {"safe"}
+    assert len(everything) == len(scene_library.load_all()) + len(scene_library.load_extras())
+    assert {s["slug"] for s in scene_library.load_extras()} <= {s["slug"] for s in safe}
+    with pytest.raises(ValueError):
+        scene_library.list_all("nsfw")
+
+
+def test_the_picker_and_its_thumbnail_rule_do_not_see_the_extras():
+    picker = {s["slug"] for s in scene_library.list_scenes("suggestive")}
+    assert not picker & {s["slug"] for s in scene_library.load_extras()}
+
+
+def test_get_any_finds_scenes_from_both_files():
+    assert scene_library.get_any("cozy_cafe")["slug"] == "cozy_cafe"
+    assert scene_library.get_any("night_market")["name_zh"] == "夜市"
+    with pytest.raises(ValueError, match="unknown scene"):
+        scene_library.get_any("nope")
+
+
+def test_combine_scene_appends_english_and_names_the_scene_in_chinese_prompts():
+    text = "night market street with food stalls, warm string lights at night"
+    assert scene_library.combine_scene("a woman smiling", "night_market").startswith(
+        "a woman smiling, busy night market"
+    )
+    zh = scene_library.combine_scene("一位女性在微笑", "night_market")
+    assert zh == "一位女性在微笑，場景：夜市（busy " + text + "）"
+    assert scene_library.combine_scene("", "night_market").startswith("busy night market")
+
+
+@pytest.mark.parametrize(
+    "scenes, fragment",
+    [
+        ({"scenes": [{"slug": "x"}]}, "missing field"),
+        (
+            {"scenes": [{"slug": "cozy_cafe", "name_zh": "測", "prompt": "p", "lighting": "l", "tier": "safe"}]},
+            "duplicate",
+        ),
+        (
+            {"scenes": [{"slug": "Bad Slug", "name_zh": "測", "prompt": "p", "lighting": "l", "tier": "safe"}]},
+            "slug must match",
+        ),
+        (
+            {"scenes": [{"slug": "new_one", "name_zh": "測", "prompt": "p", "lighting": "l", "tier": "nsfw"}]},
+            "tier must be",
+        ),
+        (
+            {"scenes": [{"slug": "new_one", "name_zh": "測", "prompt": " ", "lighting": "l", "tier": "safe"}]},
+            "is empty",
+        ),
+        ({"scenes": []}, "no 'scenes' list"),
+    ],
+)
+def test_a_broken_extra_scene_is_rejected_by_name(scenes, fragment, tmp_path, monkeypatch):
+    path = tmp_path / "extra.json"
+    path.write_text(json.dumps(scenes, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(scene_library, "EXTRA_FILE", str(path))
+    with pytest.raises(ValueError, match=fragment):
+        scene_library.load_extras()
