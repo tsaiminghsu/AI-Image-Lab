@@ -1049,6 +1049,16 @@ def gallery_export(name, repeats, caption_kind, image_kind, trigger):
             f"的數字是重複次數，kohya 格式：每張圖旁邊有同名 .txt 說明文字；`export.json` 記了來源與 seed）{skipped}")
 
 
+def pz_use_picture(kind, base_path, final_path):
+    """Put the Pony or the Z-Image picture of the 🧩 tab into its video section as the first frame. The picture was made
+    by this tool (screened prompt, safety negatives, adult characters only), so the owner's declaration the H3 flow asks
+    for with an uploaded picture holds - the same rule as the image->video tab's "use this picture as first frame"."""
+    path = (final_path if kind == "final" else base_path) or final_path or base_path
+    if not path:
+        return gr.update(), gr.update()  # nothing made yet (or the generation failed): leave the video section alone
+    return path, True
+
+
 def select_picker_character(evt: gr.SelectData):
     return picker_characters()[evt.index][0]
 
@@ -2299,8 +2309,8 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                     pz_batch_btn = gr.Button("批次生成", variant="primary")
                                     pz_batch_stop_btn = gr.Button("⏹ 停止批次", variant="stop")
                         with gr.Column():
-                            pz_base_out = gr.Image(label="① Pony 底圖（長什麼樣）")
-                            pz_final_out = gr.Image(label="② Z-Image 重畫（質感）")
+                            pz_base_out = gr.Image(label="① Pony 底圖（長什麼樣）", type="filepath")
+                            pz_final_out = gr.Image(label="② Z-Image 重畫（質感）", type="filepath")
                             pz_log = gr.Textbox(label="執行過程（每一步、ComfyUI 步數、GPU／RAM；終端機也看得到）", lines=8,
                                                 max_lines=14, interactive=False, autoscroll=True)
                             pz_wall = gr.Gallery(label="批次結果牆（Z-Image 成品；點開看大圖，標題有 prompt 編號與 seed）",
@@ -2309,9 +2319,37 @@ with gr.Blocks(title="AI Image Lab") as demo:
                             pz_batch_log = gr.Textbox(label="批次執行過程（終端機也看得到）", lines=10, max_lines=16,
                                                       interactive=False, autoscroll=True)
                             pz_sent_prompt = gr.Textbox(label="實際送出的英文 prompt（中文翻譯結果）", interactive=False, lines=2)
+                    gr.Markdown("## 🎬 用這張圖生成影片（本機 H3）")
+                    gr.Markdown(
+                        "上面生成的圖會自動放進這裡當首幀（也可以改選 Pony 底圖）。流程和「🎬 圖片→影片（本機）」分頁一樣：寫描述 → 生成，"
+                        "5 秒帶聲音的影片本機約 8～10 分鐘，載入模型時 RAM 會先吃滿。影片會自動加進「🎬 導演台」的素材庫。"
+                    )
+                    with gr.Row():
+                        with gr.Column():
+                            pz_v_pick = gr.Radio([("Z-Image 成品", "final"), ("Pony 底圖", "base")], value="final",
+                                                 label="用哪一張當首幀")
+                            pz_v_load_btn = gr.Button("➡️ 取用上面的圖當首幀")
+                            pz_v_image = gr.Image(label="首幀", type="filepath")
+                            pz_v_attest = gr.Checkbox(value=False, label=H3_ATTEST_LABEL)
+                            with gr.Row():
+                                pz_v_gender = gr.Radio(["女", "男", "一男一女"], value="女", label="人物")
+                                pz_v_seed = gr.Number(value=8201, label="影片 Seed", precision=0)
+                            pz_v_idea = gr.Textbox(label="中文情境（做什麼）", lines=2, placeholder="例如：她笑著轉頭看向鏡頭")
+                            pz_v_line = gr.Textbox(label="台詞（原樣放進影片，20 字內）", placeholder="例如：你終於來了")
+                            pz_v_write_btn = gr.Button("✍️ 用 Qwen 寫描述")
+                            pz_v_desc = gr.Textbox(
+                                label="影片描述（英文；改成中文也行，會先自動翻譯；台詞要放在 <d>[Chinese] …</d> 裡，不會被翻）", lines=6)
+                            pz_v_sound = gr.Textbox(label="環境聲（選填，中文英文都行）")
+                            pz_v_static = gr.Checkbox(value=False, label="人物與背景保持靜止（背景最容易變形時勾）")
+                            pz_v_btn = gr.Button("生成影片（本機 H3）", variant="primary")
+                        with gr.Column():
+                            pz_v_output = gr.Video(label="影片結果")
+                            pz_v_info = gr.Markdown()
+                    pz_v_log = gr.Textbox(label="影片執行過程（即時更新；終端機也看得到）", lines=10, max_lines=18,
+                                          autoscroll=True, interactive=False)
                     pz_character.change(refresh_anchors, inputs=pz_character, outputs=[pz_anchor, pz_anchor_preview])
                     pz_anchor.change(lambda path: path, inputs=pz_anchor, outputs=pz_anchor_preview)
-                    pz_btn.click(generate_pony_zimage,
+                    _pz_picture_run = pz_btn.click(generate_pony_zimage,
                                  inputs=[pz_character, pz_anchor, pz_custom_anchor, pz_prompt, pz_scene, pz_tier,
                                          pz_negative, pz_seed, pz_ip_weight, pz_pose_library, pz_controlnet_strength,
                                          pz_resolution, pz_pony, pz_denoise, pz_skip, pz_qwen, pz_force_local],
@@ -2324,6 +2362,24 @@ with gr.Blocks(title="AI Image Lab") as demo:
                                        outputs=[pz_wall, pz_batch_status, pz_batch_log], concurrency_id="gpu")
                     # no concurrency_id: the stop click must run while the batch holds the "gpu" slot
                     pz_batch_stop_btn.click(pony_zimage_batch_stop, inputs=None, outputs=pz_batch_status)
+                    # a finished single picture goes straight into the video section (.then also runs after a failure,
+                    # where pz_use_picture leaves the section alone)
+                    _pz_picture_run.then(pz_use_picture, inputs=[pz_v_pick, pz_base_out, pz_final_out],
+                                         outputs=[pz_v_image, pz_v_attest])
+                    pz_v_load_btn.click(pz_use_picture, inputs=[pz_v_pick, pz_base_out, pz_final_out],
+                                        outputs=[pz_v_image, pz_v_attest])
+                    pz_v_write_btn.click(
+                        write_h3_description_ui,
+                        inputs=[pz_v_idea, pz_v_line, pz_v_gender, gr.State(""), gr.State(False)],
+                        outputs=[pz_v_desc, pz_v_log],
+                        concurrency_id="gpu",  # the local Qwen takes ~6.7 GB of the card while it answers
+                    )
+                    _pz_video_run = pz_v_btn.click(
+                        generate_h3_local_ui,
+                        inputs=[pz_v_image, pz_v_desc, pz_v_sound, pz_v_static, pz_v_seed, pz_v_attest],
+                        outputs=[pz_v_output, pz_v_info, pz_v_desc, pz_v_log],
+                        concurrency_id="gpu",
+                    )
                 with gr.Tab("📚 圖庫（圖片＋prompt）") as gallery_tab:
                     gr.Markdown(
                         "「🧩 Pony × Z-Image 整合」生成的每張圖都會記下當時的 prompt（中文原句、Pony 標籤、Z-Image 句子）和設定。"
@@ -2569,6 +2625,9 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     )  # fmt: skip
                     desk_tab.select(desk_library_refresh, inputs=None,  # the drive is read when the tab is opened, not on page load
                                     outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick])  # fmt: skip
+                    _pz_video_run.then(desk_library_refresh, inputs=None,
+                                       outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick]
+                    ).then(metrics_refresh, inputs=None, outputs=[metrics_pick, metrics_chart, metrics_notes])  # fmt: skip
                     _h3_run.then(desk_library_refresh, inputs=None,
                                  outputs=[desk_library_gallery, desk_media, desk_overlay_pick, desk_sfx_pick]
                     ).then(metrics_refresh, inputs=None, outputs=[metrics_pick, metrics_chart, metrics_notes])  # fmt: skip
