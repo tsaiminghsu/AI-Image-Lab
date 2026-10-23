@@ -81,7 +81,6 @@ def test_the_system_prompt_pins_adults_and_leaves_quality_tags_to_the_code():
         good(pony="score_9, 1girl"),
         good(pony="1girl, rating_safe"),
         good(zimage=""),
-        good(zimage="x" * 700),
     ],
 )
 def test_a_bad_reply_is_refused(content):
@@ -155,3 +154,20 @@ def test_the_refine_prompt_replaces_the_prompt_only_for_zimage(monkeypatch, tmp_
     assert seen["prompt"].startswith("A woman in her early twenties reads.")
     assert "1girl, tags" not in seen["prompt"]
     assert gc.AGE_SAFETY_NEGATIVE.split(",")[0].strip() in seen["negative"]
+
+
+def test_a_long_reply_is_trimmed_to_the_last_sentence_that_fits_not_refused():
+    sentence = "An Asian woman in her early twenties sits by a window and reads. "
+    long_text = sentence * 20  # 1300 characters
+    (pony, zimage), _ = run(good(zimage=long_text))
+    assert len(zimage) <= pr.MAX_PART_CHARS and zimage.endswith("reads.")
+    assert zimage.startswith("An Asian woman") and pony.startswith("1girl")
+
+
+def test_shorten_cuts_at_commas_then_spaces_and_leaves_short_text_alone():
+    assert pr.shorten("short text.") == "short text."
+    tags = ", ".join(f"tag{i}" for i in range(200))
+    cut = pr.shorten(tags, 100)
+    assert len(cut) <= 100 and cut.endswith(tuple("0123456789")) and not cut.endswith(",")
+    assert pr.shorten("x" * 700, 600) == "x" * 600  # no break point at all: a hard cut
+    assert pr.shorten("word " * 300, 50) == ("word " * 10).rstrip()

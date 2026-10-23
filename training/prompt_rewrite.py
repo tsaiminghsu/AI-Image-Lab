@@ -41,16 +41,31 @@ class RewriteError(gc.UsageError):
     pass
 
 
+def shorten(text, limit=MAX_PART_CHARS):
+    """`text` cut back to at most `limit` characters at the last sentence end or comma that fits (a hard cut at a space when
+    there is none in the second half). A shorter prompt is always safe to send, so a long reply is trimmed, not refused:
+    the 2026-10-23 batch failed all four pictures on a 762-character answer."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    best = max(cut.rfind(mark) for mark in (". ", "! ", "? ", "; ", ", ", "。"))
+    if best < limit // 2:
+        best = cut.rfind(" ")
+    return (cut[: best + 1] if best >= limit // 2 else cut).rstrip(" ,;")
+
+
 def parse_reply(text):
-    """The two prompts, validated: English only, no quotes, a sensible length."""
+    """The two prompts, validated: English only, no quotes. A reply over MAX_PART_CHARS is cut back (see shorten)."""
     try:
         data = json.loads(text)
         pony, zimage = str(data["pony"]).strip(), str(data["zimage"]).strip()
     except (ValueError, KeyError, TypeError) as exc:
         raise RewriteError(f"模型沒有回有效的 JSON（pony / zimage）：{text[:200]!r}") from exc
+    pony, zimage = shorten(pony), shorten(zimage)
     for name, part in (("pony", pony), ("zimage", zimage)):
-        if not part or len(part) > MAX_PART_CHARS:
-            raise RewriteError(f"{name} 是空的或太長（{len(part)} 字元）")
+        if not part:
+            raise RewriteError(f"{name} 是空的")
         if CJK.search(part):
             raise RewriteError(f"{name} 含中文字，只能是英文：{part[:80]!r}")
         if re.search(r"[\"“”]|(?:^|[\s,])(?:score_\d|source_|rating_)", part):
