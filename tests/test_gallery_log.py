@@ -214,3 +214,30 @@ def test_import_batches_adds_earlier_batch_pictures_once(store, tmp_path):
     rec = gl.load(str(store))[0]
     assert rec["source"] == "batch" and rec["prompt_original"] == "一隻貓" and rec["prompt_zimage"] == "A cat sits."
     assert gl.import_batches(str(tmp_path / "missing"), store=str(store)) == 0
+
+
+def test_paginate_slices_counts_and_clamps(store, tmp_path):
+    records = [{"id": str(i)} for i in range(25)]
+    page, total, pages, used = gl.paginate(records, 1, 10)
+    assert [r["id"] for r in page] == [str(i) for i in range(10)] and (total, pages, used) == (25, 3, 1)
+    page, total, pages, used = gl.paginate(records, 3, 10)
+    assert [r["id"] for r in page] == ["20", "21", "22", "23", "24"] and used == 3  # the last page is short
+    assert gl.paginate(records, 99, 10)[3] == 3  # a stale page number is clamped to the last page
+    assert gl.paginate(records, 0, 10)[3] == 1 and gl.paginate(records, -4, 10)[3] == 1
+    assert gl.paginate(records, "2", "5")[3] == 2  # numbers coming from the page as strings
+    assert gl.paginate(records, None, None)[0] == records[: gl.DEFAULT_PAGE_SIZE]
+
+
+def test_paginate_bounds_the_page_size_and_handles_an_empty_list():
+    records = [{"id": str(i)} for i in range(500)]
+    assert len(gl.paginate(records, 1, 10_000)[0]) == gl.MAX_PAGE_SIZE
+    assert len(gl.paginate(records, 1, 0)[0]) == 1
+    assert gl.paginate([], 3, 10) == ([], 0, 1, 1)  # one (empty) page, never page 0 of 0
+
+
+def test_the_pages_together_cover_every_record_once():
+    records = [{"id": str(i)} for i in range(37)]
+    seen = []
+    for page in range(1, gl.paginate(records, 1, 8)[2] + 1):
+        seen += [r["id"] for r in gl.paginate(records, page, 8)[0]]
+    assert seen == [r["id"] for r in records]

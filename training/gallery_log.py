@@ -22,6 +22,8 @@ STORE = os.path.join(REPO_ROOT, "outputs", "gallery", "records.json")
 DATASETS_DIR = os.path.join(REPO_ROOT, "outputs", "lora_datasets")
 CAPTION_KINDS = ("pony", "zimage", "original")  # booru tags / plain sentences / what the user typed (Chinese)
 IMAGE_KINDS = ("final", "base")  # the Z-Image result / the Pony picture it started from
+DEFAULT_PAGE_SIZE = 10
+MAX_PAGE_SIZE = 200
 _LOCK = threading.Lock()
 
 
@@ -108,6 +110,24 @@ def load(store=None, *, only_existing=True):
     if only_existing:
         records = [r for r in records if any(p and os.path.isfile(p) for p in (r.get("final"), r.get("base")))]
     return sorted(records, key=lambda r: r.get("created", ""), reverse=True)
+
+
+def paginate(records, page=1, size=DEFAULT_PAGE_SIZE):
+    """(records of that page, total, number of pages, the page actually used). The page is clamped into 1..pages and the
+    size into 1..MAX_PAGE_SIZE, so a stale page number (after a filter or a smaller list) never gives an empty page."""
+    try:
+        size = max(1, min(int(size), MAX_PAGE_SIZE))
+    except (TypeError, ValueError):
+        size = DEFAULT_PAGE_SIZE
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 1
+    total = len(records)
+    pages = max(1, -(-total // size))
+    page = max(1, min(page, pages))
+    start = (page - 1) * size
+    return records[start : start + size], total, pages, page
 
 
 def find(rec_id, store=None):

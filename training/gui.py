@@ -982,29 +982,58 @@ GALLERY_IMAGE_CHOICES = [("Z-Image 成品", "final"), ("Pony 底圖", "base")]
 GALLERY_NO_SELECTION = "點一張圖，這裡會顯示它的 prompt 和設定。"
 
 
-def _gallery_view(text, only_marked, image_kind):
-    """(gallery items, ids in the same order, status line) for the current filter."""
-    records = gallery_log.search(gallery_log.load(), text, only_marked)
-    items, ids = [], []
-    for r in records:
+GALLERY_PAGE_SIZES = [10, 20, 30, 50, 100]
+
+
+def _gallery_view(text, only_marked, image_kind, size, page):
+    """(gallery items, ids in the same order, status line, the page actually shown) for one page of the current filter.
+    Only the records of that page are looked at on disk, so a big gallery costs the same as a small one."""
+    records = gallery_log.load(only_existing=False)
+    marked = sum(1 for r in records if r.get("marked"))
+    matches = gallery_log.search(records, text, only_marked)
+    shown, total, pages, page = gallery_log.paginate(matches, page, size)
+    items, ids, missing = [], [], 0
+    for r in shown:
         path = gallery_log.picture(r, image_kind)
-        if path:
-            mark = "★ " if r.get("marked") else ""
-            items.append((path, f"{mark}{r['created'][5:16]} · seed {r['seed']} · denoise {r['denoise']}"))
-            ids.append(r["id"])
-    marked = sum(1 for r in gallery_log.load() if r.get("marked"))
-    return items, ids, f"符合 {len(items)} 張｜已標記訓練用 {marked} 張（★）"
+        if not path:
+            missing += 1
+            continue
+        mark = "★ " if r.get("marked") else ""
+        items.append((path, f"{mark}{r['created'][5:16]} · seed {r['seed']} · denoise {r['denoise']}"))
+        ids.append(r["id"])
+    size = max(1, min(int(size or gallery_log.DEFAULT_PAGE_SIZE), gallery_log.MAX_PAGE_SIZE))
+    note = f"｜本頁有 {missing} 張的圖檔不見了" if missing else ""
+    status = (f"共 **{total}** 張符合｜第 **{page} / {pages}** 頁（每頁 {size} 張，本頁 {len(items)} 張）"
+              f"｜已標記訓練用 {marked} 張（★）{note}")
+    return items, ids, status, page
 
 
-def gallery_refresh(text, only_marked, image_kind):
-    items, ids, status = _gallery_view(text, only_marked, image_kind)
-    return items, ids, status
+def gallery_refresh(text, only_marked, image_kind, size, page):
+    """Reload the page that is shown (after a mark, or when the tab is opened)."""
+    return _gallery_view(text, only_marked, image_kind, size, page)
 
 
-def gallery_import_batches(text, only_marked, image_kind):
+def gallery_first(text, only_marked, image_kind, size, page):
+    """A new search, filter or page size starts again at page 1."""
+    return _gallery_view(text, only_marked, image_kind, size, 1)
+
+
+def gallery_prev(text, only_marked, image_kind, size, page):
+    return _gallery_view(text, only_marked, image_kind, size, int(page or 1) - 1)
+
+
+def gallery_next(text, only_marked, image_kind, size, page):
+    return _gallery_view(text, only_marked, image_kind, size, int(page or 1) + 1)
+
+
+def gallery_last(text, only_marked, image_kind, size, page):
+    return _gallery_view(text, only_marked, image_kind, size, 10**9)  # clamped to the last page
+
+
+def gallery_import_batches(text, only_marked, image_kind, size, page):
     added = gallery_log.import_batches(os.path.join(os.path.dirname(__file__), "reference_candidates"))
     gr.Info(f"從舊的批次清單補進 {added} 張" if added else "沒有可補進的舊批次（單張生成的舊圖當時沒存 prompt，補不進來）")
-    return gallery_refresh(text, only_marked, image_kind)
+    return _gallery_view(text, only_marked, image_kind, size, 1)
 
 
 def gallery_select(ids, evt: gr.SelectData):
@@ -1019,15 +1048,15 @@ def gallery_select(ids, evt: gr.SelectData):
             rec.get("prompt_zimage") or "", rec.get("negative") or "")
 
 
-def gallery_toggle_mark(rec_id, text, only_marked, image_kind):
+def gallery_toggle_mark(rec_id, text, only_marked, image_kind, size, page):
     if not rec_id:
         raise gr.Error("先點一張圖")
     rec = gallery_log.find(rec_id)
     if rec is None:
         raise gr.Error("找不到這張圖的紀錄")
     gallery_log.set_marked(rec_id, not rec.get("marked"))
-    items, ids, status = _gallery_view(text, only_marked, image_kind)
-    return items, ids, status + ("　（已取消標記）" if rec.get("marked") else "　（已標記為訓練用）")
+    items, ids, status, page = _gallery_view(text, only_marked, image_kind, size, page)
+    return items, ids, status + ("　（已取消標記）" if rec.get("marked") else "　（已標記為訓練用）"), page
 
 
 def gallery_use(rec_id):
@@ -2490,6 +2519,14 @@ with gr.Blocks(title="AI Image Lab") as demo:
                         gal_marked_only = gr.Checkbox(label="只看已標記訓練用（★）", value=False, scale=1)
                         gal_kind = gr.Radio(GALLERY_IMAGE_CHOICES, value="final", label="顯示哪一張", scale=2)
                     with gr.Row():
+                        gal_size = gr.Dropdown(GALLERY_PAGE_SIZES, value=gallery_log.DEFAULT_PAGE_SIZE,
+                                               label="每頁顯示幾張", scale=1)
+                        gal_first_btn = gr.Button("⏮ 第一頁", scale=1)
+                        gal_prev_btn = gr.Button("◀ 上一頁", scale=1)
+                        gal_page = gr.Number(label="頁碼", value=1, precision=0, minimum=1, scale=1)
+                        gal_next_btn = gr.Button("下一頁 ▶", scale=1)
+                        gal_last_btn = gr.Button("最後一頁 ⏭", scale=1)
+                    with gr.Row():
                         gal_refresh_btn = gr.Button("🔄 重新整理")
                         gal_import_btn = gr.Button("📥 補進舊批次的圖")
                     gal_status = gr.Markdown()
@@ -2518,17 +2555,23 @@ with gr.Blocks(title="AI Image Lab") as demo:
                             gal_image_kind = gr.Radio(GALLERY_IMAGE_CHOICES, value="base", label="匯出哪一張圖")
                         gal_export_btn = gr.Button("匯出", variant="primary")
                         gal_export_status = gr.Markdown()
-                    _gal_filters = [gal_filter, gal_marked_only, gal_kind]
-                    _gal_view = [gal, gal_ids, gal_status]
+                    _gal_filters = [gal_filter, gal_marked_only, gal_kind, gal_size, gal_page]
+                    _gal_view = [gal, gal_ids, gal_status, gal_page]
                     gallery_tab.select(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
                     gal_refresh_btn.click(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
-                    gal_filter.submit(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
-                    gal_marked_only.change(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
-                    gal_kind.change(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_page.submit(gallery_refresh, inputs=_gal_filters, outputs=_gal_view)
+                    gal_filter.submit(gallery_first, inputs=_gal_filters, outputs=_gal_view)
+                    gal_marked_only.change(gallery_first, inputs=_gal_filters, outputs=_gal_view)
+                    gal_kind.change(gallery_first, inputs=_gal_filters, outputs=_gal_view)
+                    gal_size.change(gallery_first, inputs=_gal_filters, outputs=_gal_view)
+                    gal_first_btn.click(gallery_first, inputs=_gal_filters, outputs=_gal_view)
+                    gal_prev_btn.click(gallery_prev, inputs=_gal_filters, outputs=_gal_view)
+                    gal_next_btn.click(gallery_next, inputs=_gal_filters, outputs=_gal_view)
+                    gal_last_btn.click(gallery_last, inputs=_gal_filters, outputs=_gal_view)
                     gal_import_btn.click(gallery_import_batches, inputs=_gal_filters, outputs=_gal_view)
                     gal.select(gallery_select, inputs=[gal_ids],
                                outputs=[gal_sel, gal_detail, gal_orig, gal_pony, gal_zimg, gal_neg])
-                    gal_mark_btn.click(gallery_toggle_mark, inputs=[gal_sel, gal_filter, gal_marked_only, gal_kind], outputs=_gal_view)
+                    gal_mark_btn.click(gallery_toggle_mark, inputs=[gal_sel, gal_filter, gal_marked_only, gal_kind, gal_size, gal_page], outputs=_gal_view)
                     gal_use_btn.click(gallery_use, inputs=[gal_sel], outputs=[pz_prompt, pz_seed, pz_denoise])
                     gal_export_btn.click(gallery_export,
                                          inputs=[gal_name, gal_repeats, gal_caption_kind, gal_image_kind, gal_trigger],
