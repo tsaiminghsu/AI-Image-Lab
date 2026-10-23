@@ -13,6 +13,8 @@ import json
 import subprocess
 import time
 
+import gpu_topology
+
 THROTTLE_C = 84  # CLAUDE.md: the card throttles in hardware at 84 C
 WARM_C = 80
 FIELDS = ("gpu_temp", "gpu_util", "gpu_power", "vram_used", "vram_total", "ram_free", "swap_used", "comfy_rss")
@@ -45,7 +47,7 @@ def sample(run=subprocess.run):
     row = dict.fromkeys(FIELDS)
     try:
         out = run(
-            ["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu,power.draw,memory.used,memory.total",
+            [*gpu_topology.smi_command(), "--query-gpu=temperature.gpu,utilization.gpu,power.draw,memory.used,memory.total",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=15,
         ).stdout  # fmt: skip

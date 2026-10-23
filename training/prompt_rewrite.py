@@ -17,6 +17,7 @@ import requests
 
 import content_gate
 import generate_character as gc
+import gpu_topology
 import h3_idea
 
 MAX_IDEA_CHARS = 300
@@ -63,7 +64,7 @@ def _ask(idea, model, base, post):
         "stream": False,
         "think": False,
         "format": "json",
-        "keep_alive": 0,
+        "keep_alive": gpu_topology.llm_keep_alive(),
         # temperature 0 + a fixed seed: the same Chinese idea gives the same English, so a seed means the same picture and
         # a strength or denoise can be compared without the rewrite changing under it (at 0.4 two runs of one idea differed)
         "options": {"temperature": 0, "seed": 0, "num_ctx": 4096},
@@ -109,7 +110,7 @@ def rewrite(
                 own = starter(model)
             except h3_idea.IdeaError as exc:
                 raise RewriteError(str(exc)) from exc
-            base = f"http://127.0.0.1:{h3_idea.OWN_PORT}"
+            base = h3_idea.own_url()
         return _ask(idea, model, base, post)
     finally:
         if own is not None:

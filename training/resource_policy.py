@@ -35,6 +35,7 @@ from dataclasses import asdict, dataclass, field
 import requests
 
 import comfyui_client as client
+import gpu_topology
 
 SETTINGS_FILE = os.environ.get(
     "HARDWARE_SETTINGS_FILE",
@@ -283,7 +284,7 @@ def _query_nvidia_smi(run=subprocess.run):
     # Newer drivers renamed clocks_throttle_reasons -> clocks_event_reasons; ask with the flag
     # first and fall back to the three fields every driver has.
     for fields in (base + ",clocks_throttle_reasons.hw_thermal_slowdown", base):
-        result = run(["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
+        result = run([*gpu_topology.smi_command(), f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
                      capture_output=True, text=True, timeout=NVIDIA_SMI_TIMEOUT_SECONDS)
         if result.returncode == 0 and result.stdout.strip():
             return parse_nvidia_smi(result.stdout.strip().splitlines()[0])

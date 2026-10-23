@@ -11,6 +11,7 @@ unloaded as soon as it answers and the GPU is free again for H3 (the two do not 
 """
 
 import argparse
+import atexit
 import json
 import os
 import re
@@ -22,6 +23,7 @@ import requests
 
 import content_gate
 import generate_character as gc
+import gpu_topology
 
 # the Qwen3.5 9B that is pulled on this machine (HauhauCS GGUF, Q4_K_M = 6.1 GB, ~65 tok/s measured 2026-10-17)
 DEFAULT_MODEL = "hf.co/HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
@@ -64,9 +66,33 @@ class IdeaError(gc.UsageError):
     pass
 
 
+def pinned_wanted(get=requests.get):
+    """True when Qwen should run on its own card: a second card is planned for it and it is either already serving or has
+    room to start (gpu_topology.effective_split). Then the Ollama server of that card is used, not a shared one that may
+    have put the model on the picture card."""
+    return gpu_topology.effective_split(get)
+
+
+def pinned_url():
+    return f"http://127.0.0.1:{gpu_topology.PINNED_PORT}"
+
+
+def own_url():
+    """Where start_own_ollama's server answers: the Qwen card's pinned server, or the shared one on OWN_PORT."""
+    return pinned_url() if pinned_wanted() else f"http://127.0.0.1:{OWN_PORT}"
+
+
 def find_ollama(get=requests.get, url=None):
-    """The first Ollama URL that answers (OLLAMA_URL wins when set)."""
-    urls = [url] if url else [os.environ["OLLAMA_URL"]] if os.environ.get("OLLAMA_URL") else list(URL_CANDIDATES)
+    """The first Ollama URL that answers (OLLAMA_URL wins when set). With a second card for Qwen only its pinned server
+    counts: a shared server could load the model onto the picture card."""
+    if url:
+        urls = [url]
+    elif os.environ.get("OLLAMA_URL"):
+        urls = [os.environ["OLLAMA_URL"]]
+    elif pinned_wanted(get):
+        urls = [pinned_url()]
+    else:
+        urls = list(URL_CANDIDATES)
     for u in urls:
         try:
             r = get(f"{u}/api/tags", timeout=4)
@@ -94,28 +120,71 @@ def model_folder(model, folders=MODEL_FOLDERS):
     return None
 
 
+class _Persistent:
+    """The pinned server outlives a single call (Qwen stays loaded on its own card between chat turns), so the callers'
+    terminate() does nothing; it is stopped when the GUI exits (stop_pinned)."""
+
+    def __init__(self, proc):
+        self.proc = proc
+
+    def terminate(self):
+        pass
+
+    def stop(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+
+
+_PINNED = {"handle": None}
+
+
+def stop_pinned():
+    handle = _PINNED["handle"]
+    if handle is not None:
+        handle.stop()
+        _PINNED["handle"] = None
+
+
+atexit.register(stop_pinned)
+
+
 def start_own_ollama(model, *, popen=subprocess.Popen, get=requests.get, folders=MODEL_FOLDERS, wait=45):
-    """Start a private `ollama serve` on OWN_PORT with the folder that holds the model. It loads no model by itself.
-    Returns the process; the caller stops it. Raises IdeaError when the model is in no known folder or the server
-    does not come up."""
+    """Start a private `ollama serve` with the folder that holds the model. It loads no model by itself. With a second
+    card for Qwen it is pinned to that card on its own port and kept running (see _Persistent); otherwise it is on OWN_PORT
+    and the caller stops it. Raises IdeaError when the model is in no known folder or the server does not come up."""
+    pinned = pinned_wanted(get)
+    if pinned:
+        handle = _PINNED["handle"]
+        if handle is not None and handle.proc.poll() is None and pinned_server_up_now(get):
+            return handle
     folder = model_folder(model, folders)
     exe = shutil.which("ollama")
     if not folder or not exe:
         raise IdeaError(
             f"找不到 {model}（檢查過的資料夾：{', '.join(f for f in folders if f)}）或 ollama 指令。先 ollama pull {model}"
         )
-    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{OWN_PORT}", OLLAMA_MODELS=folder, OLLAMA_CONTEXT_LENGTH="4096")
+    port = gpu_topology.PINNED_PORT if pinned else OWN_PORT
+    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_MODELS=folder, OLLAMA_CONTEXT_LENGTH="4096")
+    if pinned:
+        env.update(gpu_topology.llm_env())  # only the Qwen card is visible to this server
     proc = popen([exe, "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.time() + wait
     while time.time() < deadline:
         try:
-            if get(f"http://127.0.0.1:{OWN_PORT}/api/tags", timeout=3).status_code == 200:
+            if get(f"http://127.0.0.1:{port}/api/tags", timeout=3).status_code == 200:
+                if pinned:
+                    _PINNED["handle"] = _Persistent(proc)
+                    return _PINNED["handle"]
                 return proc
         except requests.RequestException:
             pass
         time.sleep(1)
     proc.terminate()
-    raise IdeaError(f"自己啟動的 ollama serve 在 {wait} 秒內沒有回應（埠 {OWN_PORT}）")
+    raise IdeaError(f"自己啟動的 ollama serve 在 {wait} 秒內沒有回應（埠 {port}）")
+
+
+def pinned_server_up_now(get=requests.get):
+    return gpu_topology.pinned_server_up(get)
 
 
 def check_line(line):
@@ -192,7 +261,7 @@ def write_description(
             if starter is None:
                 raise IdeaError(f"{base or 'Ollama'} 沒有 {model}（現有：{', '.join(models) or '沒有任何模型'}）")
             own = starter(model)  # a private ollama serve on the folder that really holds the model
-            base = f"http://127.0.0.1:{OWN_PORT}"
+            base = own_url()
         return _ask(idea, line, gender, model, base, post, line2, people)
     finally:
         if own is not None:
@@ -221,7 +290,7 @@ def _ask(idea, line, gender, model, base, post, line2=None, people="single"):
         "stream": False,
         "think": False,
         "format": "json",
-        "keep_alive": 0,
+        "keep_alive": gpu_topology.llm_keep_alive(),
         "options": {"temperature": 0.4, "num_ctx": 4096},
         "messages": [
             {"role": "system", "content": _system_for(gender, people)},

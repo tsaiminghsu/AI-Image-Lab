@@ -17,6 +17,7 @@ import requests
 
 import content_gate
 import generate_character as gc
+import gpu_topology
 import h3_idea
 
 MAX_HISTORY_MESSAGES = 12
@@ -117,12 +118,12 @@ def chat(
                 own = starter(model)
             except h3_idea.IdeaError as exc:
                 raise ChatError(str(exc)) from exc
-            base = f"http://127.0.0.1:{h3_idea.OWN_PORT}"
+            base = h3_idea.own_url()
         body = {
             "model": model,
             "stream": False,
             "think": False,
-            "keep_alive": 0,
+            "keep_alive": gpu_topology.llm_keep_alive(),
             "options": {"temperature": 0.6, "num_ctx": 4096},
             "messages": [
                 {"role": "system", "content": SYSTEM},

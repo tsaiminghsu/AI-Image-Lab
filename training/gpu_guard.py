@@ -19,6 +19,8 @@ import time
 
 import requests
 
+import gpu_topology
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 UNLOAD_TIMEOUT_SECONDS = 120
 # A batch needs this much of the card free once the chat model is unloaded. It used to be an absolute "at most 2,500 MiB
@@ -78,7 +80,7 @@ def unload_models(http=requests, url=None, *, timeout=UNLOAD_TIMEOUT_SECONDS, sl
 def gpu_state(run=subprocess.run):
     """{'temp_c', 'used_mib', 'total_mib'} from nvidia-smi, or None when it cannot be read."""
     try:
-        out = run(["nvidia-smi", "--query-gpu=temperature.gpu,memory.used,memory.total",
+        out = run([*gpu_topology.smi_command(), "--query-gpu=temperature.gpu,memory.used,memory.total",
                    "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=15).stdout
         temp, used, total = (float(x) for x in out.strip().splitlines()[0].split(","))
         return {"temp_c": temp, "used_mib": used, "total_mib": total}
@@ -120,7 +122,8 @@ def before_batch(*, max_start_temp_c, http=requests, run=subprocess.run, sleep=t
     refuse - the per-image unload still applies. A model runner left behind by a killed Ollama is stopped first: Ollama
     cannot unload what it no longer knows about."""
     kill_orphan_runners(log=log)
-    unloaded = unload_models(http, sleep=sleep, clock=clock)
+    split = gpu_topology.effective_split()  # Qwen on its own card: nothing to unload for the picture card
+    unloaded = [] if split else unload_models(http, sleep=sleep, clock=clock)
     if unloaded:
         log(f"[gpu_guard] 已請 Ollama 卸載：{', '.join(unloaded)}")
     deadline = clock() + wait_seconds
@@ -141,7 +144,7 @@ def before_batch(*, max_start_temp_c, http=requests, run=subprocess.run, sleep=t
             if hot:
                 why.append(f"GPU {state['temp_c']:.0f}°C，還沒降到 {max_start_temp_c}°C")
             raise GpuBusy("；".join(why))
-        if full:
+        if full and not split:
             # The chat reply that follows "go ahead" (and Open WebUI's title/follow-up tasks) loads the model again right
             # after the first unload. Waiting for Ollama's own 5-minute keep_alive to drop it failed a job on 2026-10-17
             # one second before it would have worked, so drop it again on every poll while the card is full.
@@ -155,7 +158,10 @@ def before_batch(*, max_start_temp_c, http=requests, run=subprocess.run, sleep=t
 
 
 def before_image(*, http=requests, sleep=time.sleep, clock=time.monotonic, log=print):
-    """Run before every image: a chat message since the last one has reloaded the model."""
+    """Run before every image: a chat message since the last one has reloaded the model. Not needed (and not done) when
+    Qwen has its own card."""
+    if gpu_topology.effective_split():
+        return []
     unloaded = unload_models(http, sleep=sleep, clock=clock)
     if unloaded:
         log(f"[gpu_guard] 生圖前卸載 Ollama：{', '.join(unloaded)}")

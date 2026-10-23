@@ -24,6 +24,18 @@ if TRAINING_DIR not in sys.path:
 import comfyui_client as client  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_gpu_split(monkeypatch):
+    """The suite is offline: whatever cards this machine has, nothing is pinned or split (a test that wants a plan builds
+    its own from a made-up nvidia-smi listing)."""
+    import gpu_topology
+
+    monkeypatch.setenv("GPU_SPLIT", "off")
+    gpu_topology.reset()
+    yield
+    gpu_topology.reset()
+
+
 @pytest.fixture
 def isolated_variants(monkeypatch, tmp_path):
     """Fresh full/quant selection state: no CLI override, no env, settings file and

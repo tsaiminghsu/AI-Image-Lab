@@ -29,6 +29,7 @@ import requests
 import comfyui_client as client
 import content_gate
 import generate_character as gc
+import gpu_topology
 import output_dir as od
 import run_metrics as rm
 
@@ -253,12 +254,21 @@ def machine_status(run=subprocess.run):
     """One line for the GUI's log: GPU temperature and memory, and the system RAM still free."""
     parts = []
     try:
-        out = run(["nvidia-smi", "--query-gpu=temperature.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+        out = run([*gpu_topology.smi_command(), "--query-gpu=temperature.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
                   capture_output=True, text=True, timeout=15).stdout  # fmt: skip
         temp, used, total = (float(x) for x in out.strip().splitlines()[0].split(","))
         parts.append(f"GPU {temp:.0f}°C｜顯存 {used / 1024:.1f}/{total / 1024:.1f} GB")
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         parts.append("GPU 讀不到")
+    plan = gpu_topology.plan()
+    if plan and plan.split:  # Qwen has its own card: show it too, so the log says where the chat model sits
+        try:
+            out = run(["nvidia-smi", "-i", str(plan.llm.index), "--query-gpu=temperature.gpu,memory.used,memory.total",
+                       "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=15).stdout  # fmt: skip
+            temp, used, total = (float(x) for x in out.strip().splitlines()[0].split(","))
+            parts.append(f"Qwen卡 {plan.llm.label} {temp:.0f}°C｜{used / 1024:.1f}/{total / 1024:.1f} GB")
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            pass
     try:
         import psutil
 
@@ -324,7 +334,7 @@ def _save_metrics(rec, out_dir, stem):
 def free_vram_mib(run=subprocess.run):
     try:
         out = run(
-            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            [*gpu_topology.smi_command(), "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=15,

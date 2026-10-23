@@ -843,10 +843,13 @@ def start_server(startup_timeout: float = 120, extra_args=None) -> subprocess.Po
     the cloud worker, which manages its own already-running ComfyUI process
     via COMFYUI_URL instead. extra_args are appended to ComfyUI's command line: batch callers pass
     --disable-smart-memory, without which a long Z-Image batch can stall in the VAE decode on this card."""
+    import gpu_topology  # local launch only: the RunPod worker and the Colab scripts never start a ComfyUI from here
+
     python_exe = os.path.join(COMFYUI_DIR, ".venv", "Scripts", "python.exe")
     process = subprocess.Popen(
         [python_exe, "main.py", "--listen", "127.0.0.1", "--port", str(server_port()), *(extra_args or [])],
         cwd=COMFYUI_DIR,
+        env={**os.environ, **gpu_topology.image_env()},  # with two cards ComfyUI only sees the picture card
     )
     deadline = time.time() + startup_timeout
     while time.time() < deadline:

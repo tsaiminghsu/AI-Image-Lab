@@ -31,6 +31,7 @@ import comfyui_client as client
 import gallery_log
 import generate_character as gc
 import gpu_guard
+import gpu_topology
 import job_scheduler
 import job_service
 import job_store
@@ -719,6 +720,8 @@ def _generate(character, anchor, custom_anchor, prompt, tier, negative_prompt, s
 def _free_comfyui_models():
     """Ask a running ComfyUI to drop its cached models, so a ~6 GB Ollama model fits next to nothing. Skipped while
     ComfyUI has queued work (it is not ours to free); the GUI's "gpu" concurrency id means that is rare."""
+    if gpu_topology.effective_split():
+        return  # Qwen sits on its own card: nothing of ComfyUI has to move
     if not client.is_server_running():
         return
     try:
@@ -1050,6 +1053,11 @@ def gallery_export(name, repeats, caption_kind, image_kind, trigger):
             f"的數字是重複次數，kohya 格式：每張圖旁邊有同名 .txt 說明文字；`export.json` 記了來源與 seed）{skipped}")
 
 
+# With a second card for Qwen the chat has its own queue and runs next to a picture or a batch; on one card it waits in the
+# shared "gpu" queue as before. Decided when the GUI starts (the card is looked at again for every call, see pz_chat_send).
+CHAT_QUEUE = "llm" if gpu_topology.planned_split() else "gpu"
+
+
 def pz_chat_send(message, history):
     """One turn of the in-page Qwen chat: show the user's message at once, then the reply. A model ComfyUI still holds
     from the last picture is released first so Qwen (about 6.7 GB) fits; it unloads itself after answering."""
@@ -1057,6 +1065,9 @@ def pz_chat_send(message, history):
     text = (message or "").strip()
     if not text:
         raise gr.Error("請先輸入要問的內容")
+    if CHAT_QUEUE == "llm" and not gpu_topology.effective_split() and rp.local_jobs_running():
+        # the Qwen card was taken by something else, so Qwen would share the picture card with a running job
+        raise gr.Error("Qwen 的專用顯卡現在被別的程式佔用，聊天要和圖片共用同一張卡：請等生圖結束再聊")
     shown = history + [{"role": "user", "content": text}]
     yield shown, ""
     box = {}
@@ -2109,7 +2120,8 @@ if __name__ == "__main__":
         print(f"[gui] 輸出位置沒有重設：{exc}")
 
 with gr.Blocks(title="AI Image Lab") as demo:
-    gr.Markdown(f"# AI Image Lab\n先確定 ComfyUI server 已經在跑（{client.COMFYUI_URL.removeprefix('http://')}）。")
+    gr.Markdown(f"# AI Image Lab\n先確定 ComfyUI server 已經在跑（{client.COMFYUI_URL.removeprefix('http://')}）。\n\n"
+                f"{gpu_topology.describe()}")
 
     with gr.Tabs():
         with gr.Tab("⭐ 常用"):
@@ -2446,9 +2458,9 @@ with gr.Blocks(title="AI Image Lab") as demo:
                     _pz_picture_run.then(pz_use_picture, inputs=[pz_v_pick, pz_base_out, pz_final_out],
                                          outputs=[pz_v_image, pz_v_attest])
                     pz_chat_send_btn.click(pz_chat_send, inputs=[pz_chat_msg, pz_chat], outputs=[pz_chat, pz_chat_msg],
-                                           concurrency_id="gpu")
+                                           concurrency_id=CHAT_QUEUE)
                     pz_chat_msg.submit(pz_chat_send, inputs=[pz_chat_msg, pz_chat], outputs=[pz_chat, pz_chat_msg],
-                                       concurrency_id="gpu")
+                                       concurrency_id=CHAT_QUEUE)
                     pz_chat_prompt_btn.click(pz_chat_use_prompt, inputs=[pz_chat], outputs=[pz_prompt])
                     pz_chat_motion_btn.click(pz_chat_use_motion, inputs=[pz_chat], outputs=[pz_v_idea])
                     pz_chat_clear_btn.click(lambda: ([], ""), inputs=None, outputs=[pz_chat, pz_chat_msg])
